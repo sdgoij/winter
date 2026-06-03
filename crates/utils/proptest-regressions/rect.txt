@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc adb267338f4afbafc59bb5d1405c0786a111d63a6bc3d55c53599ee62bc7719d # shrinks to r1 = Rect { left: 310676223, top: 0, right: -1836807426, bottom: 0 }, r2 = Rect { left: 0, top: 0, right: 0, bottom: 0 }
+cc b18e8fa7ce97dfcbd0c47630f8e7a78487112355a15a9ccf9510a8cd0b66af09 # shrinks to r1 = Rect { left: -235085009, top: 0, right: 1912398639, bottom: 0 }, r2 = Rect { left: 0, top: 0, right: 0, bottom: 0 }
+cc c716a0bbcab99b3801fedccdeb67758f849687d3ff118e50c7333c97a99b14e3 # shrinks to r1 = Rect { left: 0, top: 0, right: 1, bottom: 1 }, r2 = Rect { left: 0, top: 0, right: 1, bottom: 2 }
+cc 4252350a413422ffc7ea29b7b183a0543ed4ac914db79373ee9f16913f99ced1 # shrinks to r1 = Rect { left: 0, top: -905633333, right: 1, bottom: 1241850315 }, r2 = Rect { left: 0, top: -905633333, right: 1, bottom: 1241850315 }

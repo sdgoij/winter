@@ -1,0 +1,17 @@
+[package]
+name = "utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal Implementation Library — geometry, types, and utilities"
+
+[dependencies]
+bitflags = { workspace = true }
+serde = { version = "1", features = ["derive"], optional = true }
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = "3"

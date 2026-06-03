@@ -1,0 +1,15 @@
+[package]
+name = "types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal types — color, character attributes, and rendering metadata"
+
+[dependencies]
+utils = { path = "../utils" }
+bitflags = { workspace = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

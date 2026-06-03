@@ -1,0 +1,16 @@
+[package]
+name = "buffer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal text buffer — rows, cells, and text attributes"
+
+[dependencies]
+utils = { path = "../utils" }
+types = { path = "../types" }
+bitflags = { workspace = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
