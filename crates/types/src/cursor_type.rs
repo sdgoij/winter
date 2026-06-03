@@ -7,8 +7,10 @@
 /// Ported from `CursorType` in the Windows Terminal C++ `conattrs.hpp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum CursorType {
     /// Uses the cursor's height value to range from underscore-like to full box.
+    #[default]
     Legacy = 0,
     /// A single vertical line, `|`.
     VerticalBar = 1,
@@ -60,11 +62,6 @@ impl std::fmt::Display for CursorType {
     }
 }
 
-impl Default for CursorType {
-    fn default() -> Self {
-        CursorType::Legacy
-    }
-}
 
 #[cfg(test)]
 mod tests {

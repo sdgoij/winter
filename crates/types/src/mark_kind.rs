@@ -7,8 +7,10 @@
 /// Ported from `MarkKind` enum in the Windows Terminal C++ `TextAttribute.hpp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
+#[derive(Default)]
 pub enum MarkKind {
     /// No mark applied.
+    #[default]
     None = 0,
     /// Cell is part of a prompt (user input).
     Prompt = 1,
@@ -41,11 +43,6 @@ impl MarkKind {
     }
 }
 
-impl Default for MarkKind {
-    fn default() -> Self {
-        MarkKind::None
-    }
-}
 
 impl std::fmt::Display for MarkKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

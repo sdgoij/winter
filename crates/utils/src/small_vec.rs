@@ -65,7 +65,7 @@ impl<T, const N: usize> SmallVec<T, N> {
             }
             result
         } else {
-            let result = SmallVec {
+            SmallVec {
                 inline: unsafe { MaybeUninit::uninit().assume_init() },
                 len: v.len(),
                 use_heap: true,
@@ -74,8 +74,7 @@ impl<T, const N: usize> SmallVec<T, N> {
                         .map(|x| MaybeUninit::new(x))
                         .collect::<Box<[MaybeUninit<T>]>>(),
                 ),
-            };
-            result
+            }
         }
     }
 

@@ -1,0 +1,16 @@
+[package]
+name = "adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Terminal adapter — VT dispatch, page management, and protocol handling"
+
+[dependencies]
+utils = { path = "../utils" }
+types = { path = "../types" }
+bitflags = { workspace = true }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = { workspace = true }

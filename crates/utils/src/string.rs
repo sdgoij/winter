@@ -47,38 +47,33 @@ pub fn equals_insensitive_ascii(s1: &str, s2: &str) -> bool {
     if s1.len() != s2.len() {
         return false;
     }
-    s1.bytes()
-        .zip(s2.bytes())
-        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+    s1.eq_ignore_ascii_case(s2)
 }
 
 /// Returns whether a string starts with the given prefix (case-insensitive ASCII).
 pub fn starts_with_insensitive_ascii(s: &str, prefix: &str) -> bool {
-    if s.len() < prefix.len() {
-        return false;
-    }
-    s[..prefix.len()]
-        .bytes()
-        .zip(prefix.bytes())
-        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+    s.to_ascii_lowercase()
+        .starts_with(&prefix.to_ascii_lowercase())
 }
 
 /// Returns whether a string ends with the given suffix (case-insensitive ASCII).
 pub fn ends_with_insensitive_ascii(s: &str, suffix: &str) -> bool {
-    if s.len() < suffix.len() {
-        return false;
-    }
-    let start = s.len() - suffix.len();
-    s[start..]
-        .bytes()
-        .zip(suffix.bytes())
-        .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
+    s.to_ascii_lowercase()
+        .ends_with(&suffix.to_ascii_lowercase())
 }
 
 /// Converts a string to lowercase ASCII.
 pub fn tolower_ascii(s: &str) -> String {
     s.bytes()
-        .map(|b| if b >= b'A' && b <= b'Z' { b + 32 } else { b })
+        .map(|b: u8| {
+            if b.is_ascii_lowercase() {
+                b
+            } else if b.is_ascii_uppercase() {
+                b + 32
+            } else {
+                b
+            }
+        })
         .map(|b| b as char)
         .collect()
 }
@@ -86,7 +81,15 @@ pub fn tolower_ascii(s: &str) -> String {
 /// Converts a string to uppercase ASCII.
 pub fn toupper_ascii(s: &str) -> String {
     s.bytes()
-        .map(|b| if b >= b'a' && b <= b'z' { b - 32 } else { b })
+        .map(|b: u8| {
+            if b.is_ascii_uppercase() {
+                b
+            } else if b.is_ascii_lowercase() {
+                b - 32
+            } else {
+                b
+            }
+        })
         .map(|b| b as char)
         .collect()
 }

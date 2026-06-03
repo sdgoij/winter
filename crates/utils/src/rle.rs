@@ -117,8 +117,7 @@ impl<V: PartialEq + Clone> BasicRle<V> {
         if self.runs.is_empty() {
             return;
         }
-        self.runs
-            .retain_mut(|run| if run.length > 0 { true } else { false });
+        self.runs.retain_mut(|run| run.length > 0);
 
         // Merge consecutive runs with same value
         let mut i = 0;

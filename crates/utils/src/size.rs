@@ -94,11 +94,6 @@ impl Size {
     pub fn into_tuple(self) -> (CoordType, CoordType) {
         (self.width, self.height)
     }
-
-    /// Formats the size as a string.
-    pub fn to_string(&self) -> String {
-        format!("[W:{}, H:{}]", self.width, self.height)
-    }
 }
 
 /// Error type for size operations.

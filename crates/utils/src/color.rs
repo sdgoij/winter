@@ -165,11 +165,6 @@ impl Color {
 
         Some(Self::new(r, g, b, a))
     }
-
-    /// Formats the color as a string.
-    pub fn to_string(&self) -> String {
-        self.to_hex()
-    }
 }
 
 impl std::fmt::Display for Color {

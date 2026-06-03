@@ -249,14 +249,6 @@ impl Rect {
     pub fn bottom(&self) -> i32 {
         self.bottom
     }
-
-    /// Formats the rectangle as a string.
-    pub fn to_string(&self) -> String {
-        format!(
-            "([{},{})-({},{})",
-            self.left, self.top, self.right, self.bottom
-        )
-    }
 }
 
 /// Iterator over points in a rectangle.
@@ -294,10 +286,10 @@ impl Iterator for RectIter {
             return None;
         }
         let result = self.current;
-        self.current.x = self.current.x + 1;
+        self.current.x += 1;
         if self.current.x >= self.end.x {
             self.current.x = /* need origin.x */ 0;
-            self.current.y = self.current.y + 1;
+            self.current.y += 1;
         }
         Some(result)
     }

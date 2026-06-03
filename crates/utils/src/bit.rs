@@ -90,7 +90,7 @@ where
     if x == T::zero() {
         return T::zero();
     }
-    T::one() << ((T::BITS as u32) - <u32 as UnsignedInteger>::one() - x.leading_zeros())
+    T::one() << (T::BITS - <u32 as UnsignedInteger>::one() - x.leading_zeros())
 }
 
 /// Trait for unsigned integer types.

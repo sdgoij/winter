@@ -136,11 +136,6 @@ impl Point {
     pub fn mul_wrapping(&self, other: Point) -> Point {
         Self::new(self.x.wrapping_mul(other.x), self.y.wrapping_mul(other.y))
     }
-
-    /// Formats the point as a string.
-    pub fn to_string(&self) -> String {
-        format!("(X:{}, Y:{})", self.x, self.y)
-    }
 }
 
 impl std::ops::Add for Point {

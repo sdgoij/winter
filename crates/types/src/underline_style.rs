@@ -7,8 +7,10 @@
 /// Ported from `UnderlineStyle` enum in the Windows Terminal C++ `TextAttribute.hpp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum UnderlineStyle {
     /// No underline.
+    #[default]
     NoUnderline = 0,
     /// Singly underlined.
     SinglyUnderlined = 1,
@@ -57,11 +59,6 @@ impl UnderlineStyle {
     }
 }
 
-impl Default for UnderlineStyle {
-    fn default() -> Self {
-        UnderlineStyle::NoUnderline
-    }
-}
 
 impl std::fmt::Display for UnderlineStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
