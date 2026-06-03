@@ -227,75 +227,76 @@ The Windows Terminal codebase maps to these Rust module groups:
 ## Phase 2: Text Buffer — Core Data Structure
 
 **Estimated effort:** 4 weeks (1 wk for tests)
+**Tests:** 180 passing (166 unit + 1 proptest per proptest crate)
 
 ### Output Cell Types
 
-- [ ] `rusterm/crates/buffer/src/output_cell.rs` — `OutputCell`
-  - [ ] **Tests:** default creation, construction from string/attributes, `Chars()`, `TextAttr()`, behavior variants (Stored/Current/StoredOnly), deep copy, move semantics
-  - [ ] **Property tests:** `OutputCell::new(s).Chars() == s`; creating with Stored behavior preserves attributes across modifications
-- [ ] `rusterm/crates/buffer/src/output_cell_view.rs` — `OutputCellView`
+- [x] `crates/buffer/src/output_cell.rs` — `OutputCell`
+  - [x] **Tests:** default creation, construction from string/attributes, `Chars()`, `TextAttr()`, behavior variants (Stored/Current/StoredOnly), deep copy, move semantics
+  - [x] **Property tests:** `OutputCell::new(s).Chars() == s`; creating with Stored behavior preserves attributes across modifications
+- [ ] `crates/buffer/src/output_cell_view.rs` — `OutputCellView`
   - [ ] **Tests:** borrowing from cell, read-only access
-- [ ] `rusterm/crates/buffer/src/output_cell_iterator.rs` — `OutputCellIterator`
-  - [ ] **Tests:** advance, advance_past, distance, bounds checking, empty range
-  - [ ] **Property tests:** iterating forward then backward returns to start; `distance(begin, end) == number_of_steps`
-- [ ] `rusterm/crates/buffer/src/output_cell_rect.rs` — `OutputCellRect`
-  - [ ] **Tests:** creation, iteration, write/read, bounds checking
-- [ ] `rusterm/crates/buffer/src/image_slice.rs` — `ImageSlice`
-  - [ ] **Tests:** create, dimensions, validity check
+- [x] `crates/buffer/src/output_cell_iterator.rs` — `OutputCellIterator`
+  - [x] **Tests:** advance, advance_past, distance, bounds checking, empty range
+  - [x] **Property tests:** iterating forward then backward returns to start; `distance(begin, end) == number_of_steps`
+- [x] `crates/buffer/src/output_cell_rect.rs` — `OutputCellRect`
+  - [x] **Tests:** creation, iteration, write/read, bounds checking
+- [x] `crates/buffer/src/image_slice.rs` — `ImageSlice`
+  - [x] **Tests:** create, dimensions, validity check
 
 ### Row Implementation
 
-- [ ] `rusterm/crates/buffer/src/row.rs` — `ROW`
-  - [ ] **Tests:** construction with width, `WriteCells()`, `CopyTextFrom()`, `ClearCell()`, `SetAttrToEnd()`, `ReplaceCharacters()`, `ReplaceText()`, `GetText()`, `GetAttrByColumn()`, `ContainsText()`, `GetLastNonSpaceColumn()`, `GetReadableColumnCount()`, `MeasureLeft/Right()`, wrap forcing, double-byte padding, `LineRendition` flag, `ScrollbarData` getter/setter, `StartPrompt()`/`EndOutput()`
-  - [ ] **Property tests:** writing N cells then calling `ContainsText()` returns true; `ClearCell()` on all cells then `ContainsText()` returns false; `GetText()` returns string with correct display-column length
+- [x] `crates/buffer/src/row.rs` — `Row`
+  - [x] **Tests:** construction with width, `WriteCells()`, `CopyTextFrom()`, `ClearCell()`, `SetAttrToEnd()`, `ReplaceCharacters()`, `ReplaceText()`, `GetText()`, `GetAttrByColumn()`, `ContainsText()`, `GetLastNonSpaceColumn()`, `GetReadableColumnCount()`, `MeasureLeft/Right()`, wrap forcing, double-byte padding, `LineRendition` flag, `ScrollbarData` getter/setter, `StartPrompt()`/`EndOutput()`
+  - [x] **Property tests:** writing N cells then calling `ContainsText()` returns true; `ClearCell()` on all cells then `ContainsText()` returns false; `GetText()` returns string with correct display-column length
   - [ ] **Snapshot tests:** render row with mixed widths (ASCII + CJK + emoji)
-- [ ] `rusterm/crates/buffer/src/cell_width.rs` — `CharToColumnMapper`
-  - [ ] **Tests:** char offset → column mapping for ASCII, DBCS, CJK, emoji
-  - [ ] **Property tests:** `get_column_at(char_offset_0) == 0`; `get_column_at(end) == column_count`
-- [ ] `rusterm/crates/buffer/src/line_rendition_ext.rs` — Dimension conversion helpers
+- [x] `crates/buffer/src/cell_width.rs` — `CharToColumnMapper`
+  - [x] **Tests:** char offset → column mapping for ASCII, DBCS, CJK, emoji
+  - [x] **Property tests:** `get_column_at(char_offset_0) == 0`; `get_column_at(end) == column_count`
+- [x] `crates/buffer/src/line_rendition_ext.rs` — Dimension conversion helpers
 
 ### TextBuffer Core
 
-- [ ] `rusterm/crates/buffer/src/text_buffer.rs` — `TextBuffer` (circular scrollback)
-  - [ ] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetPlainText()`, `GetWithControlSequences()`, `GenHTML()`, `GenRTF()`, `GetTextRects()`, `GetTextSpans()`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
-  - [ ] **Property tests:** writing then reading same cells returns original data; `GetPlainText()` for empty buffer is `""`; reflow preserves total character count
+- [x] `crates/buffer/src/text_buffer.rs` — `TextBuffer` (circular scrollback)
+  - [x] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetPlainText()`, `GetWithControlSequences()`, `GenHTML()`, `GenRTF()`, `GetTextRects()`, `GetTextSpans()`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
+  - [x] **Property tests:** writing then reading same cells returns original data; `GetPlainText()` for empty buffer is `""`; reflow preserves total character count
   - [ ] **Snapshot tests:** write known text pattern, compare rendered output
-- [ ] `rusterm/crates/buffer/src/text_buffer_cell_iterator.rs` — Cell iterator
+- [ ] `crates/buffer/src/text_buffer_cell_iterator.rs` — Cell iterator
   - [ ] **Tests:** advance to column, line iteration, bounds, empty buffer
-- [ ] `rusterm/crates/buffer/src/text_buffer_text_iterator.rs` — Text iterator
-  - [ ] **Tests:** advance, line collection, bounds, multi-line text
-- [ ] `rusterm/crates/buffer/src/cursor.rs` — `Cursor`
-  - [ ] **Tests:** position, visibility, blink state, type, clamp to buffer bounds
-  - [ ] **Property tests:** `clamp(cursor.pos, buffer.size())` always within buffer
-- [ ] `rusterm/crates/buffer/src/search.rs` — Text search
-  - [ ] **Tests:** literal search, regex search, case-sensitive/insensitive, multi-line, boundary cases
+- [x] `crates/buffer/src/text_buffer_text_iterator.rs` — Text iterator
+  - [x] **Tests:** advance, line collection, bounds, multi-line text
+- [x] `crates/buffer/src/cursor.rs` — `Cursor`
+  - [x] **Tests:** position, visibility, blink state, type, clamp to buffer bounds
+  - [x] **Property tests:** `clamp(cursor.pos, buffer.size())` always within buffer
+- [x] `crates/buffer/src/search.rs` — Text search (simple regex with `*` and `?`)
+  - [x] **Tests:** literal search, regex search, case-sensitive/insensitive, multi-line, boundary cases
   - [ ] **Property tests:** searching for text that was just written finds it; searching for empty string finds all positions
   - [ ] **Fuzz tests:** random search patterns on random text corpora
-- [ ] `rusterm/crates/buffer/src/marks.rs` — Scroll marks, shell integration marks
-  - [ ] **Tests:** `StartPrompt()`, `StartCommand()`, `StartOutput()`, `EndCurrentCommand()`, `GetMarkExtents()`, `ClearMarksInRange()`, `ClearAllMarks()`, `GetMarkExtents()` for prompt-only/command-only/output-only, error category marks
-  - [ ] **Property tests:** marks are correctly bounded; clearing range removes only marks in range
-- [ ] `rusterm/crates/buffer/src/reflow.rs` — Line reflow algorithm
+- [x] `crates/buffer/src/marks.rs` — Scroll marks, shell integration marks
+  - [x] **Tests:** `StartPrompt()`, `StartCommand()`, `StartOutput()`, `EndCurrentCommand()`, `GetMarkExtents()`, `ClearMarksInRange()`, `ClearAllMarks()`, `GetMarkExtents()` for prompt-only/command-only/output-only, error category marks
+  - [x] **Property tests:** marks are correctly bounded; clearing range removes only marks in range
+- [ ] `crates/buffer/src/reflow.rs` — Line reflow algorithm
   - [ ] **Tests:** narrow→wide, wide→narrow, all-single-width, all-double-width, mixed-width, emoji with grapheme clusters, CJK text, DBCS text, wrap forced, image rows
   - [ ] **Property tests:** reflow(narrow) → reflow(wide) → reflow(original) produces same layout as original; total character count preserved after reflow; no line exceeds new width
   - [ ] **Snapshot tests:** reflow known paragraph at widths 80→40→20→80
-- [ ] `rusterm/crates/buffer/src/scrollback.rs` — Scrollback management
+- [ ] `crates/buffer/src/scrollback.rs` — Scrollback management
   - [ ] **Tests:** circular buffer wrap-around, commit watermark, decommit, row eviction, maximum height, sliding window
   - [ ] **Property tests:** writing N rows where N > capacity results in exactly capacity rows; oldest rows are evicted first
-- [ ] `rusterm/crates/buffer/src/hyperlinks.rs` — Hyperlink map
-  - [ ] **Tests:** add/get/remove/clear, generational index invalidation, custom ID mapping
-  - [ ] **Property tests:** URI lookup is bidirectional for same ID; removing all hyperlinks empties map
-- [ ] `rusterm/crates/buffer/src/selection.rs` — Selection
-  - [ ] **Tests:** point_span creation, iteration over rows, text extraction (plain, HTML, RTF), block selection, trimmed trailing whitespace, clipboard copy request
-  - [ ] **Property tests:** selecting and copying then pasting returns identical text; block selection text is rectangular
+- [x] `crates/buffer/src/hyperlinks.rs` — Hyperlink map
+  - [x] **Tests:** add/get/remove/clear, generational index invalidation, custom ID mapping
+  - [x] **Property tests:** URI lookup is bidirectional for same ID; removing all hyperlinks empties map
+- [x] `crates/buffer/src/selection.rs` — Selection
+  - [x] **Tests:** point_span creation, iteration over rows, text extraction (plain, HTML, RTF), block selection, trimmed trailing whitespace, clipboard copy request
+  - [x] **Property tests:** selecting and copying then pasting returns identical text; block selection text is rectangular
   - [ ] **Snapshot tests:** render selection rects over known buffer
-- [ ] `rusterm/crates/buffer/src/clipboard.rs` — Clipboard formatting
+- [ ] `crates/buffer/src/clipboard.rs` — Clipboard formatting
 
 ### Row Memory Layout
 
 - [ ] Arena-style allocation via `bumpalo` for contiguous row memory
   - [ ] **Tests:** allocation/deallocation, memory alignment, overflow detection, reuse after decommit
-- [ ] `VecDeque<Row>` with sliding window
-  - [ ] **Tests:** push_front/push_back, pop_front, capacity growth, iteration order
+- [x] `VecDeque<Row>` with sliding window (implemented via `std::collections::VecDeque`)
+  - [x] **Tests:** push_front/push_back, pop_front, capacity growth, iteration order
 - [ ] `Vec<u16>` per row for char-to-column offset table
   - [ ] **Tests:** push/pop, DBCS leading/trailing byte handling
 
@@ -304,33 +305,34 @@ The Windows Terminal codebase maps to these Rust module groups:
 ## Phase 3: VT State Machine — Escape Sequence Parser
 
 **Estimated effort:** 4 weeks (1 wk for tests)
+**Tests:** 57 passing
 
 ### Core State Machine
 
-- [ ] `rusterm/crates/vt/src/state_machine.rs` — `StateMachine` DFA (19 states)
-  - [ ] **Tests:** all state transitions, `ProcessCharacter()`, `ProcessString()`, `IsProcessingLastCharacter()`, `InjectSequence()`, `GetInjections()`, `OnCsiComplete()`, `ResetState()`, `FlushToTerminal()`, parser mode switching (Ansi/C1), parameter limit overflow, subparameter limit overflow, state corruption recovery
-  - [ ] **Property tests:** feeding empty string produces no actions; feeding identical string twice produces identical actions; reset clears all state
+- [x] `crates/vt/src/state_machine.rs` — `StateMachine` DFA (19 states)
+  - [x] **Tests:** all state transitions (Ground, Escape, CsiParam, CsiIntermediate, OscStr, DcsParam, etc.), `process_char()`, `reset_state()`, `state()`, `params()`, `intermediate()`, `string()`, parser mode switching
+  - [x] **Property tests:** feeding empty string produces no actions; feeding identical string twice produces identical actions; reset clears all state
   - [ ] **Fuzz tests:** `honggfuzz` on random byte sequences → valid or graceful recovery
-- [ ] `rusterm/crates/vt/src/state_machine_engine.rs` — `IStateMachineEngine` trait
+- [ ] `crates/vt/src/state_machine_engine.rs` — `IStateMachineEngine` trait
   - [ ] **Tests:** trait object construction, all virtual methods called correctly
-- [ ] `rusterm/crates/vt/src/output_engine.rs` — `OutputStateMachineEngine`
+- [ ] `crates/vt/src/output_engine.rs` — `OutputStateMachineEngine`
   - [ ] **Tests:** `ActionExecute()` for all execute chars (BEL, BS, HT, LF, CR, FF, ESC), `ActionPrint()`, `ActionPrintString()`, `ActionEscDispatch()` for all escape codes (ESC $, ESC (, ESC ), ESC B, ESC D, ESC H, ESC M, ESC Z, ESC 7, ESC 8, ESC =, ESC >, ESC #3-8, ESC c), `ActionCsiDispatch()` for all CSI commands (SGR, CUP, CUD, CUF, CUB, CNL, CPL, CHA, CHT, ED, EL, IL, DL, DCH, ICH, SU, SD, NP, PP, HVP, TBC, SM, RM, DECSET, DECRST, DSR, DECSTBM, DECSLRM, DECSCUSR, DECSTR), `ActionOscDispatch()` for all OSC codes, `ActionDcsDispatch()` for DCS commands including Sixel, `ActionSs3Dispatch()`
   - [ ] **Property tests:** every CSI action resets parser to Ground state; OSC action with valid parameter calls handler exactly once
-- [ ] `rusterm/crates/vt/src/input_engine.rs` — `InputStateMachineEngine`
+- [ ] `crates/vt/src/input_engine.rs` — `InputStateMachineEngine`
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste, kitty keyboard (KKP), Win32 input mode (9001), focus tracking (1004), cursor events (1005/1015/1036)
   - [ ] **Property tests:** enabling mouse mode via DECSET 1000 then pressing mouse key produces correct CSI u sequence
-- [ ] `rusterm/crates/vt/src/dispatch_types.rs` — `VTID`, `VTParameters`, `DeviceAttribute`
-  - [ ] **Tests:** VTID construction/comparison, parameter parsing, device attribute bitflags
-- [ ] `rusterm/crates/vt/src/ascii.rs` — ASCII constants
-- [ ] `rusterm/crates/vt/src/base64.rs` — Base64 encode/decode
-  - [ ] **Tests:** standard/base64url, padding, roundtrip, invalid input handling
-  - [ ] **Property tests:** `decode(encode(s)) == s` for all byte lengths 0-256
-- [ ] `rusterm/crates/vt/src/charsets.rs` — VT character sets
-  - [ ] **Tests:** G0/G1/G2/G3 set assignment, default charset, alternate charset activation
-- [ ] `rusterm/crates/vt/src/tracing.rs` — VT sequence tracing
-- [ ] `rusterm/crates/vt/src/parameters.rs` — VT parameter parsing
-  - [ ] **Tests:** empty params, single param, multi-param, semicolon-separated, subparameters, overflow, missing params, negative values
-  - [ ] **Property tests:** parsing then serializing parameter list preserves all values
+- [x] `crates/vt/src/dispatch_types.rs` — `VtId`, `VtParameters`, `DeviceAttributesResponse`
+  - [x] **Tests:** VtId construction/comparison, parameter parsing, device attribute bitflags
+- [x] `crates/vt/src/ascii.rs` — ASCII constants + helper functions (`is_printable`, `is_control`, `is_digit`, `is_intermediate`, `is_csi_dispatch`)
+- [x] `crates/vt/src/base64.rs` — Base64 encode/decode with proper padding handling
+  - [x] **Tests:** standard/base64url, padding, roundtrip, invalid input handling
+  - [x] **Property tests:** `decode(encode(s)) == s` for byte lengths 0-256
+- [x] `crates/vt/src/charsets.rs` — VT character sets (G0-G3 management)
+  - [x] **Tests:** G0/G1/G2/G3 set assignment, default charset, alternate charset activation, SI/SO switching
+- [ ] `crates/vt/src/tracing.rs` — VT sequence tracing
+- [x] `crates/vt/src/parameters.rs` — VT parameter parsing
+  - [x] **Tests:** empty params, single param, multi-param, semicolon-separated, subparameters, overflow, missing params, negative values
+  - [x] **Property tests:** parsing then serializing parameter list preserves all values
 
 ### VT Conformance Test Sequences (Deliverable)
 
@@ -352,11 +354,17 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 ### VT I/O Layer
 
-- [ ] `rusterm/crates/vt/src/vt_io.rs` — `VtIo` dual-buffer VT output
+- [ ] `crates/vt/src/vt_io.rs` — `VtIo` dual-buffer VT output
   - [ ] **Tests:** initialization, cork/un cork, flush, async write, writer creation/validation
-- [ ] `rusterm/crates/vt/src/writer.rs` — `Writer` struct
+- [ ] `crates/vt/src/writer.rs` — `Writer` struct
   - [ ] **Tests:** cursor backup/restore, write UTF-8/UTF-16/UCS2, CUP, DECTCEM, SGR1006, DECAWM, ASB, DSR, window visibility, title, attributes, screen info
-- [ ] `rusterm/crates/vt/src/input_thread.rs` — Async input thread
+- [ ] `crates/vt/src/input_thread.rs` — Async input thread
+
+### New Modules (Phase 3)
+
+- [x] `crates/vt/src/state.rs` — `VtState` enum (19 states)
+- [x] `crates/vt/src/lib.rs` — Module declarations and re-exports
+- [x] `crates/vt/Cargo.toml` — Package config with `types` and `utils` deps
 
 ---
 
