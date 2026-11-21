@@ -162,7 +162,9 @@ Do not add call sites under an allowance.
 
 ## Before starting Phase 5
 
-The adapter layer is not connected yet: `AdaptDispatch` is not declared in
-`lib.rs` and does not compile, `ITermDispatch` has no implementation, and three
-types exist twice. The list is in `plan.md` §"Pre-Phase-5 cleanup". Do not build
-a renderer on top of it until that list is empty.
+The adapter is connected but not yet dispatching: `AdaptDispatch` compiles and
+holds the terminal state, and `PageManager` holds the real buffer, but
+`ITermDispatch` has no implementation, so bytes parsed by `vt` reach nothing. The
+buffer also has no `resize`/`reflow`. The list, with a check for each, is in
+`plan.md` §"Pre-Phase-5 cleanup". Do not build a renderer on a buffer whose
+width is still fixed.

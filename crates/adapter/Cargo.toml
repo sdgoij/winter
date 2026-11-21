@@ -10,6 +10,7 @@ description = "Terminal adapter — VT dispatch, page management, and protocol h
 [dependencies]
 utils.workspace = true
 types.workspace = true
+buffer.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
 

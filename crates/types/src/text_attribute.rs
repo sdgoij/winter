@@ -2,7 +2,7 @@
 //!
 //! Ported from `TextAttribute` in the Windows Terminal C++ buffer module.
 
-use types::{CharacterAttributes, MarkKind, TextColor, UnderlineStyle};
+use crate::{CharacterAttributes, MarkKind, TextColor, UnderlineStyle};
 
 /// Controls how text attributes are applied during rendering.
 ///

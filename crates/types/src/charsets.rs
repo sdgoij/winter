@@ -1,7 +1,8 @@
 //! Character set definitions for VT terminal translation.
 //!
-//! Ported from `charsets.hpp` in the Windows Terminal C++ codebase.
-//! Contains translation tables for 94/96 character sets.
+//! Ported from the character set tables in the Windows Terminal C++ adapter
+//! module. These are the 94/96-character translation tables; the G0-G3 manager
+//! the parser owns is `vt::charsets::Charsets`, a different thing.
 
 /// Size of a 94-character set.
 pub const CHARSET_SIZE_94: usize = 94;

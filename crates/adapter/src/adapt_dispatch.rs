@@ -1,11 +1,14 @@
-//! `AdaptDispatch` — Main VT adapter implementation.
+//! `AdaptDispatch` — VT adapter state.
 //!
 //! Ported from `adaptDispatch.hpp/cpp` in the Windows Terminal C++ codebase.
-//! This is the primary dispatcher that handles VT sequences and delegates
-//! operations to the terminal output and page manager.
+//!
+//! The struct holds the state the dispatch handlers share: modes, margins, the
+//! page manager, the terminal output, the sixel parser, and the SGR stack. The
+//! `ITermDispatch` handlers that mutate a buffer through this state are not
+//! ported yet; see `plan.md` §"Pre-Phase-5 cleanup" item 2.
 
 use crate::dispatch_types::*;
-use crate::term_dispatch::ITermDispatch;
+use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
 
 /// Cursor state for save/restore operations.
@@ -57,11 +60,10 @@ pub struct ChangeOps {
 }
 
 /// Main VT adapter dispatcher.
+///
+/// State only, for now: the handlers arrive with the `ITermDispatch`
+/// implementation, and each one is expected to name the sequence it serves.
 pub struct AdaptDispatch {
-    /// Tab stop columns.
-    tab_stop_columns: Vec<u8>,
-    /// Whether to initialize default tab stops.
-    init_default_tab_stops: bool,
     /// Page manager for buffer switching.
     page_manager: PageManager,
     /// Terminal output state.
@@ -72,10 +74,6 @@ pub struct AdaptDispatch {
     font_buffer: FontBuffer,
     /// Macro buffer.
     macro_buffer: MacroBuffer,
-    /// Saved cursor states (max 2).
-    saved_cursor_state: [CursorState; 2],
-    /// Current saved cursor state index.
-    saved_cursor_state_index: usize,
     /// Whether we're using the alternate buffer.
     using_alt_buffer: bool,
     /// Scrolling margins (top, bottom).
@@ -96,15 +94,11 @@ impl AdaptDispatch {
     /// Creates a new AdaptDispatch.
     pub fn new() -> Self {
         Self {
-            tab_stop_columns: Vec::new(),
-            init_default_tab_stops: true,
             page_manager: PageManager::new(),
             term_output: TerminalOutput::new(false),
-            sixel_parser: SixelParser::new(SixelParser::SIXEL_DEFAULT_CONFORMANCE),
+            sixel_parser: SixelParser::new(SIXEL_DEFAULT_CONFORMANCE),
             font_buffer: FontBuffer::new(),
             macro_buffer: MacroBuffer::new(),
-            saved_cursor_state: [CursorState::default(); 2],
-            saved_cursor_state_index: 0,
             using_alt_buffer: false,
             scroll_top_margin: 0,
             scroll_bottom_margin: 23,
@@ -243,23 +237,13 @@ impl AdaptDispatch {
     /// Hard resets the adapter.
     pub fn hard_reset(&mut self, erase: bool) {
         self.soft_reset();
-        self.tab_stop_columns.clear();
-        self.init_default_tab_stops = true;
         self.using_alt_buffer = false;
         self.cursor_style = CursorStyle::UserDefault;
         self.modes = ModeSet::default();
         if erase {
-            // Clear buffers
+            // Erasing the pages is part of the dispatch work; the page manager
+            // owns the buffers, so the reset path has nothing to clear here yet.
         }
-    }
-
-    /// Initializes default tab stops.
-    fn init_default_tab_stops(&mut self, width: VTInt) {
-        self.tab_stop_columns.clear();
-        for col in (0..width).step_by(8) {
-            self.tab_stop_columns.push(col as u8);
-        }
-        self.init_default_tab_stops = false;
     }
 
     /// Sets a mode flag.

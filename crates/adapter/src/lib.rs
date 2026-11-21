@@ -5,7 +5,7 @@
 //!
 //! ## Modules
 //!
-//! - [`dispatch_types`] — VT parameter types, enums, and constants
+//! - [`dispatch_types`] — re-exported from `types` (ADR 002)
 //! - [`interact_dispatch`] — Input state machine callback interface
 //! - [`term_dispatch`] — Output state machine callback interface
 //! - [`adapt_dispatch`] — Main VT adapter implementation
@@ -14,10 +14,8 @@
 //! - [`page_manager`] — Alternate/main screen buffer switching
 //! - [`sixel_parser`] — Sixel image format parsing
 //! - [`terminal_output`] — Character set translation management
-//! - [`charsets`] — Character set definitions and translations
 
-pub mod charsets;
-pub mod dispatch_types;
+pub mod adapt_dispatch;
 pub mod font_buffer;
 pub mod interact_dispatch;
 pub mod macro_buffer;
@@ -26,9 +24,18 @@ pub mod sixel_parser;
 pub mod term_dispatch;
 pub mod terminal_output;
 
+// `dispatch_types` and `charsets` are terminal vocabulary with no storage, so
+// they live in `types`. Re-exporting the module keeps `crate::dispatch_types::*`
+// and the historical `adapter::VTParameter` paths working.
+pub use types::charsets;
+pub use types::dispatch_types;
+pub use types::dispatch_types::*;
+
 // Re-export key types.
-pub use dispatch_types::*;
+pub use adapt_dispatch::AdaptDispatch;
+pub use font_buffer::FontBuffer;
 pub use interact_dispatch::IInteractDispatch;
+pub use macro_buffer::MacroBuffer;
 pub use page_manager::{Page, PageManager};
 pub use sixel_parser::SixelParser;
 pub use term_dispatch::ITermDispatch;

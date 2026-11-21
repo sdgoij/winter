@@ -3,6 +3,7 @@
 //! Ported from `PageManager.hpp/cpp` in the Windows Terminal C++ codebase.
 //! Manages the text buffers required by VT paging operations.
 
+use buffer::TextBuffer;
 use utils::inclusive_rect::InclusiveRect;
 
 /// Maximum number of pages.
@@ -54,43 +55,6 @@ impl Page {
     }
 }
 
-/// Text buffer for a page.
-#[derive(Debug, Clone)]
-pub struct TextBuffer {
-    /// Width in characters.
-    width: i32,
-    /// Height in characters.
-    height: i32,
-    /// Whether this is the alternate screen buffer.
-    is_alternate: bool,
-}
-
-impl TextBuffer {
-    /// Creates a new text buffer.
-    pub fn new(width: i32, height: i32, is_alternate: bool) -> Self {
-        Self {
-            width,
-            height,
-            is_alternate,
-        }
-    }
-
-    /// Returns the width.
-    pub fn width(&self) -> i32 {
-        self.width
-    }
-
-    /// Returns the height.
-    pub fn height(&self) -> i32 {
-        self.height
-    }
-
-    /// Returns whether this is the alternate screen buffer.
-    pub fn is_alternate(&self) -> bool {
-        self.is_alternate
-    }
-}
-
 /// Manages page switching between main and alternate buffers.
 pub struct PageManager {
     /// Active page number (1-based).
@@ -128,7 +92,14 @@ impl PageManager {
         if self.pages[idx].is_none() {
             // Create default viewport for new page
             let viewport = InclusiveRect::new(0, 0, 79, 23); // 80x24 default
-            let buffer = TextBuffer::new(80, 24, false);
+            // Page 2 is the alternate screen; every other page is a main buffer.
+            // PageManager does not own scrollback sizing, so the main pages here
+            // start with none.
+            let buffer = if page_number == 2 {
+                TextBuffer::new_alternate(80, 24)
+            } else {
+                TextBuffer::with_dimensions(80, 24, 0)
+            };
             self.pages[idx] = Some(Page::new(
                 std::sync::Arc::new(std::sync::RwLock::new(buffer)),
                 viewport,
@@ -252,14 +223,24 @@ mod tests {
         pm.get(7); // MAX_PAGES is 6
     }
 
+    // A page points at a real `buffer::TextBuffer`, so the alternate-screen page
+    // must already report itself as alternate before any dispatch exists.
     #[test]
-    fn test_text_buffer() {
-        let buffer = TextBuffer::new(80, 24, false);
-        assert_eq!(buffer.width(), 80);
-        assert_eq!(buffer.height(), 24);
-        assert!(!buffer.is_alternate());
+    fn main_page_is_not_alternate() {
+        let mut pm = PageManager::new();
+        let page = pm.get(1);
+        let buffer = page.buffer();
+        assert!(!buffer.read().unwrap().is_alternate());
+    }
 
-        let alt = TextBuffer::new(80, 24, true);
-        assert!(alt.is_alternate());
+    #[test]
+    fn second_page_is_the_alternate_buffer() {
+        let mut pm = PageManager::new();
+        let page = pm.get(2);
+        let buffer = page.buffer();
+        let buffer = buffer.read().unwrap();
+        assert!(buffer.is_alternate());
+        assert_eq!(buffer.screen_width(), 80);
+        assert_eq!(buffer.screen_height(), 24);
     }
 }

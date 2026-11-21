@@ -8,7 +8,7 @@
 use types::TextColor;
 use types::codepoint_width;
 
-use crate::text_attribute::TextAttribute;
+use crate::TextAttribute;
 use crate::text_attribute_behavior::TextAttributeBehavior;
 
 /// The behavior for storing text attributes in an OutputCell.

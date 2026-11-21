@@ -5,9 +5,6 @@
 //!
 //! ## Modules
 //!
-//! - [`text_attribute`] — `TextAttribute` for character rendering attributes
-//! - [`row_attributes`] — Per-row metadata
-//! - [`dbcs_attribute`] — Double-byte character support
 //! - [`text_attribute_behavior`] — Attribute behavior enumeration
 //! - [`output_cell`] — `OutputCell` — the fundamental cell type
 //! - [`row`] — `Row` — a row of terminal cells
@@ -38,7 +35,6 @@ pub mod row;
 pub mod row_attributes;
 pub mod search;
 pub mod selection;
-pub mod text_attribute;
 pub mod text_attribute_behavior;
 pub mod text_buffer;
 pub mod text_buffer_text_iterator;
@@ -57,7 +53,10 @@ pub use row::Row;
 pub use row_attributes::RowAttributes;
 pub use search::{SearchMatch, SearchOptions};
 pub use selection::{Selection, SelectionPoint, SelectionType};
-pub use text_attribute::TextAttribute;
+// `TextAttribute` is vocabulary shared by the buffer and the adapter, so it
+// lives in `types`; the re-export keeps the historical `buffer::TextAttribute`
+// path working (ADR 002).
 pub use text_attribute_behavior::TextAttributeBehavior;
 pub use text_buffer::TextBuffer;
 pub use text_buffer_text_iterator::{TextBufferRowIterator, TextBufferTextIterator};
+pub use types::TextAttribute;

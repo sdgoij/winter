@@ -198,7 +198,7 @@ mod tests {
     fn test_mutable_iterator() {
         let mut cells = make_cells(5);
         for cell in OutputCellMutIterator::new(&mut cells, 0, 3) {
-            cell.set_attributes(crate::text_attribute::TextAttribute::new());
+            cell.set_attributes(crate::TextAttribute::new());
         }
         assert_eq!(cells.len(), 5);
     }

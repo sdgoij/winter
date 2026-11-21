@@ -21,22 +21,24 @@ Five crates today, in this order:
 
 ```text
 utils            geometry, colour, small-vec, locks, hash, unicode
-  └── types      colour tables, character attributes, cursor type, viewport
+  └── types      colours, attributes, VT vocabulary, charset tables
         ├── buffer   cells, rows, TextBuffer, selection, marks, search
-        └── vt       DFA parser, parameters, charsets, base64
-              └── adapter   dispatch traits, page manager, sixel, macros
+        └── vt       DFA parser, parser operands, G0-G3 charsets
+              └── adapter   dispatch state, page manager, sixel, macros
                     └── renderer, host, server, input, app    (later phases)
 ```
 
 1. An edge points right and never left. `types` may not depend on `buffer`; `vt`
-   and `buffer` do not depend on each other; `adapter` sees both.
+   and `buffer` do not depend on each other; `adapter` sees `buffer` and the
+   vocabulary in `types`, but not `vt` — the parser-to-dispatch loop belongs to
+   the application, which owns both (ADR 002).
 2. The ring is declared once in `[workspace.dependencies]` and every crate
    inherits the entry. Adding an edge is a `Cargo.toml` diff, which is the moment
    a reviewer should think about it.
 3. A crate is created when its first real content exists, not when the plan
    names it. A crate for one type is a directory, not a boundary.
 4. Later phases follow the same rule: `renderer` and `host` sit beside `adapter`
-   and see `buffer` and `vt`; only `app` sees everything.
+   and see `buffer` and `types`; only `app` sees everything.
 
 ## Rationale
 

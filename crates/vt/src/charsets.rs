@@ -1,6 +1,8 @@
 //! VT character set management.
 //!
 //! Ported from the character set handling in the Windows Terminal C++ VT module.
+//! This is the parser-side G0-G3 manager; the 94/96-character translation
+//! tables live in `types::charsets`.
 
 /// The available VT character sets.
 ///

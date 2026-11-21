@@ -4,8 +4,8 @@
 //! A row is a fixed-width array of `OutputCell` with methods for writing,
 //! reading, and manipulating cell data.
 
+use crate::TextAttribute;
 use crate::output_cell::OutputCell;
-use crate::text_attribute::TextAttribute;
 
 /// A row of terminal cells with width and modification tracking.
 ///

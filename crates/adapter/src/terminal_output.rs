@@ -3,8 +3,8 @@
 //! Ported from `terminalOutput.hpp` in the Windows Terminal C++ codebase.
 //! Provides character set translation for displaying special characters.
 
-use crate::charsets;
 use crate::dispatch_types::VTID;
+use types::charsets;
 
 /// Terminal output state for character set translation.
 #[derive(Debug, Clone)]

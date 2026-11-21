@@ -10,48 +10,33 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~1.3k | 56 | Complete for Phase 1 |
-| `buffer` | ~4.7k | 180 | Phase 2 partial — no `resize`/`reflow` |
+| `types` | ~1.6k | 74 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, and the charset tables |
+| `buffer` | ~4.5k | 173 | Phase 2 partial — no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~4.2k | 46 | Phase 4 interfaces only — see "Pre-Phase-5 cleanup" |
+| `adapter` | ~4.0k | 43 | Phase 4 state and interfaces; dispatch handlers pending |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-542 tests, doc tests. Phases 5–14 are not started.
+550 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
 
 ## Pre-Phase-5 cleanup
 
-Phase 5 puts a renderer on top of the adapter. These are the reasons it cannot
-start yet, in the order they should be fixed. Each one has a check that fails
-today and passes when the item is done.
+Phase 5 puts a renderer on top of the adapter. Two items still stand between here
+and it; the rest of this section is the record of what the first cleanup pass
+settled.
 
-1. **`AdaptDispatch` is dead code and does not compile.**
-   `adapter/src/adapt_dispatch.rs` is not declared in `lib.rs`. Adding
-   `pub mod adapt_dispatch;` yields five errors: `crate::FontBuffer` and
-   `crate::MacroBuffer` are not re-exported, `types::TextAttribute` does not
-   exist, `SixelParser::SIXEL_DEFAULT_CONFORMANCE` does not exist, and
-   `CursorState` is not `Copy`.
+**Open.**
 
-   ```sh
-   grep -q 'pub mod adapt_dispatch;' crates/adapter/src/lib.rs
-   ```
+1. **`ITermDispatch` has no implementation.** The trait declares the DEC/ANSI
+   handlers; `AdaptDispatch` holds the state they will mutate but implements
+   none of them, so bytes parsed by `vt` reach nothing. Porting them needs the
+   upstream `adaptDispatch.cpp` and `ut_adapter`; `.design/refs` is absent on
+   this machine, so the handlers are not guesswork to be written blind. Check:
+   `grep -rn 'impl ITermDispatch' crates/` must find one.
 
-2. **`ITermDispatch` has no implementation.** The trait declares the DEC/ANSI
-   handlers; `AdaptDispatch` implements none of them, so bytes parsed by `vt`
-   reach nothing. Check: `grep -rn 'impl ITermDispatch' crates/` must find one.
-
-3. **Duplicate types.** `VTParameter`, `VTParameters` and `VTID` exist in three
-   places, the charset tables in two, and `adapter::page_manager::TextBuffer` is
-   a three-field stub beside the real 744-line buffer. ADR 002 says where each
-   type belongs; the cleanup is mechanical once that is agreed.
-
-   ```sh
-   grep -rn 'pub struct VTParameter' crates/   # must print exactly one line
-   ```
-
-4. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
+2. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
    deliverable and `TextBuffer` has no method for it. This is the most expensive
    item to defer: once the renderer and the host both believe the buffer is
    fixed-width, a reflow rewrite touches all three.
@@ -60,9 +45,30 @@ today and passes when the item is done.
    grep -rn 'fn resize\|fn reflow' crates/buffer/src/   # must not be empty
    ```
 
-5. **`adapter/src/main.rs` is `println!("Hello, world!")`.** It makes `adapter`
+3. **`adapter/src/main.rs` is `println!("Hello, world!")`.** It makes `adapter`
    a binary as well as a library for no reason. Delete it, or replace it with a
    real conformance runner.
+
+**Settled.**
+
+- `AdaptDispatch` is declared in `lib.rs`, compiles, and has seven tests for the
+  state it does hold (modes, margins, resets, cursor style). Its unused `CursorState`
+  slots and tab-stop scaffolding were removed rather than left as dead state; they
+  come back with the handlers that use them.
+- `TextAttribute` moved from `buffer` to `types`; `buffer` re-exports it, so the
+  old path still resolves (ADR 002).
+- `adapter::dispatch_types` moved to `types::dispatch_types` — one definition of
+  `VTParameter`, `VTParameters`, `VTSubParameters`, `VTID` and the dispatch enums.
+- The 94/96-character translation tables moved from `adapter::charsets` to
+  `types::charsets`. They are data, and the renderer will need the same tables.
+  `vt::charsets` is a different thing — the G0-G3 manager the parser owns — and
+  stays where it is.
+- `PageManager` holds a real `buffer::TextBuffer`; page 2 is created with
+  `new_alternate`, and two tests assert it. The three-field stub is gone.
+
+Note on the ring: `adapter` depends on `buffer`, not on `vt`. The parser-to-
+dispatch loop (`StateMachine` → `DispatchAction` → `ITermDispatch`) belongs to
+whatever owns both, which is the application crate, not the adapter.
 
 ## Monorepo Workspace Layout
 
@@ -1075,7 +1081,7 @@ The Windows Terminal codebase maps to these Rust module groups:
 | **1. Foundation** | ✅ DONE | `winterm/crates/utils` (25 modules) + `winterm/crates/types` (10 modules) + `winterm/crates/buffer` (4 modules) — **275 tests passing, 1 ignored** (hash collision proptest) + 6 proptests + 3 snapshot tests added |
 | **2. Text Buffer** | 4 wks | `winterm/crates/buffer` + **500+ unit tests** + property tests |
 | **3. VT Parser** | 4 wks | `winterm/crates/vt` + **300+ unit tests** + conformance suite + fuzzing |
-| **4. Adapter** | ⚠️ PARTIAL | `winterm/crates/adapter` (10 modules) — types, dispatch traits, page manager, charsets, sixel, macros. `AdaptDispatch` is not wired and `ITermDispatch` has no implementation; see "Pre-Phase-5 cleanup" |
+| **4. Adapter** | ⚠️ PARTIAL | `winterm/crates/adapter` — state, dispatch traits, page manager on the real buffer, sixel, macros. `AdaptDispatch` compiles and is tested; the `ITermDispatch` handlers are pending |
 | **5. Renderer** | 6 wks | `winterm/crates/renderer` + **150+ unit tests** + 15 snapshot tests |
 | **6. Console Host** | 3.5 wks | `winterm/crates/host` + **200+ unit tests** |
 | **7. Server** | 2.5 wks | `winterm/crates/server` + **100+ unit tests** |
