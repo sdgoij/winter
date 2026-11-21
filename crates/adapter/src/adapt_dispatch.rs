@@ -125,8 +125,8 @@ pub struct AdaptDispatch {
     scroll_right_margin: VTInt,
     /// Terminal modes.
     modes: ModeSet,
-    /// SGR save/restore stack.
-    sgr_stack: Vec<types::CharacterAttributes>,
+    /// SGR save/restore stack (XTPUSHSGR / XTPOPSGR).
+    sgr_stack: types::SgrStack,
     /// Cursor styles.
     cursor_style: CursorStyle,
     /// How many callbacks reached a family that is not ported yet.
@@ -155,7 +155,7 @@ impl AdaptDispatch {
             scroll_left_margin: 0,
             scroll_right_margin: 0,
             modes,
-            sgr_stack: Vec::new(),
+            sgr_stack: types::SgrStack::new(),
             cursor_style: CursorStyle::UserDefault,
             unhandled_count: 0,
             last_unhandled: None,
@@ -277,7 +277,7 @@ impl AdaptDispatch {
     /// Soft resets the adapter.
     pub fn soft_reset(&mut self) {
         self.modes = ModeSet::default();
-        self.sgr_stack.clear();
+        self.sgr_stack = types::SgrStack::new();
         self.scroll_top_margin = 0;
         self.scroll_bottom_margin = 0;
         self.scroll_left_margin = 0;
@@ -310,21 +310,6 @@ impl AdaptDispatch {
     /// Checks if a mode flag is set.
     pub fn mode_is_set(&self, flag: ModeFlags) -> bool {
         self.modes.contains(flag)
-    }
-
-    /// Returns the SGR stack.
-    pub fn sgr_stack(&self) -> &[types::CharacterAttributes] {
-        &self.sgr_stack
-    }
-
-    /// Pushes attributes to the SGR stack.
-    pub fn push_sgr_stack(&mut self, attrs: types::CharacterAttributes) {
-        self.sgr_stack.push(attrs);
-    }
-
-    /// Pops attributes from the SGR stack.
-    pub fn pop_sgr_stack(&mut self) -> Option<types::CharacterAttributes> {
-        self.sgr_stack.pop()
     }
 
     /// Returns the active page's cursor position as `(row, column)`, 0-based.
@@ -614,6 +599,30 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn set_graphics_rendition(&mut self, options: &VTParameters) {
+        let mut attributes = self.page_manager.active_page().attributes();
+        Self::apply_graphics_options(options, &mut attributes);
+        self.page_manager.active_page().set_attributes(attributes);
+    }
+
+    fn set_character_protection_attribute(&mut self, options: &VTParameters) {
+        let mut attributes = self.page_manager.active_page().attributes();
+        Self::apply_logical_attribute(options, &mut attributes);
+        self.page_manager.active_page().set_attributes(attributes);
+    }
+
+    fn push_graphics_rendition(&mut self, options: &VTParameters) {
+        let attributes = self.page_manager.active_page().attributes();
+        let values: Vec<VTInt> = (0..options.len()).map(|index| options.at(index).value_or(0)).collect();
+        self.sgr_stack.push(attributes, &values);
+    }
+
+    fn pop_graphics_rendition(&mut self) {
+        let current = self.page_manager.active_page().attributes();
+        let restored = self.sgr_stack.pop(current);
+        self.page_manager.active_page().set_attributes(restored);
+    }
+
     fn cursor_up(&mut self, distance: VTInt) {
         self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
     }
@@ -891,12 +900,55 @@ mod tests {
         dispatch.unknown_sequence();
         dispatch.print('a');
         dispatch.print_string("bc");
+        dispatch.set_graphics_rendition(&VTParameters::default());
+        dispatch.set_character_protection_attribute(&VTParameters::default());
+        dispatch.push_graphics_rendition(&VTParameters::default());
+        dispatch.pop_graphics_rendition();
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.set_graphics_rendition(&VTParameters::default());
+        dispatch.erase_in_line(EraseType::All);
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("set_graphics_rendition"));
+        assert_eq!(dispatch.last_unhandled(), Some("erase_in_line"));
+    }
+
+    fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
+        dispatch.page_manager_mut().active_page().attributes()
+    }
+
+    #[test]
+    fn sgr_writes_the_page_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1, 31]));
+
+        let attributes = page_attributes(&mut dispatch);
+        assert!(attributes.is_intense());
+        assert_eq!(attributes.get_foreground(), types::TextColor::index16(4));
+    }
+
+    #[test]
+    fn printed_text_carries_the_page_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![31]));
+        dispatch.print('A');
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let cell = buffer.get_cell_data_at(0, 0).unwrap();
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+    }
+
+    #[test]
+    fn push_and_pop_restore_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1]));
+        dispatch.push_graphics_rendition(&VTParameters::default());
+
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![22]));
+        assert!(!page_attributes(&mut dispatch).is_intense());
+
+        dispatch.pop_graphics_rendition();
+        assert!(page_attributes(&mut dispatch).is_intense());
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {

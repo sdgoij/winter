@@ -16,6 +16,7 @@
 //! - [`terminal_output`] — Character set translation management
 
 pub mod adapt_dispatch;
+pub mod adapt_dispatch_graphics;
 pub mod font_buffer;
 pub mod interact_dispatch;
 pub mod macro_buffer;

@@ -13,6 +13,7 @@
 //! - [`text_attribute`] — `TextAttribute` for character rendering attributes
 //! - [`charsets`] — 94/96-character translation tables
 //! - [`dispatch_types`] — VT parameter types, dispatch enums, and mode flags
+//! - [`sgr_stack`] — `SgrStack` for XTPUSHSGR / XTPOPSGR
 //! - [`viewport`] — `Viewport` screen dimension type
 //! - [`line_rendition`] — Screen/buffer line conversion functions
 //! - [`codepoint_width`] — Unicode width detection
@@ -27,6 +28,7 @@ pub mod cursor_type;
 pub mod dispatch_types;
 pub mod line_rendition;
 pub mod mark_kind;
+pub mod sgr_stack;
 pub mod text_attribute;
 pub mod text_color;
 pub mod theme_utils;
@@ -41,6 +43,7 @@ pub use cursor_type::CursorType;
 pub use dispatch_types::*;
 pub use line_rendition::{LineRendition, apply_line_rendition};
 pub use mark_kind::MarkKind;
+pub use sgr_stack::SgrStack;
 pub use text_attribute::TextAttribute;
 pub use text_color::{ColorType, TextColor};
 pub use underline_style::UnderlineStyle;

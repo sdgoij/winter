@@ -226,6 +226,98 @@ impl TextAttribute {
     pub const fn is_blinking(&self) -> bool {
         self.attrs.contains(CharacterAttributes::Blinking)
     }
+
+    /// Returns whether the text is invisible.
+    pub const fn is_invisible(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::Invisible)
+    }
+
+    /// Returns whether the text is struck through.
+    pub const fn is_crossed_out(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::CrossedOut)
+    }
+
+    /// Returns whether the colours are reversed.
+    pub const fn is_reverse_video(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::ReverseVideo)
+    }
+
+    /// Turns the intense (bright) attribute on or off.
+    pub fn set_intense(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Intense, enabled);
+    }
+
+    /// Turns the faint attribute on or off.
+    pub fn set_faint(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Faint, enabled);
+    }
+
+    /// Turns italics on or off.
+    pub fn set_italic(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Italics, enabled);
+    }
+
+    /// Turns blinking on or off.
+    pub fn set_blinking(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Blinking, enabled);
+    }
+
+    /// Turns invisibility on or off.
+    pub fn set_invisible(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Invisible, enabled);
+    }
+
+    /// Turns strike-through on or off.
+    pub fn set_crossed_out(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::CrossedOut, enabled);
+    }
+
+    /// Turns reverse video on or off.
+    pub fn set_reverse_video(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::ReverseVideo, enabled);
+    }
+
+    /// Turns the overline on or off.
+    ///
+    /// Upstream reuses the top-gridline bit for this (`TextAttribute::SetOverlined`).
+    pub fn set_overlined(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::TopGridline, enabled);
+    }
+
+    /// Marks the attribute as protected (DECSCA).
+    pub fn set_protected(&mut self, enabled: bool) {
+        self.update(CharacterAttributes::Protected, enabled);
+    }
+
+    /// Returns whether the attribute is protected.
+    pub const fn is_protected(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::Protected)
+    }
+
+    /// Sets the underline style, replacing the two style bits.
+    pub fn set_underline_style(&mut self, style: UnderlineStyle) {
+        let shifted = (style as u16) << CharacterAttributes::UNDERLINE_STYLE_SHIFT;
+        self.attrs =
+            (self.attrs & !CharacterAttributes::UnderlineStyleMask) | CharacterAttributes::from_bits_truncate(shifted);
+    }
+
+    /// Sets an xterm-256 foreground index.
+    pub fn set_indexed_foreground_256(&mut self, index: u8) {
+        self.foreground = TextColor::index256(index);
+    }
+
+    /// Sets an xterm-256 background index.
+    pub fn set_indexed_background_256(&mut self, index: u8) {
+        self.background = TextColor::index256(index);
+    }
+
+    fn update(&mut self, flag: CharacterAttributes, enabled: bool) {
+        if enabled {
+            self.attrs |= flag;
+        } else {
+            self.attrs &= !flag;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -266,65 +266,34 @@ pub enum TaskbarState {
 }
 
 /// Graphics options for SGR.
+///
+/// Ported from `DispatchTypes::GraphicsOptions`. Values 2 and 5 are dual-purpose:
+/// they select the extended-colour syntax when followed by a colour space, and
+/// mean faint/blink otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u16)]
 pub enum GraphicsOptions {
-    /// Off (reset).
     Off = 0,
-    /// Intense (bright).
     Intense = 1,
-    /// Faint.
-    Faint = 2,
-    /// Italics.
+    /// 2 is also faint (decreased intensity, ISO 6429).
+    RGBColorOrFaint = 2,
     Italics = 3,
-    /// Underline (single).
+    /// 4 is also the extended underline-style form `SGR 4:x`.
     Underline = 4,
-    /// Blink.
-    Blink = 5,
-    /// Rapid blink.
+    /// 5 is also the xterm-256 index in `38;5:n`.
+    BlinkOrXterm256Index = 5,
     RapidBlink = 6,
-    /// Reverse video.
     Negative = 7,
-    /// Invisible.
     Invisible = 8,
-    /// Crossed out.
     CrossedOut = 9,
-    /// Doubly underlined.
-    DoublyUnderlined = 10,
-    /// Underlined.
-    #[allow(deprecated)]
-    Underlined = 11,
-    /// Steady (not faint).
-    Steady = 20,
-    /// Not italic.
+    DoublyUnderlined = 21,
+    NotIntenseOrFaint = 22,
     NotItalics = 23,
-    /// Not underlined.
     NoUnderline = 24,
-    /// Steady (not blinking).
-    SteadyBlink = 25,
-    /// Positive (not reverse).
+    Steady = 25,
     Positive = 27,
-    /// Show (not invisible).
     Visible = 28,
-    /// Not crossed out.
     NotCrossedOut = 29,
-    /// Overline.
-    Overline = 53,
-    /// Double underline (alias for DoublyUnderlined).
-    #[allow(deprecated)]
-    DoubleUnderline = 13,
-    /// Normal color (not intense).
-    NormalColor = 22,
-    /// Normal intensity (not faint) - alias for NormalColor.
-    #[allow(deprecated)]
-    NormalIntensity = 230,
-    /// No overline.
-    NoOverline = 55,
-    /// Underline color.
-    UnderlineColor = 58,
-    /// Reset underline color.
-    ResetUnderlineColor = 59,
-    /// Foreground colors.
     ForegroundBlack = 30,
     ForegroundRed = 31,
     ForegroundGreen = 32,
@@ -333,9 +302,8 @@ pub enum GraphicsOptions {
     ForegroundMagenta = 35,
     ForegroundCyan = 36,
     ForegroundWhite = 37,
-    /// Default foreground.
+    ForegroundExtended = 38,
     ForegroundDefault = 39,
-    /// Background colors.
     BackgroundBlack = 40,
     BackgroundRed = 41,
     BackgroundGreen = 42,
@@ -344,9 +312,12 @@ pub enum GraphicsOptions {
     BackgroundMagenta = 45,
     BackgroundCyan = 46,
     BackgroundWhite = 47,
-    /// Default background.
+    BackgroundExtended = 48,
     BackgroundDefault = 49,
-    /// Bright foreground colors.
+    Overline = 53,
+    NoOverline = 55,
+    UnderlineColor = 58,
+    UnderlineColorDefault = 59,
     BrightForegroundBlack = 90,
     BrightForegroundRed = 91,
     BrightForegroundGreen = 92,
@@ -355,7 +326,6 @@ pub enum GraphicsOptions {
     BrightForegroundMagenta = 95,
     BrightForegroundCyan = 96,
     BrightForegroundWhite = 97,
-    /// Bright background colors.
     BrightBackgroundBlack = 100,
     BrightBackgroundRed = 101,
     BrightBackgroundGreen = 102,
@@ -364,9 +334,106 @@ pub enum GraphicsOptions {
     BrightBackgroundMagenta = 105,
     BrightBackgroundCyan = 106,
     BrightBackgroundWhite = 107,
-    /// Underline style values.
-    DoublyUnderline = 21,
-    UnderlineOrOverline = 12,
+}
+
+impl GraphicsOptions {
+    /// Decodes an SGR option, or `None` for a value no handler owns.
+    pub const fn from_int(value: VTInt) -> Option<Self> {
+        Some(match value {
+            0 => Self::Off,
+            1 => Self::Intense,
+            2 => Self::RGBColorOrFaint,
+            3 => Self::Italics,
+            4 => Self::Underline,
+            5 => Self::BlinkOrXterm256Index,
+            6 => Self::RapidBlink,
+            7 => Self::Negative,
+            8 => Self::Invisible,
+            9 => Self::CrossedOut,
+            21 => Self::DoublyUnderlined,
+            22 => Self::NotIntenseOrFaint,
+            23 => Self::NotItalics,
+            24 => Self::NoUnderline,
+            25 => Self::Steady,
+            27 => Self::Positive,
+            28 => Self::Visible,
+            29 => Self::NotCrossedOut,
+            30..=37 => Self::foreground(value),
+            38 => Self::ForegroundExtended,
+            39 => Self::ForegroundDefault,
+            40..=47 => Self::background(value),
+            48 => Self::BackgroundExtended,
+            49 => Self::BackgroundDefault,
+            53 => Self::Overline,
+            55 => Self::NoOverline,
+            58 => Self::UnderlineColor,
+            59 => Self::UnderlineColorDefault,
+            90..=97 => Self::bright_foreground(value),
+            100..=107 => Self::bright_background(value),
+            _ => return None,
+        })
+    }
+
+    const fn foreground(value: VTInt) -> Self {
+        match value {
+            30 => Self::ForegroundBlack,
+            31 => Self::ForegroundRed,
+            32 => Self::ForegroundGreen,
+            33 => Self::ForegroundYellow,
+            34 => Self::ForegroundBlue,
+            35 => Self::ForegroundMagenta,
+            36 => Self::ForegroundCyan,
+            _ => Self::ForegroundWhite,
+        }
+    }
+
+    const fn background(value: VTInt) -> Self {
+        match value {
+            40 => Self::BackgroundBlack,
+            41 => Self::BackgroundRed,
+            42 => Self::BackgroundGreen,
+            43 => Self::BackgroundYellow,
+            44 => Self::BackgroundBlue,
+            45 => Self::BackgroundMagenta,
+            46 => Self::BackgroundCyan,
+            _ => Self::BackgroundWhite,
+        }
+    }
+
+    const fn bright_foreground(value: VTInt) -> Self {
+        match value {
+            90 => Self::BrightForegroundBlack,
+            91 => Self::BrightForegroundRed,
+            92 => Self::BrightForegroundGreen,
+            93 => Self::BrightForegroundYellow,
+            94 => Self::BrightForegroundBlue,
+            95 => Self::BrightForegroundMagenta,
+            96 => Self::BrightForegroundCyan,
+            _ => Self::BrightForegroundWhite,
+        }
+    }
+
+    const fn bright_background(value: VTInt) -> Self {
+        match value {
+            100 => Self::BrightBackgroundBlack,
+            101 => Self::BrightBackgroundRed,
+            102 => Self::BrightBackgroundGreen,
+            103 => Self::BrightBackgroundYellow,
+            104 => Self::BrightBackgroundBlue,
+            105 => Self::BrightBackgroundMagenta,
+            106 => Self::BrightBackgroundCyan,
+            _ => Self::BrightBackgroundWhite,
+        }
+    }
+}
+
+/// DECSCA logical attribute options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LogicalAttributeOptions {
+    Default = 0,
+    Protected = 1,
+    Unprotected = 2,
 }
 
 /// Underline style constants.
@@ -378,7 +445,11 @@ pub const UNDERLINE_NONE: u8 = 24;
 /// Additional underline-related constants (not in GraphicsOptions enum).
 pub const OVERLINE_NONE: u8 = 55;
 
-/// SGR save/restore stack options.
+/// SGR save/restore stack options (XTPUSHSGR).
+///
+/// Ported from `DispatchTypes::SgrSaveRestoreStackOptions`. The values are xterm
+/// parameter numbers, not ordinals: 7 is inverse, 21 is doubly underlined, 30/31
+/// save the foreground/background colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SgrSaveRestoreStackOptions {
@@ -388,13 +459,17 @@ pub enum SgrSaveRestoreStackOptions {
     Italics = 3,
     Underline = 4,
     Blink = 5,
-    Negative = 6,
-    Invisible = 7,
-    CrossedOut = 8,
-    DoublyUnderlined = 9,
-    SaveForegroundColor = 10,
-    SaveBackgroundColor = 11,
-    Max = 12,
+    Negative = 7,
+    Invisible = 8,
+    CrossedOut = 9,
+    DoublyUnderlined = 21,
+    SaveForegroundColor = 30,
+    SaveBackgroundColor = 31,
+}
+
+impl SgrSaveRestoreStackOptions {
+    /// The highest option value (upstream's `Max` alias for the last entry).
+    pub const MAX: i32 = Self::SaveBackgroundColor as i32;
 }
 
 /// Status types for DSR.
