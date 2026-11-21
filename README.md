@@ -18,9 +18,9 @@ Early. The foundation is complete and tested; the emulator is not runnable yet.
 | [`crates/types`](crates/types) | Terminal vocabulary: colours, attributes, enums | Complete |
 | [`crates/buffer`](crates/buffer) | `OutputCell`, `Row`, `TextBuffer`, selection, search | No reflow yet |
 | [`crates/vt`](crates/vt) | DFA parser for VT escape sequences | Parser complete, corpus pending |
-| [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Handlers pending |
+| [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Cursor and margin handlers ported |
 
-550 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+559 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the cleanup list that stands
 between here and the renderer are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
@@ -64,7 +64,9 @@ top of it.
 Read [`AGENTS.md`](AGENTS.md) first: it is the working agreement, and it is short.
 Procedures (porting a C++ module, writing a commit message) are skills under
 [`.agents/skills/`](.agents/skills). Decisions that constrain future code are
-ADRs under [`.agents/notes/adr/`](.agents/notes/adr/README.md).
+ADRs under [`.agents/notes/adr/`](.agents/notes/adr/README.md). The C++ source is
+expected at `.design/refs/terminal` (gitignored); the port is written against it,
+not from memory.
 
 ## Licence
 

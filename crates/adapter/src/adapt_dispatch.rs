@@ -9,6 +9,7 @@
 
 use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
+use crate::term_dispatch::ITermDispatch;
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
 
 /// Cursor state for save/restore operations.
@@ -59,10 +60,49 @@ pub struct ChangeOps {
     pub underline_color: Option<types::TextColor>,
 }
 
+/// A cursor offset, absolute (1-based VT coordinates) or relative.
+///
+/// Ported from `AdaptDispatch::Offset`; absolute positions subtract one because
+/// VT's origin is `1,1` and the buffer's is `0,0`.
+#[derive(Debug, Clone, Copy)]
+struct Offset {
+    value: VTInt,
+    is_absolute: bool,
+}
+
+impl Offset {
+    const fn absolute(value: VTInt) -> Self {
+        Self {
+            value: value - 1,
+            is_absolute: true,
+        }
+    }
+
+    const fn forward(value: VTInt) -> Self {
+        Self {
+            value,
+            is_absolute: false,
+        }
+    }
+
+    const fn backward(value: VTInt) -> Self {
+        Self {
+            value: -value,
+            is_absolute: false,
+        }
+    }
+
+    const fn unchanged() -> Self {
+        Self::forward(0)
+    }
+}
+
 /// Main VT adapter dispatcher.
 ///
-/// State only, for now: the handlers arrive with the `ITermDispatch`
-/// implementation, and each one is expected to name the sequence it serves.
+/// Ported handlers live here; the families that are not ported yet fall through
+/// to `ITermDispatch`'s defaults, which call [`AdaptDispatch::unhandled`] and are
+/// recorded so a test can see them.
+#[derive(Debug)]
 pub struct AdaptDispatch {
     /// Page manager for buffer switching.
     page_manager: PageManager,
@@ -76,10 +116,11 @@ pub struct AdaptDispatch {
     macro_buffer: MacroBuffer,
     /// Whether we're using the alternate buffer.
     using_alt_buffer: bool,
-    /// Scrolling margins (top, bottom).
+    /// Scrolling margins, 0-based and inclusive; `(0, 0)` means unset, which the
+    /// getters read as the full page (upstream `_scrollMargins`).
     scroll_top_margin: VTInt,
     scroll_bottom_margin: VTInt,
-    /// Horizontal margins (left, right).
+    /// Horizontal margins, same convention.
     scroll_left_margin: VTInt,
     scroll_right_margin: VTInt,
     /// Terminal modes.
@@ -88,6 +129,10 @@ pub struct AdaptDispatch {
     sgr_stack: Vec<types::CharacterAttributes>,
     /// Cursor styles.
     cursor_style: CursorStyle,
+    /// How many callbacks reached a family that is not ported yet.
+    unhandled_count: usize,
+    /// The name of the last such callback.
+    last_unhandled: Option<&'static str>,
 }
 
 impl AdaptDispatch {
@@ -101,12 +146,14 @@ impl AdaptDispatch {
             macro_buffer: MacroBuffer::new(),
             using_alt_buffer: false,
             scroll_top_margin: 0,
-            scroll_bottom_margin: 23,
+            scroll_bottom_margin: 0,
             scroll_left_margin: 0,
-            scroll_right_margin: 79,
+            scroll_right_margin: 0,
             modes: ModeSet::default(),
             sgr_stack: Vec::new(),
             cursor_style: CursorStyle::UserDefault,
+            unhandled_count: 0,
+            last_unhandled: None,
         }
     }
 
@@ -227,9 +274,9 @@ impl AdaptDispatch {
         self.modes = ModeSet::default();
         self.sgr_stack.clear();
         self.scroll_top_margin = 0;
-        self.scroll_bottom_margin = 23;
+        self.scroll_bottom_margin = 0;
         self.scroll_left_margin = 0;
-        self.scroll_right_margin = 79;
+        self.scroll_right_margin = 0;
         self.term_output.soft_reset();
         self.sixel_parser.soft_reset();
     }
@@ -274,11 +321,231 @@ impl AdaptDispatch {
     pub fn pop_sgr_stack(&mut self) -> Option<types::CharacterAttributes> {
         self.sgr_stack.pop()
     }
+
+    /// Returns the active page's cursor position as `(row, column)`, 0-based.
+    pub fn active_cursor_position(&mut self) -> (VTInt, VTInt) {
+        let buffer = self.page_manager.active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        buffer.cursor().position()
+    }
+
+    /// Returns how many callbacks reached a family with no ported handler.
+    pub fn unhandled_count(&self) -> usize {
+        self.unhandled_count
+    }
+
+    /// Returns the name of the last callback with no ported handler.
+    pub fn last_unhandled(&self) -> Option<&'static str> {
+        self.last_unhandled
+    }
+
+    /// The size of the active page, from the buffer rather than the viewport so
+    /// a resize cannot leave it stale.
+    fn page_size(&mut self) -> (VTInt, VTInt) {
+        let buffer = self.page_manager.active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        (buffer.screen_width(), buffer.screen_height())
+    }
+
+    /// Effective vertical margins for a page of `page_height` rows.
+    ///
+    /// Ported from `_GetVerticalMargins`: margins that are unset or out of range
+    /// mean the full page, so an adapter that has never seen DECSTBM still moves
+    /// through every row.
+    fn effective_vertical_margins(&mut self, page_height: VTInt) -> (VTInt, VTInt) {
+        let bottommost = page_height - 1;
+        if self.scroll_top_margin >= bottommost {
+            self.scroll_top_margin = 0;
+            self.scroll_bottom_margin = 0;
+        }
+        let set = self.scroll_top_margin < self.scroll_bottom_margin;
+        let top = if set { self.scroll_top_margin } else { 0 };
+        let bottom = if set { self.scroll_bottom_margin } else { bottommost };
+        (top, bottom.min(bottommost))
+    }
+
+    /// Effective horizontal margins for a page `page_width` columns wide.
+    fn effective_horizontal_margins(&mut self, page_width: VTInt) -> (VTInt, VTInt) {
+        let rightmost = page_width - 1;
+        if self.scroll_left_margin >= rightmost {
+            self.scroll_left_margin = 0;
+            self.scroll_right_margin = 0;
+        }
+        let set = self.scroll_left_margin < self.scroll_right_margin;
+        let left = if set { self.scroll_left_margin } else { 0 };
+        let right = if set { self.scroll_right_margin } else { rightmost };
+        (left, right.min(rightmost))
+    }
+
+    /// Ported from `_CursorMovePosition`: relative or absolute movement, clamped
+    /// to the page and, when asked, to the scrolling margins.
+    fn move_cursor(&mut self, row_offset: Offset, col_offset: Offset, clamp_in_margins: bool) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (current_row, current_col) = buffer.cursor().position();
+        let origin_mode = self.modes.contains(ModeFlags::DECOM);
+
+        let mut row = if row_offset.is_absolute {
+            if origin_mode { top } else { 0 }
+        } else {
+            current_row
+        };
+        let mut col = if col_offset.is_absolute {
+            if origin_mode { left } else { 0 }
+        } else {
+            current_col
+        };
+
+        row = (row + row_offset.value).clamp(0, (page_height - 1).max(0));
+        col = (col + col_offset.value).clamp(0, (page_width - 1).max(0));
+
+        if clamp_in_margins || origin_mode {
+            if current_col >= left && current_col <= right {
+                if current_row >= top {
+                    row = row.max(top);
+                }
+                if current_row <= bottom {
+                    row = row.min(bottom);
+                }
+            }
+            if row >= top && row <= bottom {
+                if current_col >= left {
+                    col = col.max(left);
+                }
+                if current_col <= right {
+                    col = col.min(right);
+                }
+            }
+        }
+
+        buffer.cursor_mut().set_position(row, col);
+    }
+
+    /// Ported from `_DoSetTopBottomScrollingMargins` (DECSTBM).
+    fn set_vertical_scrolling_margins(&mut self, top_margin: VTInt, bottom_margin: VTInt, home_cursor: bool) {
+        let (_, page_height) = self.page_size();
+        let mut actual_top = if top_margin == 0 { 1 } else { top_margin };
+        let mut actual_bottom = if bottom_margin == 0 { page_height } else { bottom_margin };
+
+        if actual_top < actual_bottom && actual_bottom <= page_height {
+            if actual_top == 1 && actual_bottom == page_height {
+                actual_top = 0;
+                actual_bottom = 0;
+            } else {
+                actual_top -= 1;
+                actual_bottom -= 1;
+            }
+            self.scroll_top_margin = actual_top;
+            self.scroll_bottom_margin = actual_bottom;
+
+            if home_cursor {
+                ITermDispatch::cursor_position(self, 1, 1);
+            }
+        }
+    }
+
+    /// Ported from `_DoSetLeftRightScrollingMargins` (DECSLRM).
+    fn set_horizontal_scrolling_margins(&mut self, left_margin: VTInt, right_margin: VTInt, home_cursor: bool) {
+        let (page_width, _) = self.page_size();
+        let mut actual_left = if left_margin == 0 { 1 } else { left_margin };
+        let mut actual_right = if right_margin == 0 { page_width } else { right_margin };
+
+        if actual_left < actual_right && actual_right <= page_width {
+            if actual_left == 1 && actual_right == page_width {
+                actual_left = 0;
+                actual_right = 0;
+            } else {
+                actual_left -= 1;
+                actual_right -= 1;
+            }
+            self.scroll_left_margin = actual_left;
+            self.scroll_right_margin = actual_right;
+
+            if home_cursor {
+                ITermDispatch::cursor_position(self, 1, 1);
+            }
+        }
+    }
 }
 
 impl Default for AdaptDispatch {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Cursor positioning and the scrolling margins, ported from
+/// `adaptDispatch.cpp` (`_CursorMovePosition`, CUU–CUP, DECSTBM, DECSLRM).
+///
+/// Everything else still falls through to the trait's defaults, which are
+/// recorded by [`AdaptDispatch::unhandled`]; the ratchet test below keeps the
+/// ported set honest.
+impl ITermDispatch for AdaptDispatch {
+    fn unhandled(&mut self, sequence: &'static str) {
+        self.unhandled_count += 1;
+        self.last_unhandled = Some(sequence);
+    }
+
+    // An unknown sequence is ignored by design, not a missing handler.
+    fn unknown_sequence(&mut self) {}
+
+    fn cursor_up(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
+    }
+
+    fn cursor_down(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::forward(distance), Offset::unchanged(), true);
+    }
+
+    fn cursor_forward(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::unchanged(), Offset::forward(distance), true);
+    }
+
+    fn cursor_backward(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::unchanged(), Offset::backward(distance), true);
+    }
+
+    fn cursor_next_line(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::forward(distance), Offset::absolute(1), true);
+    }
+
+    fn cursor_prev_line(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::backward(distance), Offset::absolute(1), true);
+    }
+
+    fn cursor_horizontal_position_absolute(&mut self, column: VTInt) {
+        self.move_cursor(Offset::unchanged(), Offset::absolute(column), false);
+    }
+
+    fn vertical_line_position_absolute(&mut self, line: VTInt) {
+        self.move_cursor(Offset::absolute(line), Offset::unchanged(), false);
+    }
+
+    fn horizontal_position_relative(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::unchanged(), Offset::forward(distance), false);
+    }
+
+    fn vertical_position_relative(&mut self, distance: VTInt) {
+        self.move_cursor(Offset::forward(distance), Offset::unchanged(), false);
+    }
+
+    fn cursor_position(&mut self, line: VTInt, column: VTInt) {
+        self.move_cursor(Offset::absolute(line), Offset::absolute(column), false);
+    }
+
+    fn set_top_bottom_scrolling_margins(&mut self, top_margin: VTInt, bottom_margin: VTInt) {
+        self.set_vertical_scrolling_margins(top_margin, bottom_margin, true);
+    }
+
+    fn set_left_right_scrolling_margins(&mut self, left_margin: VTInt, right_margin: VTInt) {
+        // DECSLRM is ignored unless DECLRMM (private mode 69) is set.
+        if self.modes.contains(ModeFlags::DECLRMM) {
+            self.set_horizontal_scrolling_margins(left_margin, right_margin, true);
+        }
     }
 }
 
@@ -327,11 +594,15 @@ bitflags::bitflags! {
         const DECSCNM = 1 << 7;
         /// Erase color mode (DECECM).
         const DECECM = 1 << 8;
+        /// Left/right margin mode (DECLRMM), which gates DECSLRM.
+        const DECLRMM = 1 << 9;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::term_dispatch::ITermDispatch;
+
     use super::*;
 
     #[test]
@@ -389,5 +660,119 @@ mod tests {
         assert_eq!(dispatch.cursor_style(), CursorStyle::UserDefault);
         dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
         assert_eq!(dispatch.cursor_style(), CursorStyle::BlinkingBlock);
+    }
+
+    // Ported from `ut_adapter/adapterTest.cpp` CursorPositionTest and
+    // CursorMovementTest: CUP is 1-based on the wire, 0-based in the buffer.
+    #[test]
+    fn cursor_position_is_one_based_on_the_wire() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(10, 20);
+        assert_eq!(dispatch.active_cursor_position(), (9, 19));
+    }
+
+    #[test]
+    fn cursor_movement_clamps_to_the_page() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_forward(1000);
+        assert_eq!(dispatch.active_cursor_position(), (0, 79));
+
+        dispatch.cursor_backward(1000);
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+
+        dispatch.cursor_down(1000);
+        assert_eq!(dispatch.active_cursor_position(), (23, 0));
+
+        dispatch.cursor_up(1000);
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+    }
+
+    #[test]
+    fn next_line_moves_down_and_returns_to_column_zero() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_forward(10);
+        dispatch.cursor_next_line(2);
+        assert_eq!(dispatch.active_cursor_position(), (2, 0));
+
+        dispatch.cursor_prev_line(1);
+        assert_eq!(dispatch.active_cursor_position(), (1, 0));
+    }
+
+    // DECSTBM stores 0-based margins and homes the cursor on success.
+    #[test]
+    fn scrolling_margins_home_the_cursor_and_clamp_movement() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_top_bottom_scrolling_margins(2, 20);
+        assert_eq!(dispatch.vertical_margins(), (1, 19));
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+
+        dispatch.cursor_down(1000);
+        assert_eq!(dispatch.active_cursor_position(), (19, 0));
+    }
+
+    #[test]
+    fn full_page_margins_clear_instead_of_storing() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_top_bottom_scrolling_margins(1, 24);
+        assert_eq!(dispatch.vertical_margins(), (0, 0));
+    }
+
+    #[test]
+    fn invalid_margins_are_ignored() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_top_bottom_scrolling_margins(20, 10);
+        assert_eq!(dispatch.vertical_margins(), (0, 0));
+        // An out-of-range bottom is also rejected rather than clamped.
+        dispatch.set_top_bottom_scrolling_margins(1, 25);
+        assert_eq!(dispatch.vertical_margins(), (0, 0));
+    }
+
+    // With origin mode set, an absolute position is relative to the margins.
+    #[test]
+    fn origin_mode_makes_absolute_positions_margin_relative() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_top_bottom_scrolling_margins(2, 20);
+        dispatch.set_mode(ModeFlags::DECOM, true);
+
+        dispatch.cursor_position(1, 1);
+        assert_eq!(dispatch.active_cursor_position(), (1, 0));
+    }
+
+    #[test]
+    fn decslrm_is_ignored_until_lr_margin_mode_is_set() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_left_right_scrolling_margins(5, 75);
+        assert_eq!(dispatch.horizontal_margins(), (0, 0));
+
+        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_left_right_scrolling_margins(5, 75);
+        assert_eq!(dispatch.horizontal_margins(), (4, 74));
+    }
+
+    // The ratchet: a ported family must not report, and an unported one must.
+    // When a family is ported, add it to the first half of this test.
+    #[test]
+    fn ported_families_do_not_report_and_unported_ones_do() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_up(1);
+        dispatch.cursor_down(1);
+        dispatch.cursor_forward(1);
+        dispatch.cursor_backward(1);
+        dispatch.cursor_next_line(1);
+        dispatch.cursor_prev_line(1);
+        dispatch.cursor_horizontal_position_absolute(1);
+        dispatch.vertical_line_position_absolute(1);
+        dispatch.horizontal_position_relative(1);
+        dispatch.vertical_position_relative(1);
+        dispatch.cursor_position(1, 1);
+        dispatch.set_top_bottom_scrolling_margins(1, 24);
+        dispatch.set_left_right_scrolling_margins(1, 80);
+        dispatch.unknown_sequence();
+        assert_eq!(dispatch.unhandled_count(), 0);
+        assert_eq!(dispatch.last_unhandled(), None);
+
+        dispatch.set_graphics_rendition(&VTParameters::default());
+        assert_eq!(dispatch.unhandled_count(), 1);
+        assert_eq!(dispatch.last_unhandled(), Some("set_graphics_rendition"));
     }
 }

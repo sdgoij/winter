@@ -13,10 +13,10 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~1.6k | 74 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, and the charset tables |
 | `buffer` | ~4.5k | 173 | Phase 2 partial — no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~4.0k | 43 | Phase 4 state and interfaces; dispatch handlers pending |
+| `adapter` | ~4.3k | 52 | Phase 4 state and interfaces; cursor and margin handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-550 tests, doc tests. Phases 5–14 are not started.
+559 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -29,12 +29,13 @@ settled.
 
 **Open.**
 
-1. **`ITermDispatch` has no implementation.** The trait declares the DEC/ANSI
-   handlers; `AdaptDispatch` holds the state they will mutate but implements
-   none of them, so bytes parsed by `vt` reach nothing. Porting them needs the
-   upstream `adaptDispatch.cpp` and `ut_adapter`; `.design/refs` is absent on
-   this machine, so the handlers are not guesswork to be written blind. Check:
-   `grep -rn 'impl ITermDispatch' crates/` must find one.
+1. **Most `ITermDispatch` families have no handler.** Ported so far: cursor
+   positioning (CUU, CUD, CUF, CUB, CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and
+   the scrolling margins (DECSTBM, DECSLRM behind DECLRMM). Everything else falls
+   through to the trait default, which `AdaptDispatch::unhandled` records; the
+   ratchet test in `adapt_dispatch.rs` names the ported set and must grow with
+   each family. Next in dependency order: `print`/`print_string`, SGR
+   (`adaptDispatchGraphics.cpp`), line feed and index, erase, modes.
 
 2. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
    deliverable and `TextBuffer` has no method for it. This is the most expensive
@@ -51,10 +52,11 @@ settled.
 
 **Settled.**
 
-- `AdaptDispatch` is declared in `lib.rs`, compiles, and has seven tests for the
-  state it does hold (modes, margins, resets, cursor style). Its unused `CursorState`
-  slots and tab-stop scaffolding were removed rather than left as dead state; they
-  come back with the handlers that use them.
+- The upstream source was not present when the cleanup started; it now is, at
+  `.design/refs/terminal`, and the handler port is running against it (ADR 004).
+- `AdaptDispatch` is declared in `lib.rs`, compiles, and implements the cursor
+  and margin families. Its unused cursor-save slots and tab-stop scaffolding were
+  removed rather than annotated; they come back with the handlers that read them.
 - `TextAttribute` moved from `buffer` to `types`; `buffer` re-exports it, so the
   old path still resolves (ADR 002).
 - `adapter::dispatch_types` moved to `types::dispatch_types` — one definition of

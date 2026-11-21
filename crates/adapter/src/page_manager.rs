@@ -10,6 +10,7 @@ use utils::inclusive_rect::InclusiveRect;
 const MAX_PAGES: usize = 6;
 
 /// A page (screen buffer) in the terminal.
+#[derive(Debug)]
 pub struct Page {
     /// The text buffer for this page.
     buffer: std::sync::Arc<std::sync::RwLock<TextBuffer>>,
@@ -56,6 +57,7 @@ impl Page {
 }
 
 /// Manages page switching between main and alternate buffers.
+#[derive(Debug)]
 pub struct PageManager {
     /// Active page number (1-based).
     active_page_number: i32,

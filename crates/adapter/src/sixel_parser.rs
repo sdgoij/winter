@@ -23,6 +23,7 @@ pub struct IndexedPixel {
 }
 
 /// Sixel parser state.
+#[derive(Debug)]
 struct SixelState {
     state: States,
     parameters: Vec<VTParameter>,
@@ -37,6 +38,7 @@ pub enum States {
 }
 
 /// Sixel image parser.
+#[derive(Debug)]
 pub struct SixelParser {
     /// Current parser state.
     state: SixelState,
