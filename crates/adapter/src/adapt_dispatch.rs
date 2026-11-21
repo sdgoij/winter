@@ -138,6 +138,11 @@ pub struct AdaptDispatch {
 impl AdaptDispatch {
     /// Creates a new AdaptDispatch.
     pub fn new() -> Self {
+        // DECAWM is set at power-on: a terminal that does not wrap by default
+        // overprints the last column instead of starting a new line.
+        let mut modes = ModeSet::default();
+        modes.insert(ModeFlags::DECAWM);
+
         Self {
             page_manager: PageManager::new(),
             term_output: TerminalOutput::new(false),
@@ -149,7 +154,7 @@ impl AdaptDispatch {
             scroll_bottom_margin: 0,
             scroll_left_margin: 0,
             scroll_right_margin: 0,
-            modes: ModeSet::default(),
+            modes,
             sgr_stack: Vec::new(),
             cursor_style: CursorStyle::UserDefault,
             unhandled_count: 0,
@@ -470,6 +475,104 @@ impl AdaptDispatch {
             }
         }
     }
+
+    /// Ported from `_WriteToBuffer`: writes text at the cursor, wrapping when
+    /// the line is full, honouring insert/replace mode and the margins.
+    ///
+    /// The wrap is delayed by one character, as on a real VT: filling the last
+    /// column leaves the cursor there so the cell can still be overwritten, and
+    /// the line breaks when the next character arrives.
+    fn write_to_buffer(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        let wrap_at_eol = self.modes.contains(ModeFlags::DECAWM);
+        let insert = self.modes.contains(ModeFlags::IRM);
+        let attributes = self.page_manager.active_page().attributes();
+        let mut chars = text.chars().peekable();
+
+        while let Some(&ch) = chars.peek() {
+            let (page_width, page_height) = self.page_size();
+            let (top, bottom) = self.effective_vertical_margins(page_height);
+            let (left, right) = self.effective_horizontal_margins(page_width);
+
+            let buffer = self.page_manager.active_page().buffer();
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            let (mut row, mut col) = buffer.cursor().position();
+
+            if let Some(delayed) = buffer.cursor().delayed_eol_wrap() {
+                buffer.cursor_mut().reset_delayed_eol_wrap();
+                // Only act on the delayed wrap if the cursor has not moved since
+                // it was marked; a CUP in between cancels it.
+                if wrap_at_eol && delayed == (row, col) {
+                    line_feed_in_region(&mut buffer, top, bottom, left, right);
+                    (row, col) = buffer.cursor().position();
+                }
+            }
+
+            let limit = if row >= top && row <= bottom && col <= right {
+                right + 1
+            } else {
+                page_width
+            };
+            // A combining mark has no width of its own; without grapheme
+            // clustering it is written as one cell so the loop can advance.
+            let width = (types::codepoint_width(ch as u32) as VTInt).max(1);
+
+            if col + width <= limit {
+                let mut cell = buffer::OutputCell::from_char(ch);
+                cell.set_attributes(attributes);
+                if let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) {
+                    buffer_row.write_cells(col, std::slice::from_ref(&cell), insert);
+                }
+                chars.next();
+                col += width;
+            } else if wrap_at_eol && col < limit {
+                // A double-width glyph will not fit in the last column: wrap
+                // before drawing it rather than splitting it.
+                buffer.cursor_mut().delay_eol_wrap();
+                continue;
+            } else {
+                // Autowrap is off and the glyph cannot fit; there is nowhere to
+                // put it, so it is discarded (upstream drops it for the same
+                // reason).
+                chars.next();
+            }
+
+            if col >= limit {
+                col = limit - 1;
+                buffer.cursor_mut().set_position(row, col);
+                if wrap_at_eol {
+                    buffer.cursor_mut().delay_eol_wrap();
+                }
+            } else {
+                buffer.cursor_mut().set_position(row, col);
+            }
+        }
+    }
+}
+
+/// Ported from the non-scrolling and margin-scrolling arms of `_DoLineFeed`:
+/// move down one row with an optional return to the left margin, or scroll the
+/// region up when already on the bottom margin.
+fn line_feed_in_region(buffer: &mut buffer::TextBuffer, top: VTInt, bottom: VTInt, left: VTInt, right: VTInt) {
+    let (row, column) = buffer.cursor().position();
+    let height = buffer.screen_height();
+
+    let new_column = if row >= top && row <= bottom && column >= left {
+        left
+    } else {
+        0
+    };
+
+    if row != bottom || new_column < left || new_column > right {
+        let new_row = (row + 1).min(height - 1);
+        buffer.cursor_mut().set_position(new_row, new_column);
+    } else {
+        buffer.scroll_region_up(top, bottom);
+        buffer.cursor_mut().set_position(row, new_column);
+    }
 }
 
 impl Default for AdaptDispatch {
@@ -492,6 +595,24 @@ impl ITermDispatch for AdaptDispatch {
 
     // An unknown sequence is ignored by design, not a missing handler.
     fn unknown_sequence(&mut self) {}
+
+    fn print(&mut self, ch: char) {
+        let translated = self.term_output.translate_key(ch);
+        // A DEL that stays DEL is ignored, as it is when a 94-character set has
+        // no mapping for it (upstream `AdaptDispatch::Print`).
+        if translated as u32 != 0x7F {
+            self.write_to_buffer(&translated.to_string());
+        }
+    }
+
+    fn print_string(&mut self, string: &str) {
+        if self.term_output.needs_translation() {
+            let translated: String = string.chars().map(|ch| self.term_output.translate_key(ch)).collect();
+            self.write_to_buffer(&translated);
+        } else {
+            self.write_to_buffer(string);
+        }
+    }
 
     fn cursor_up(&mut self, distance: VTInt) {
         self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
@@ -610,7 +731,7 @@ mod tests {
         let dispatch = AdaptDispatch::new();
         assert!(!dispatch.is_insert_mode());
         assert!(!dispatch.is_origin_mode());
-        assert!(!dispatch.is_auto_wrap());
+        assert!(dispatch.is_auto_wrap());
         assert!(!dispatch.is_alternate_buffer_active());
     }
 
@@ -768,11 +889,89 @@ mod tests {
         dispatch.set_top_bottom_scrolling_margins(1, 24);
         dispatch.set_left_right_scrolling_margins(1, 80);
         dispatch.unknown_sequence();
+        dispatch.print('a');
+        dispatch.print_string("bc");
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
         dispatch.set_graphics_rendition(&VTParameters::default());
         assert_eq!(dispatch.unhandled_count(), 1);
         assert_eq!(dispatch.last_unhandled(), Some("set_graphics_rendition"));
+    }
+
+    fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        buffer.get_text_data_at(row, column).unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn print_writes_a_cell_and_advances() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('A');
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "A");
+        assert_eq!(dispatch.active_cursor_position(), (0, 1));
+    }
+
+    // Filling the last column does not wrap yet: the cell can still be
+    // overwritten, and the line breaks on the next character.
+    #[test]
+    fn print_wraps_on_the_character_after_the_line_is_full() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string(&"x".repeat(80));
+        assert_eq!(dispatch.active_cursor_position(), (0, 79));
+        assert_eq!(cell_text(&mut dispatch, 0, 79), "x");
+
+        dispatch.print('y');
+        assert_eq!(dispatch.active_cursor_position(), (1, 1));
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "y");
+    }
+
+    #[test]
+    fn moving_the_cursor_cancels_a_delayed_wrap() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string(&"x".repeat(80));
+        dispatch.cursor_position(1, 1);
+        dispatch.print('Z');
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "Z");
+        assert_eq!(dispatch.active_cursor_position(), (0, 1));
+    }
+
+    #[test]
+    fn print_wraps_at_the_right_margin() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_left_right_scrolling_margins(5, 75);
+        dispatch.cursor_horizontal_position_absolute(5);
+
+        // Columns 4..=74 are 71 cells; the next one wraps to column 4.
+        dispatch.print_string(&"a".repeat(71));
+        assert_eq!(dispatch.active_cursor_position(), (0, 74));
+
+        dispatch.print('b');
+        assert_eq!(dispatch.active_cursor_position(), (1, 5));
+        assert_eq!(cell_text(&mut dispatch, 1, 4), "b");
+    }
+
+    #[test]
+    fn delete_is_ignored() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('\u{7f}');
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+        assert_eq!(dispatch.unhandled_count(), 0);
+    }
+
+    #[test]
+    fn insert_mode_shifts_the_rest_of_the_line() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("AB");
+        dispatch.cursor_position(1, 1);
+        dispatch.set_mode(ModeFlags::IRM, true);
+        dispatch.print('X');
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "X");
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "A");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), "B");
     }
 }

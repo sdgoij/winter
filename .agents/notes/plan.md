@@ -11,12 +11,12 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
 | `types` | ~1.6k | 74 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, and the charset tables |
-| `buffer` | ~4.5k | 173 | Phase 2 partial — no `resize`/`reflow` |
+| `buffer` | ~4.6k | 175 | Phase 2 partial — no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~4.3k | 52 | Phase 4 state and interfaces; cursor and margin handlers ported |
+| `adapter` | ~4.8k | 58 | Phase 4 state and interfaces; print and cursor/margin handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-559 tests, doc tests. Phases 5–14 are not started.
+567 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -29,13 +29,15 @@ settled.
 
 **Open.**
 
-1. **Most `ITermDispatch` families have no handler.** Ported so far: cursor
-   positioning (CUU, CUD, CUF, CUB, CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and
-   the scrolling margins (DECSTBM, DECSLRM behind DECLRMM). Everything else falls
-   through to the trait default, which `AdaptDispatch::unhandled` records; the
-   ratchet test in `adapt_dispatch.rs` names the ported set and must grow with
-   each family. Next in dependency order: `print`/`print_string`, SGR
-   (`adaptDispatchGraphics.cpp`), line feed and index, erase, modes.
+1. **Most `ITermDispatch` families have no handler.** Ported so far: printing
+   (`print`, `print_string`, via `_WriteToBuffer` with delayed EOL wrap, insert
+   mode and margin-clipped wrapping), cursor positioning (CUU, CUD, CUF, CUB,
+   CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and the scrolling margins (DECSTBM,
+   DECSLRM behind DECLRMM). Everything else falls through to the trait default,
+   which `AdaptDispatch::unhandled` records; the ratchet test in
+   `adapt_dispatch.rs` names the ported set and must grow with each family. Next
+   in dependency order: SGR (`adaptDispatchGraphics.cpp`), line feed and index,
+   erase, modes.
 
 2. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
    deliverable and `TextBuffer` has no method for it. This is the most expensive

@@ -22,6 +22,12 @@ pub struct Cursor {
     shape: CursorType,
     /// Width of the cursor in pixels (for non-rectangular cursors).
     width: i32,
+    /// Where the cursor sat when the end of the line was reached.
+    ///
+    /// The wrap itself happens on the next character written, not on the one
+    /// that filled the last column, so the terminal can still overwrite that
+    /// column before the line breaks. Ported from `Cursor::DelayEOLWrap`.
+    delayed_eol_wrap: Option<(i32, i32)>,
 }
 
 impl Cursor {
@@ -34,6 +40,7 @@ impl Cursor {
             blinking: false,
             shape: CursorType::Legacy,
             width: 0,
+            delayed_eol_wrap: None,
         }
     }
 
@@ -63,9 +70,28 @@ impl Cursor {
     }
 
     /// Sets the cursor position.
+    ///
+    /// A moved cursor no longer wraps where it used to, so the delayed-wrap
+    /// marker is cleared here rather than left to go stale.
     pub fn set_position(&mut self, row: i32, column: i32) {
         self.row = row;
         self.column = column;
+        self.delayed_eol_wrap = None;
+    }
+
+    /// Marks the current position as the place the next character should wrap.
+    pub fn delay_eol_wrap(&mut self) {
+        self.delayed_eol_wrap = Some((self.row, self.column));
+    }
+
+    /// Returns the position recorded by [`Cursor::delay_eol_wrap`], if any.
+    pub const fn delayed_eol_wrap(&self) -> Option<(i32, i32)> {
+        self.delayed_eol_wrap
+    }
+
+    /// Clears the delayed-wrap marker.
+    pub fn reset_delayed_eol_wrap(&mut self) {
+        self.delayed_eol_wrap = None;
     }
 
     /// Moves the cursor to the given position.

@@ -3,6 +3,8 @@
 //! Ported from `PageManager.hpp/cpp` in the Windows Terminal C++ codebase.
 //! Manages the text buffers required by VT paging operations.
 
+use types::TextAttribute;
+
 use buffer::TextBuffer;
 use utils::inclusive_rect::InclusiveRect;
 
@@ -18,6 +20,8 @@ pub struct Page {
     viewport: InclusiveRect,
     /// Page number (1-based).
     number: i32,
+    /// The attributes new text is written with.
+    attributes: TextAttribute,
 }
 
 impl Page {
@@ -27,7 +31,18 @@ impl Page {
             buffer,
             viewport,
             number,
+            attributes: TextAttribute::new(),
         }
+    }
+
+    /// Returns the attributes new text is written with.
+    pub const fn attributes(&self) -> TextAttribute {
+        self.attributes
+    }
+
+    /// Sets the attributes new text is written with.
+    pub fn set_attributes(&mut self, attributes: TextAttribute) {
+        self.attributes = attributes;
     }
 
     /// Returns the text buffer.

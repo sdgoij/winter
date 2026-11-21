@@ -372,6 +372,29 @@ impl TextBuffer {
         self.mutation_id += 1;
     }
 
+    /// Returns the row at a screen line, mutably.
+    pub fn get_row_at_screen_line_mut(&mut self, screen_line: i32) -> Option<&mut Row> {
+        self.get_buffer_row_mut_at_screen(screen_line, 0)
+            .map(|buffered| &mut buffered.row)
+    }
+
+    /// Scrolls the rows in `top..=bottom` up by one, clearing the bottom row.
+    ///
+    /// Ported from `_ScrollRectVertically` with a count of one: a line feed at
+    /// the bottom margin moves every row in the region up and reveals a blank
+    /// bottom row, without touching rows outside it.
+    pub fn scroll_region_up(&mut self, top: i32, bottom: i32) {
+        if bottom <= top || top < 0 || bottom >= self.screen_height {
+            return;
+        }
+        for row in top..bottom {
+            self.copy_row(row, row + 1);
+        }
+        let blank = OutputCell::from_char(' ');
+        self.fill_rect(bottom, 0, bottom, self.screen_width - 1, &blank);
+        self.mutation_id += 1;
+    }
+
     /// Scrolls rows up by the given count.
     pub fn scroll_rows_up(&mut self, count: i32) {
         if count <= 0 {

@@ -351,55 +351,36 @@ impl Row {
     }
 
     fn write_cells_insert(&mut self, start_column: i32, cells: &[OutputCell]) {
-        let start_col: i32 = self.validate_column(start_column) as i32;
-        let total_write_width: i32 = cells.iter().map(|c| c.column_width() as i32).sum();
-
-        // If there's no room at all, just truncate
-        if start_col + total_write_width > self.width {
-            self.write_cells_replace(start_column, cells);
-            return;
-        }
-
-        // Calculate how many cells will be pushed out
-        let push_out_start = start_col + total_write_width;
-        let push_out_count = (start_col + total_write_width - push_out_start).max(0).min(self.width) as usize;
-
-        if push_out_count > 0 && push_out_start < self.width {
-            // Remove the overflow
-            let end = (push_out_start + push_out_count as i32).min(self.width);
-            self.cells.drain((push_out_start as usize)..(end as usize));
-        }
-
-        // Insert the new cells
-        for (i, cell) in cells.iter().enumerate() {
-            let idx = start_col + i as i32;
-            if idx < self.width {
-                self.cells[idx as usize] = cell.clone();
+        let start = self.validate_column(start_column);
+        self.shift_right(start, cells.len());
+        for (offset, cell) in cells.iter().enumerate() {
+            let idx = start + offset;
+            if idx < self.cells.len() {
+                self.cells[idx] = cell.clone();
             }
         }
     }
 
-    fn write_char_insert(&mut self, column: i32, cell: OutputCell) {
-        let width = cell.column_width() as i32;
-        let col = column;
-
-        // Check if there's room
-        if col >= 0 && col + width <= self.width {
-            let idx = col as usize;
-            // Shift cells to the right
-            let shift_amount = width as usize;
-            let end = self.cells.len();
-            if end > idx + shift_amount {
-                self.cells.drain(idx..idx + shift_amount.min(end - idx));
-            }
-            if idx < self.cells.len() {
-                self.cells[idx] = cell;
-            }
-        } else {
-            // No room, just replace
-            let idx = self.validate_column(column);
-            self.cells[idx] = cell;
+    /// Moves `cells[start..]` right by `count`, dropping what falls off the end.
+    ///
+    /// Walking backwards means a cell is never read after being overwritten.
+    fn shift_right(&mut self, start: usize, count: usize) {
+        let width = self.cells.len();
+        let Some(end) = width.checked_sub(count) else {
+            return;
+        };
+        if start >= end {
+            return;
         }
+        for column in (start..end).rev() {
+            self.cells[column + count] = self.cells[column].clone();
+        }
+    }
+
+    fn write_char_insert(&mut self, column: i32, cell: OutputCell) {
+        let start = self.validate_column(column);
+        self.shift_right(start, 1);
+        self.cells[start] = cell;
     }
 }
 
@@ -418,6 +399,37 @@ impl std::fmt::Display for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_shifts_the_tail_right_without_growing_the_row() {
+        let mut row = Row::new(5);
+        row.write_char(0, 'A', false);
+        row.write_char(1, 'B', false);
+        row.write_char(2, 'C', false);
+
+        row.write_char(0, 'X', true);
+
+        assert_eq!(row.get_chars_at(0), "X");
+        assert_eq!(row.get_chars_at(1), "A");
+        assert_eq!(row.get_chars_at(2), "B");
+        assert_eq!(row.get_chars_at(3), "C");
+        assert_eq!(row.cell_count(), 5);
+    }
+
+    #[test]
+    fn insert_past_the_end_drops_the_overflow() {
+        let mut row = Row::new(4);
+        row.write_char(0, 'A', false);
+        row.write_char(1, 'B', false);
+        row.write_char(2, 'C', false);
+        row.write_char(3, 'D', false);
+
+        row.write_char(2, 'X', true);
+
+        assert_eq!(row.get_chars_at(2), "X");
+        assert_eq!(row.get_chars_at(3), "C");
+        assert_eq!(row.cell_count(), 4);
+    }
 
     #[test]
     fn test_row_creation() {
