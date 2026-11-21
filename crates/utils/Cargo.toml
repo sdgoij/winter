@@ -4,14 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+publish.workspace = true
 description = "Terminal Implementation Library — geometry, types, and utilities"
 
 [dependencies]
-bitflags = { workspace = true }
-serde = { version = "1", features = ["derive"], optional = true }
-thiserror = "2"
-uuid = { version = "1", features = ["v4"] }
+bitflags.workspace = true
+serde = { workspace = true, optional = true }
+thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-proptest = { workspace = true }
-tempfile = "3"
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

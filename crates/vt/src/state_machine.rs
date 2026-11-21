@@ -208,7 +208,7 @@ impl StateMachine {
                 self.is_last_escape = true;
                 None
             }
-            0x20..=0x7E => {
+            0x21..=0x7E => {
                 self.state = VtState::Ground;
                 Some(DispatchAction::EscComplete)
             }
@@ -237,8 +237,6 @@ impl StateMachine {
             Some(DispatchAction::InjectByte(c))
         } else if c == ST {
             Some(DispatchAction::ProcessLastChar)
-        } else if (0x20..=0x7F).contains(&c) {
-            Some(DispatchAction::ProcessChar(c))
         } else {
             Some(DispatchAction::ProcessChar(c))
         }

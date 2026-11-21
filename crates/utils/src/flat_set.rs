@@ -21,9 +21,7 @@ pub struct LinearFlatSet<T: FlatSetKey> {
 /// Blanket implementation of `FlatSetKey` for `u32`.
 impl FlatSetKey for u32 {
     fn hash(&self) -> u64 {
-        (*self as u64)
-            .wrapping_mul(0x9E3779B97F4A7C15)
-            .wrapping_shr(32)
+        (*self as u64).wrapping_mul(0x9E3779B97F4A7C15).wrapping_shr(32)
     }
 
     fn occupied(&self) -> bool {

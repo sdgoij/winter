@@ -62,7 +62,6 @@ impl std::fmt::Display for CursorType {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

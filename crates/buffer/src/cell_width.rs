@@ -19,12 +19,7 @@ impl CharToColumnMapper {
     /// Creates a new mapper for a row with the given width.
     pub fn new(width: i32) -> Self {
         let mut offsets = Vec::with_capacity(width as usize);
-        let mut current_col: i32 = 0;
-
-        for _ in 0..width {
-            offsets.push(current_col);
-            current_col += 1;
-        }
+        offsets.extend(0..width);
 
         Self {
             column_offsets: offsets,
@@ -65,10 +60,10 @@ impl CharToColumnMapper {
         }
 
         // Find the rightmost cell whose start column is less than the target
-        match self.column_offsets.iter().rposition(|&c| c < column) {
-            Some(idx) => idx,
-            None => 0,
-        }
+        self.column_offsets
+            .iter()
+            .rposition(|&c| c < column)
+            .unwrap_or_default()
     }
 
     /// Returns the number of display columns.

@@ -118,18 +118,12 @@ impl VTParameters {
 
     /// Returns the parameter at the given index.
     pub fn at(&self, index: usize) -> VTParameter {
-        self.params
-            .get(index)
-            .copied()
-            .unwrap_or(VTParameter::default())
+        self.params.get(index).copied().unwrap_or(VTParameter::default())
     }
 
     /// Returns the sub-parameters for the parameter at the given index.
     pub fn sub_params_for(&self, index: usize) -> Option<VTSubParameters<'_>> {
-        let (start, count) = self
-            .sub_param_ranges
-            .iter()
-            .find(|(idx, _)| *idx == index)?;
+        let (start, count) = self.sub_param_ranges.iter().find(|(idx, _)| *idx == index)?;
         if *count == 0 {
             return None;
         }
@@ -138,9 +132,7 @@ impl VTParameters {
         if start + count > self.params.len() {
             return None;
         }
-        Some(VTSubParameters::new(
-            self.params[start..start + count].iter(),
-        ))
+        Some(VTSubParameters::new(self.params[start..start + count].iter()))
     }
 
     /// Returns whether the parameter at the given index has sub-parameters.
@@ -825,10 +817,7 @@ mod tests {
 
     #[test]
     fn test_vtid_with_bytes() {
-        let vtid = VTID::new()
-            .with_intermediate(b'A')
-            .with_intermediate(b'B')
-            .finalize();
+        let vtid = VTID::new().with_intermediate(b'A').with_intermediate(b'B').finalize();
         assert!(!vtid.is_empty());
         assert_eq!(vtid.len(), 2);
         // Bytes are stored in little-endian order

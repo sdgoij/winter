@@ -164,8 +164,7 @@ impl HyperlinkMap {
             for id in ids.into_iter().take(to_remove) {
                 self.hyperlinks.remove(&id);
             }
-            self.position_map
-                .retain(|_, v| self.hyperlinks.contains_key(v));
+            self.position_map.retain(|_, v| self.hyperlinks.contains_key(v));
         }
     }
 }

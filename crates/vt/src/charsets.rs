@@ -6,9 +6,10 @@
 ///
 /// VT100 defined four character sets: G0, G1, G2, G3.
 /// G0 is the default active set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Charset {
     /// Standard character set (SCS) — ASCII with some VT-specific graphics.
+    #[default]
     Standard,
     /// Alternate character set A — DEC special graphics and line drawing.
     AlternateA,
@@ -33,12 +34,6 @@ impl Charset {
             Charset::Norwegian => "Norwegian",
             Charset::Danish => "Danish",
         }
-    }
-}
-
-impl Default for Charset {
-    fn default() -> Self {
-        Charset::Standard
     }
 }
 

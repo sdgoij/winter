@@ -4,9 +4,10 @@
 //! The VT parser is a DFA with 19 states.
 
 /// The 19 states of the VT state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VtState {
     /// Ground state — normal character processing.
+    #[default]
     Ground,
     /// Prefix state — received a C1 prefix (0x90-0x9F).
     Prefix,
@@ -70,12 +71,6 @@ impl VtState {
             VtState::ApmPassthrough => "ApmPassthrough",
             VtState::Error => "Error",
         }
-    }
-}
-
-impl Default for VtState {
-    fn default() -> Self {
-        VtState::Ground
     }
 }
 

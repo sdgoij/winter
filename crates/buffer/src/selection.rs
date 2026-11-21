@@ -134,7 +134,7 @@ impl Selection {
                 for col in left..=right {
                     if col >= 0 && col < row_data.width() {
                         let cell = row_data.get_cell(col);
-                        if cell.chars().len() > 0 {
+                        if !cell.chars().is_empty() {
                             result.push_str(cell.chars());
                         }
                     }

@@ -107,11 +107,7 @@ impl MacroBuffer {
         }
 
         let entry = &self.macros[id as usize];
-        if entry.defined {
-            Some(&entry.content)
-        } else {
-            None
-        }
+        if entry.defined { Some(&entry.content) } else { None }
     }
 
     /// Deletes a specific macro.

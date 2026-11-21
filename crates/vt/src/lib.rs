@@ -1,4 +1,4 @@
-//! # vt
+//! # winterm-vt
 //!
 //! Virtual Terminal (VT) escape sequence parser and state machine.
 //! Ported from Microsoft's Windows Terminal C++ VT module.

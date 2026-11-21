@@ -52,14 +52,12 @@ pub fn equals_insensitive_ascii(s1: &str, s2: &str) -> bool {
 
 /// Returns whether a string starts with the given prefix (case-insensitive ASCII).
 pub fn starts_with_insensitive_ascii(s: &str, prefix: &str) -> bool {
-    s.to_ascii_lowercase()
-        .starts_with(&prefix.to_ascii_lowercase())
+    s.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase())
 }
 
 /// Returns whether a string ends with the given suffix (case-insensitive ASCII).
 pub fn ends_with_insensitive_ascii(s: &str, suffix: &str) -> bool {
-    s.to_ascii_lowercase()
-        .ends_with(&suffix.to_ascii_lowercase())
+    s.to_ascii_lowercase().ends_with(&suffix.to_ascii_lowercase())
 }
 
 /// Converts a string to lowercase ASCII.

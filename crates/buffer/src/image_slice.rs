@@ -3,7 +3,7 @@
 //! Used for sixel image rendering and other image-based terminal features.
 
 /// A rectangular slice of an image, used for rendering images in the terminal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ImageSlice {
     /// The x coordinate of the top-left corner.
     x: i32,
@@ -21,14 +21,7 @@ pub struct ImageSlice {
 
 impl ImageSlice {
     /// Creates a new image slice.
-    pub const fn new(
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-        source_width: i32,
-        source_height: i32,
-    ) -> Self {
+    pub const fn new(x: i32, y: i32, width: i32, height: i32, source_width: i32, source_height: i32) -> Self {
         Self {
             x,
             y,
@@ -115,19 +108,6 @@ impl ImageSlice {
             self.source_width,
             self.source_height,
         )
-    }
-}
-
-impl Default for ImageSlice {
-    fn default() -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-            source_width: 0,
-            source_height: 0,
-        }
     }
 }
 

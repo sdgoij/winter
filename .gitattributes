@@ -1,0 +1,16 @@
+# Line endings are LF in the index and in the working tree, on every platform.
+# The toolchain, rustfmt, the hooks, and every fixture hash assume LF; a CRLF
+# checkout has already changed the bytes of an embedded fixture once, on Windows
+# only. `eol` here overrides `core.autocrlf`, so two contributors cannot see
+# different bytes for one commit.
+* text=auto eol=lf
+
+# Scripts are executed, not read: a CRLF shebang does not run.
+*.sh text eol=lf
+.githooks/* text eol=lf
+
+# Never let Git guess about an artefact it cannot normalise.
+*.png binary
+*.ttf binary
+*.otf binary
+*.woff2 binary

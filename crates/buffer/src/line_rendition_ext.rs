@@ -52,11 +52,7 @@ pub fn scrollback_offset_to_buffer(offset: i32, scrollback_height: i32, screen_h
 }
 
 /// Converts a buffer line to a scrollback offset.
-pub fn buffer_to_scrollback_offset(
-    buffer_line: i32,
-    scrollback_height: i32,
-    screen_height: i32,
-) -> i32 {
+pub fn buffer_to_scrollback_offset(buffer_line: i32, scrollback_height: i32, screen_height: i32) -> i32 {
     (screen_height + scrollback_height - 1) - buffer_line
 }
 
@@ -124,8 +120,7 @@ mod tests {
         assert_eq!(buffer, screen_height + scrollback_height - 1);
 
         // First scrollback row (offset = scrollback_height) should be row 0
-        let buffer =
-            scrollback_offset_to_buffer(scrollback_height, scrollback_height, screen_height);
+        let buffer = scrollback_offset_to_buffer(scrollback_height, scrollback_height, screen_height);
         assert_eq!(buffer, screen_height - 1);
     }
 }

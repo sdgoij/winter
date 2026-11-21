@@ -45,12 +45,7 @@ impl Rect {
     /// Creates a rectangle from origin and size.
     #[inline]
     pub const fn from_origin_size(origin: Point, size: Size) -> Self {
-        Self::new(
-            origin.x,
-            origin.y,
-            origin.x + size.width(),
-            origin.y + size.height(),
-        )
+        Self::new(origin.x, origin.y, origin.x + size.width(), origin.y + size.height())
     }
 
     /// Returns the width of the rectangle.
@@ -86,19 +81,13 @@ impl Rect {
     /// Returns whether a point is contained within this rectangle.
     #[inline]
     pub fn contains(&self, point: Point) -> bool {
-        point.x() >= self.left
-            && point.x() < self.right
-            && point.y() >= self.top
-            && point.y() < self.bottom
+        point.x() >= self.left && point.x() < self.right && point.y() >= self.top && point.y() < self.bottom
     }
 
     /// Returns whether a rectangle is fully contained within this rectangle.
     #[inline]
     pub fn contains_rect(&self, other: Rect) -> bool {
-        self.left <= other.left
-            && other.right <= self.right
-            && self.top <= other.top
-            && other.bottom <= self.bottom
+        self.left <= other.left && other.right <= self.right && self.top <= other.top && other.bottom <= self.bottom
     }
 
     /// Returns the union of this rectangle and another.
@@ -137,12 +126,7 @@ impl Rect {
 
         // Top strip
         if self.top < other.top {
-            result.push(Rect::new(
-                self.left,
-                self.top,
-                self.right,
-                self.top.min(other.top),
-            ));
+            result.push(Rect::new(self.left, self.top, self.right, self.top.min(other.top)));
         }
 
         // Bottom strip
@@ -191,10 +175,7 @@ impl Rect {
     /// Returns whether this rectangle intersects another.
     #[inline]
     pub fn intersects(&self, other: Rect) -> bool {
-        self.left < other.right
-            && self.right > other.left
-            && self.top < other.bottom
-            && self.bottom > other.top
+        self.left < other.right && self.right > other.left && self.top < other.bottom && self.bottom > other.top
     }
 
     /// Moves the rectangle to the origin while keeping the same size.
@@ -206,12 +187,7 @@ impl Rect {
     /// Translates the rectangle by the given offset.
     #[inline]
     pub fn translated(&self, dx: i32, dy: i32) -> Rect {
-        Rect::new(
-            self.left + dx,
-            self.top + dy,
-            self.right + dx,
-            self.bottom + dy,
-        )
+        Rect::new(self.left + dx, self.top + dy, self.right + dx, self.bottom + dy)
     }
 
     /// Converts to an inclusive rectangle.
@@ -270,15 +246,9 @@ impl Iterator for RectIter {
                 self.current.y() + 1,
             );
             // Reset x and increment y
-            self.current = Point::new(
-                self.end.x() - (self.end.x() - self.current.x()),
-                self.current.y(),
-            );
+            self.current = Point::new(self.end.x() - (self.end.x() - self.current.x()), self.current.y());
             // Simpler approach: reset to left edge of next row
-            self.current = Point::new(
-                self.current.x() - self.current.x() + self.end.x(),
-                self.current.y(),
-            );
+            self.current = Point::new(self.current.x() - self.current.x() + self.end.x(), self.current.y());
             // Actually, let's just use a simpler implementation
         }
         // Simpler: just track left/bottom and increment
@@ -361,11 +331,7 @@ impl std::ops::Sub<Point> for Rect {
 
 impl std::fmt::Display for Rect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "([{},{})-({},{})",
-            self.left, self.top, self.right, self.bottom
-        )
+        write!(f, "([{},{})-({},{})", self.left, self.top, self.right, self.bottom)
     }
 }
 
@@ -574,13 +540,13 @@ mod snapshot_tests {
 
         let mut grid = vec![vec![' '; width]; height];
 
-        for y in 0..height {
-            for x in 0..width {
+        for (y, row) in grid.iter_mut().enumerate() {
+            for (x, cell) in row.iter_mut().enumerate() {
                 let px = Point::new(min_left + x as i32, min_top + y as i32);
                 let in_r1 = r1.contains(px);
                 let in_r2 = r2.contains(px);
 
-                grid[y][x] = if in_r1 && in_r2 {
+                *cell = if in_r1 && in_r2 {
                     '@' // overlap
                 } else if in_r1 {
                     '#' // r1 only
@@ -637,10 +603,7 @@ mod snapshot_tests {
 #### ooo
 #### ooo";
 
-        assert_eq!(
-            snapshot, expected,
-            "disjoint rects should render as separate blocks"
-        );
+        assert_eq!(snapshot, expected, "disjoint rects should render as separate blocks");
     }
 
     #[test]
@@ -657,9 +620,6 @@ mod snapshot_tests {
 @@@@@@
 @@@@@@";
 
-        assert_eq!(
-            snapshot, expected,
-            "equal rects should render as full overlap"
-        );
+        assert_eq!(snapshot, expected, "equal rects should render as full overlap");
     }
 }

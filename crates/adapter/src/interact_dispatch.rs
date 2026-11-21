@@ -74,8 +74,7 @@ pub enum InputEventType {
 }
 
 /// Control key state for keyboard events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ControlKeyState {
     /// Left or right ctrl key is pressed.
     pub left_ctrl_pressed: bool,
@@ -100,7 +99,6 @@ pub struct ControlKeyState {
     /// Shift key is pressed.
     pub shift_pressed: bool,
 }
-
 
 #[cfg(test)]
 mod tests {

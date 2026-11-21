@@ -113,17 +113,21 @@ impl<'a> OutputCellMutIterator<'a> {
 impl<'a> Iterator for OutputCellMutIterator<'a> {
     type Item = &'a mut OutputCell;
 
+    // Yielding `&'a mut` from `&mut self` is the one place this crate needs
+    // `unsafe`; the iterator owns the only `&'a mut` to the slice, and each call
+    // hands out a distinct index, so no two returned references alias.
+    #[allow(unsafe_code)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.current >= self.end {
             return None;
         }
         let idx = self.current;
         self.current += 1;
-        // Use unsafe to return a reference with lifetime 'a
-        // This is safe because we're returning a reference into our own slice
-        // which is alive for the entire duration of 'a
+        // SAFETY: `idx < end <= cells.len()`, and `self.cells` is the unique
+        // borrow held for the iterator's whole life, so the reference is valid
+        // and unaliased for `'a`.
         unsafe {
-            let ptr = self.cells.as_mut_ptr().add(idx) as *mut OutputCell;
+            let ptr = self.cells.as_mut_ptr().add(idx);
             Some(&mut *ptr)
         }
     }
@@ -142,7 +146,7 @@ mod tests {
 
     fn make_cells(count: usize) -> Vec<OutputCell> {
         (0..count)
-            .map(|i| OutputCell::from_char(('a' as u8 + i as u8) as char))
+            .map(|i| OutputCell::from_char((b'a' + i as u8) as char))
             .collect()
     }
 
@@ -251,6 +255,6 @@ mod proptests {
 #[cfg(test)]
 fn make_cells(count: usize) -> Vec<OutputCell> {
     (0..count)
-        .map(|i| OutputCell::from_char(('a' as u8 + (i % 95) as u8) as char))
+        .map(|i| OutputCell::from_char((b'a' + (i % 95) as u8) as char))
         .collect()
 }

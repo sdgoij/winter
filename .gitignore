@@ -1,2 +1,20 @@
-/.design/refs
+# Build artefacts. `**/target` covers the fuzz workspace too.
 **/target
+
+# Reference material, not part of the port.
+/.design/refs
+
+# Editor and compiler scratch files.
+**/*.rs.bk
+
+# Local state a run may create; never commit it.
+*.db
+*.db-wal
+*.db-shm
+
+# OS noise.
+.DS_Store
+Thumbs.db
+
+# Release packaging, generated per tag.
+/dist

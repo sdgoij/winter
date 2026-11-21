@@ -299,10 +299,10 @@ impl TextBuffer {
             return None;
         }
 
-        if let Some(&row_idx) = self.screen_line_index.get(&screen_line) {
-            if row_idx < self.rows.len() {
-                return Some(&self.rows[row_idx].row);
-            }
+        if let Some(&row_idx) = self.screen_line_index.get(&screen_line)
+            && row_idx < self.rows.len()
+        {
+            return Some(&self.rows[row_idx].row);
         }
 
         None
@@ -361,14 +361,7 @@ impl TextBuffer {
     }
 
     /// Fills a rectangular area with a cell.
-    pub fn fill_rect(
-        &mut self,
-        start_row: i32,
-        start_col: i32,
-        end_row: i32,
-        end_col: i32,
-        cell: &OutputCell,
-    ) {
+    pub fn fill_rect(&mut self, start_row: i32, start_col: i32, end_row: i32, end_col: i32, cell: &OutputCell) {
         for r in start_row..=end_row {
             for c in start_col..=end_col {
                 if let Some(buffer_row) = self.get_buffer_row_mut_at_screen(r, c) {
@@ -403,10 +396,10 @@ impl TextBuffer {
     pub fn copy_row(&mut self, dest_screen_line: i32, source_screen_line: i32) {
         // Clone the source to avoid borrow conflict
         let source_data = self.get_row_at_screen_line(source_screen_line).cloned();
-        if let Some(source_row) = source_data {
-            if let Some(dest_row) = self.get_buffer_row_mut_at_screen(dest_screen_line, 0) {
-                dest_row.row.copy_from(&source_row);
-            }
+        if let Some(source_row) = source_data
+            && let Some(dest_row) = self.get_buffer_row_mut_at_screen(dest_screen_line, 0)
+        {
+            dest_row.row.copy_from(&source_row);
         }
         self.mutation_id += 1;
     }
@@ -481,8 +474,7 @@ impl TextBuffer {
         // If cursor is past the screen, scroll up
         if self.cursor.row() >= self.screen_height {
             self.scroll_one_row_up();
-            self.cursor
-                .set_position(self.screen_height - 1, self.cursor.column());
+            self.cursor.set_position(self.screen_height - 1, self.cursor.column());
         }
 
         // Update screen line index
@@ -507,8 +499,7 @@ impl TextBuffer {
             self.screen_height - 1
         };
 
-        self.rows
-            .push_back(BufferedRow::new(new_row, new_screen_line));
+        self.rows.push_back(BufferedRow::new(new_row, new_screen_line));
 
         // Update screen line index for the shifted rows
         self.rebuild_screen_line_index();
@@ -537,11 +528,7 @@ impl TextBuffer {
         }
     }
 
-    fn get_buffer_row_mut_at_screen(
-        &mut self,
-        screen_row: i32,
-        _screen_col: i32,
-    ) -> Option<&mut BufferedRow> {
+    fn get_buffer_row_mut_at_screen(&mut self, screen_row: i32, _screen_col: i32) -> Option<&mut BufferedRow> {
         let abs_idx = (screen_row + self.scrollback_height) as usize;
         if abs_idx >= self.rows.data.len() {
             return None;

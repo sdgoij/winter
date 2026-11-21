@@ -75,6 +75,11 @@ impl OutputCell {
     }
 
     /// Creates an output cell from a string slice.
+    ///
+    /// Named `from_str` to match the C++ `OutputCell::FromString` entry point.
+    /// It truncates at `MAX_CHARS`, which is not something `From<&str>` should
+    /// do silently, so the trait implementation is deliberately not provided.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         let mut cell = Self::new();
         let bytes = s.as_bytes();
@@ -126,10 +131,10 @@ impl OutputCell {
             return 0;
         }
         // Get the first character and determine its width.
-        if let Ok(s) = std::str::from_utf8(&self.chars[..self.chars_len as usize]) {
-            if let Some(c) = s.chars().next() {
-                return codepoint_width(c as u32);
-            }
+        if let Ok(s) = std::str::from_utf8(&self.chars[..self.chars_len as usize])
+            && let Some(c) = s.chars().next()
+        {
+            return codepoint_width(c as u32);
         }
         1
     }
@@ -311,8 +316,8 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use proptest::prelude::prop_compose;
     use super::*;
+    use proptest::prelude::prop_compose;
 
     prop_compose! {
         fn any_output_cell()(s in proptest::prelude::any::<String>()) -> OutputCell {

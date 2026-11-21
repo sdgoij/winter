@@ -246,6 +246,10 @@ pub trait ITermDispatch: std::fmt::Debug {
     );
 
     /// DECCRA — Copy Rectangular Area.
+    // The signature mirrors `ITermDispatch::CopyRectangularArea` in the C++
+    // adapter; collapsing the DECCRA operands into a struct would make the port
+    // harder to diff against upstream.
+    #[allow(clippy::too_many_arguments)]
     fn copy_rectangular_area(
         &mut self,
         top: VTInt,
@@ -259,26 +263,13 @@ pub trait ITermDispatch: std::fmt::Debug {
     );
 
     /// DECFRA — Fill Rectangular Area.
-    fn fill_rectangular_area(
-        &mut self,
-        ch: VTParameter,
-        top: VTInt,
-        left: VTInt,
-        bottom: VTInt,
-        right: VTInt,
-    );
+    fn fill_rectangular_area(&mut self, ch: VTParameter, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt);
 
     /// DECERA — Erase Rectangular Area.
     fn erase_rectangular_area(&mut self, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt);
 
     /// DECSERA — Selective Erase Rectangular Area.
-    fn selective_erase_rectangular_area(
-        &mut self,
-        top: VTInt,
-        left: VTInt,
-        bottom: VTInt,
-        right: VTInt,
-    );
+    fn selective_erase_rectangular_area(&mut self, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt);
 
     /// DECSACE — Select Attribute Change Extent.
     fn select_attribute_change_extent(&mut self, change_extent: ChangeExtent);
@@ -440,6 +431,8 @@ pub trait ITermDispatch: std::fmt::Debug {
     // ─── DRCS ───────────────────────────────────────────────────────
 
     /// Download DRCS.
+    // Signature mirrors `ITermDispatch::DownloadDRCS` in the C++ adapter.
+    #[allow(clippy::too_many_arguments)]
     fn download_drcs(
         &mut self,
         font_number: VTInt,
@@ -482,10 +475,7 @@ pub trait ITermDispatch: std::fmt::Debug {
     fn request_terminal_state_report(&mut self, format: ReportFormat);
 
     /// DECRSTS — Restore Terminal State.
-    fn restore_terminal_state(
-        &mut self,
-        format: ReportFormat,
-    ) -> Option<Box<dyn FnMut(char) -> bool + Send>>;
+    fn restore_terminal_state(&mut self, format: ReportFormat) -> Option<Box<dyn FnMut(char) -> bool + Send>>;
 
     /// DECRQSS — Request Setting.
     fn request_setting(&mut self) -> Option<Box<dyn FnMut(char) -> bool + Send>>;

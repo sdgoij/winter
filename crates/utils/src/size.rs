@@ -53,10 +53,8 @@ impl Size {
     /// Scales both dimensions by the given factor.
     pub fn scale(&self, factor: f64) -> Self {
         Self::new(
-            (self.width as f64 * factor).clamp(CoordType::MIN as f64, CoordType::MAX as f64)
-                as CoordType,
-            (self.height as f64 * factor).clamp(CoordType::MIN as f64, CoordType::MAX as f64)
-                as CoordType,
+            (self.width as f64 * factor).clamp(CoordType::MIN as f64, CoordType::MAX as f64) as CoordType,
+            (self.height as f64 * factor).clamp(CoordType::MIN as f64, CoordType::MAX as f64) as CoordType,
         )
     }
 

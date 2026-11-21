@@ -109,11 +109,7 @@ pub fn search_in_row(row_text: &str, pattern: &str, options: SearchOptions) -> O
 /// Searches for a pattern across multiple rows.
 ///
 /// Returns all matching positions (row, column) where the pattern starts.
-pub fn search_across_rows(
-    rows: &[String],
-    pattern: &str,
-    options: SearchOptions,
-) -> Vec<(i32, usize)> {
+pub fn search_across_rows(rows: &[String], pattern: &str, options: SearchOptions) -> Vec<(i32, usize)> {
     let mut results = Vec::new();
 
     for (row_idx, row_text) in rows.iter().enumerate() {
@@ -187,10 +183,7 @@ mod tests {
 
     #[test]
     fn test_search_case_sensitive() {
-        assert_eq!(
-            search_in_row("Hello", "hello", SearchOptions::case_sensitive()),
-            None
-        );
+        assert_eq!(search_in_row("Hello", "hello", SearchOptions::case_sensitive()), None);
         assert_eq!(
             search_in_row("Hello", "hello", SearchOptions::case_insensitive()),
             Some(0)
@@ -205,10 +198,7 @@ mod tests {
 
     #[test]
     fn test_search_empty_pattern() {
-        assert_eq!(
-            search_in_row("Hello", "", SearchOptions::default()),
-            Some(0)
-        );
+        assert_eq!(search_in_row("Hello", "", SearchOptions::default()), Some(0));
     }
 
     #[test]

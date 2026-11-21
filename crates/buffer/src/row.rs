@@ -188,14 +188,9 @@ impl Row {
     /// Replaces characters starting at the given column.
     pub fn replace_characters(&mut self, start_column: i32, replacement: &str) {
         let start = self.validate_column(start_column);
-        let mut col = start as i32;
-        for c in replacement.chars() {
-            if col >= self.width {
-                break;
-            }
-            let cell = OutputCell::from_char(c);
-            self.cells[col as usize] = cell;
-            col += 1;
+        let end = (self.width.max(0) as usize).min(self.cells.len());
+        for (offset, c) in replacement.chars().take(end.saturating_sub(start)).enumerate() {
+            self.cells[start + offset] = OutputCell::from_char(c);
         }
         self.update_contains_text();
     }
@@ -205,10 +200,7 @@ impl Row {
         self.replace_characters(start_column, replacement);
         if pad_with_spaces {
             let start_col = start_column;
-            let replacement_width = replacement
-                .chars()
-                .map(|c| codepoint_width(c as u32))
-                .sum::<u8>() as i32;
+            let replacement_width = replacement.chars().map(|c| codepoint_width(c as u32)).sum::<u8>() as i32;
             let remaining = self.width - start_col - replacement_width;
             for i in 0..remaining {
                 self.clear_cell(start_col + replacement_width + i);
@@ -228,7 +220,7 @@ impl Row {
 
     /// Gets the attribute at a specific column.
     pub fn get_attr_by_column(&self, column: i32) -> TextAttribute {
-        self.get_cell(column).get_attributes().clone()
+        *self.get_cell(column).get_attributes()
     }
 
     /// Sets the wrap flag for this row.
@@ -335,10 +327,7 @@ impl Row {
 
     fn validate_column(&self, column: i32) -> usize {
         if column < 0 || column >= self.width {
-            panic!(
-                "Column {} out of bounds for row of width {}",
-                column, self.width
-            );
+            panic!("Column {} out of bounds for row of width {}", column, self.width);
         }
         column as usize
     }
@@ -373,9 +362,7 @@ impl Row {
 
         // Calculate how many cells will be pushed out
         let push_out_start = start_col + total_write_width;
-        let push_out_count = (start_col + total_write_width - push_out_start)
-            .max(0)
-            .min(self.width) as usize;
+        let push_out_count = (start_col + total_write_width - push_out_start).max(0).min(self.width) as usize;
 
         if push_out_count > 0 && push_out_start < self.width {
             // Remove the overflow
@@ -483,7 +470,7 @@ mod tests {
     fn test_get_text() {
         let mut row = Row::new(80);
         for i in 0..5 {
-            row.write_char(i, ('a' as u8 + i as u8) as char, false);
+            row.write_char(i, (b'a' + i as u8) as char, false);
         }
         assert_eq!(row.get_text(), "abcde");
     }

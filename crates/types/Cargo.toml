@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+publish.workspace = true
 description = "Terminal types — color, character attributes, and rendering metadata"
 
 [dependencies]
-utils = { path = "../utils" }
-bitflags = { workspace = true }
-serde = { version = "1", features = ["derive"], optional = true }
+utils.workspace = true
+bitflags.workspace = true
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-proptest = { workspace = true }
+proptest.workspace = true
+
+[lints]
+workspace = true

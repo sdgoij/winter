@@ -33,11 +33,7 @@ pub fn is_light_theme() -> bool {
 
 /// Returns the detected theme as a string.
 pub fn detected_theme() -> &'static str {
-    if is_dark_theme() {
-        "dark"
-    } else {
-        "light"
-    }
+    if is_dark_theme() { "dark" } else { "light" }
 }
 
 #[cfg(test)]

@@ -74,15 +74,19 @@ impl<'a> TextBufferRowIterator<'a> {
 impl<'a> Iterator for TextBufferRowIterator<'a> {
     type Item = &'a mut Row;
 
+    // Yielding `&'a mut` from `&mut self` is the one place this crate needs
+    // `unsafe`; the iterator owns the only `&'a mut` to the rows, and each call
+    // hands out a distinct index, so no two returned references alias.
+    #[allow(unsafe_code)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.current < self.rows.len() {
             let idx = self.current;
             self.current += 1;
-            // Use unsafe to return a reference with lifetime 'a
-            // This is safe because we're returning a reference into our own slice
-            // which is alive for the entire duration of 'a
+            // SAFETY: `idx < rows.len()`, and `self.rows` is the unique borrow
+            // held for the iterator's whole life, so the reference is valid and
+            // unaliased for `'a`.
             unsafe {
-                let ptr = self.rows.as_mut_ptr().add(idx) as *mut Row;
+                let ptr = self.rows.as_mut_ptr().add(idx);
                 Some(&mut *ptr)
             }
         } else {

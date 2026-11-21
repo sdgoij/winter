@@ -36,12 +36,7 @@ impl Color {
     /// Creates a fully transparent black color.
     #[inline]
     pub const fn transparent() -> Self {
-        Self {
-            r: 0,
-            g: 0,
-            b: 0,
-            a: 0,
-        }
+        Self { r: 0, g: 0, b: 0, a: 0 }
     }
 
     /// Creates a color from a u32 in ABGR format (little-endian).
@@ -102,15 +97,12 @@ impl Color {
             return Color::default();
         }
 
-        let result_r = (self.r as f32 * self.a as f32
-            + destination.r as f32 * destination.a as f32 * a_inverse)
-            / result_a;
-        let result_g = (self.g as f32 * self.a as f32
-            + destination.g as f32 * destination.a as f32 * a_inverse)
-            / result_a;
-        let result_b = (self.b as f32 * self.a as f32
-            + destination.b as f32 * destination.a as f32 * a_inverse)
-            / result_a;
+        let result_r =
+            (self.r as f32 * self.a as f32 + destination.r as f32 * destination.a as f32 * a_inverse) / result_a;
+        let result_g =
+            (self.g as f32 * self.a as f32 + destination.g as f32 * destination.a as f32 * a_inverse) / result_a;
+        let result_b =
+            (self.b as f32 * self.a as f32 + destination.b as f32 * destination.a as f32 * a_inverse) / result_a;
 
         Color::new(
             (result_r.round() as u32).min(255) as u8,
@@ -128,9 +120,9 @@ impl Color {
         let b = 2.0 - (hue * 6.0 - 4.0).abs();
 
         Color::rgb(
-            (r.max(0.0).min(1.0) * 255.0).round() as u8,
-            (g.max(0.0).min(1.0) * 255.0).round() as u8,
-            (b.max(0.0).min(1.0) * 255.0).round() as u8,
+            (r.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (g.clamp(0.0, 1.0) * 255.0).round() as u8,
+            (b.clamp(0.0, 1.0) * 255.0).round() as u8,
         )
     }
 
@@ -157,11 +149,7 @@ impl Color {
         let r = parse_byte(&hex[0..2])?;
         let g = parse_byte(&hex[2..4])?;
         let b = parse_byte(&hex[4..6])?;
-        let a = if hex.len() == 8 {
-            parse_byte(&hex[6..8])?
-        } else {
-            255
-        };
+        let a = if hex.len() == 8 { parse_byte(&hex[6..8])? } else { 255 };
 
         Some(Self::new(r, g, b, a))
     }
@@ -169,11 +157,7 @@ impl Color {
 
 impl std::fmt::Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "#{:02X}{:02X}{:02X}{:02X}",
-            self.r, self.g, self.b, self.a
-        )
+        write!(f, "#{:02X}{:02X}{:02X}{:02X}", self.r, self.g, self.b, self.a)
     }
 }
 

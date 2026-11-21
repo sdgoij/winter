@@ -1,4 +1,4 @@
-//! # rusterm-utils
+//! # winterm-utils
 //!
 //! Terminal Implementation Library — geometry, types, and utilities.
 //! Ported from Microsoft's Windows Terminal C++ `til` namespace.
@@ -30,6 +30,11 @@
 //! - [`latch`] — One-shot synchronization barrier
 //! - [`bit`] — Bit manipulation utilities
 //! - [`bytes`] — Byte slice helpers
+
+// This is the workspace's unsafe-primitives crate: the lock-free queue, the
+// stack-optimised vector, and the manual mutex/latch wrappers are implemented
+// here and nowhere else. Every other crate denies `unsafe_code` outright.
+#![allow(unsafe_code)]
 
 pub mod atomic;
 pub mod bit;

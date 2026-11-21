@@ -170,8 +170,7 @@ impl std::ops::Mul for Point {
     type Output = Point;
 
     fn mul(self, other: Point) -> Point {
-        self.checked_mul(other)
-            .expect("Point multiplication overflow")
+        self.checked_mul(other).expect("Point multiplication overflow")
     }
 }
 
@@ -185,8 +184,7 @@ impl std::ops::Div for Point {
     type Output = Point;
 
     fn div(self, other: Point) -> Point {
-        self.checked_div(other)
-            .expect("Point division overflow or zero")
+        self.checked_div(other).expect("Point division overflow or zero")
     }
 }
 
@@ -425,11 +423,10 @@ mod proptests {
         #[test]
         fn test_add_sub_cancel(a in any_point(), b in any_point()) {
             // Use checked arithmetic to avoid overflow panics
-            if let Some(sum) = a.checked_add(b) {
-                if let Some(result) = sum.checked_sub(b) {
+            if let Some(sum) = a.checked_add(b)
+                && let Some(result) = sum.checked_sub(b) {
                     assert_eq!(result, a);
                 }
-            }
         }
 
         #[test]

@@ -85,10 +85,10 @@ impl Marks {
 
     /// Ends the current command (closes the last command mark).
     pub fn end_current_command(&mut self, current_row: i32) {
-        if let Some(last) = self.marks.last_mut() {
-            if last.kind() == MarkKind::Command {
-                last.end_row = current_row;
-            }
+        if let Some(last) = self.marks.last_mut()
+            && last.kind() == MarkKind::Command
+        {
+            last.end_row = current_row;
         }
     }
 
@@ -165,12 +165,11 @@ impl Marks {
 
     fn start_mark(&mut self, kind: MarkKind, start_row: i32, end_row: i32) {
         // End any output mark that was active before this mark
-        if kind != MarkKind::Output {
-            if let Some(last) = self.marks.last() {
-                if last.kind() == MarkKind::Output {
-                    // The output mark should end at the start of the new mark
-                }
-            }
+        if kind != MarkKind::Output
+            && let Some(last) = self.marks.last()
+            && last.kind() == MarkKind::Output
+        {
+            // The output mark should end at the start of the new mark
         }
 
         // Check if we can merge with an adjacent mark of the same kind
@@ -189,9 +188,7 @@ impl Marks {
     }
 
     fn insert_sorted(&mut self, mark: BufferMark) {
-        let pos = self
-            .marks
-            .partition_point(|m| m.start_row() < mark.start_row());
+        let pos = self.marks.partition_point(|m| m.start_row() < mark.start_row());
         self.marks.insert(pos, mark);
     }
 }

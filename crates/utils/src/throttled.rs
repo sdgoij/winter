@@ -118,10 +118,6 @@ mod tests {
         // Reset drops the handle; the callback might or might not execute
         // This is non-deterministic behavior for a non-blocking reset
         let count = counter.load(Ordering::SeqCst);
-        assert!(
-            count <= 1,
-            "reset should not cause multiple executions, got {}",
-            count
-        );
+        assert!(count <= 1, "reset should not cause multiple executions, got {}", count);
     }
 }

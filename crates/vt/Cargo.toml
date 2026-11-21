@@ -4,8 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+publish.workspace = true
 description = "Virtual Terminal (VT) escape sequence parser and state machine"
 
 [dependencies]
-types = { path = "../types" }
-utils = { path = "../utils" }
+types.workspace = true
+utils.workspace = true
+
+[lints]
+workspace = true

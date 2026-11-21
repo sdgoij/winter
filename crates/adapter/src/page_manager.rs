@@ -20,11 +20,7 @@ pub struct Page {
 
 impl Page {
     /// Creates a new page.
-    pub fn new(
-        buffer: std::sync::Arc<std::sync::RwLock<TextBuffer>>,
-        viewport: InclusiveRect,
-        number: i32,
-    ) -> Self {
+    pub fn new(buffer: std::sync::Arc<std::sync::RwLock<TextBuffer>>, viewport: InclusiveRect, number: i32) -> Self {
         Self {
             buffer,
             viewport,

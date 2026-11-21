@@ -176,11 +176,7 @@ mod tests {
 
     #[test]
     fn test_compact() {
-        let mut rle = BasicRle::from_runs(vec![
-            RleRun::new(1, 3),
-            RleRun::new(1, 2),
-            RleRun::new(2, 4),
-        ]);
+        let mut rle = BasicRle::from_runs(vec![RleRun::new(1, 3), RleRun::new(1, 2), RleRun::new(2, 4)]);
         assert_eq!(rle.run_count(), 3);
         rle.compact();
         assert_eq!(rle.run_count(), 2);

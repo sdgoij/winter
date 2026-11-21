@@ -84,8 +84,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, Base64Error> {
             // 4 content bytes → 3 output bytes
             let b2 = get_decode_value(bytes[i + 2])?;
             let b3 = get_decode_value(bytes[i + 3])?;
-            let triple =
-                ((b0 as u32) << 18) | ((b1 as u32) << 12) | ((b2 as u32) << 6) | (b3 as u32);
+            let triple = ((b0 as u32) << 18) | ((b1 as u32) << 12) | ((b2 as u32) << 6) | (b3 as u32);
             result.push(((triple >> 16) & 0xFF) as u8);
             result.push(((triple >> 8) & 0xFF) as u8);
             result.push((triple & 0xFF) as u8);
@@ -97,7 +96,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, Base64Error> {
             result.push(((triple >> 8) & 0xFF) as u8);
         } else {
             // 2 content bytes → 1 output byte
-            result.push(((b0 << 2) | (b1 >> 4)) as u8);
+            result.push((b0 << 2) | (b1 >> 4));
         }
 
         i += 4;
@@ -208,14 +207,7 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         // Short test cases as array slices
-        let short_cases: &[&[u8]] = &[
-            b"",
-            b"a",
-            b"ab",
-            b"abc",
-            b"hello world",
-            b"\x00\x01\x02\x03",
-        ];
+        let short_cases: &[&[u8]] = &[b"", b"a", b"ab", b"abc", b"hello world", b"\x00\x01\x02\x03"];
         for case in short_cases {
             let encoded = encode(case);
             let decoded = decode(&encoded).unwrap();

@@ -41,12 +41,7 @@ impl TerminalOutput {
         Self {
             upss_id: VTID::new(),
             upss_translation_table: charsets::ASCII,
-            gset_translation_tables: [
-                charsets::ASCII,
-                charsets::ASCII,
-                charsets::ASCII,
-                charsets::ASCII,
-            ],
+            gset_translation_tables: [charsets::ASCII, charsets::ASCII, charsets::ASCII, charsets::ASCII],
             gset_ids: [VTID::new(); 4],
             gl_set_number: 0,
             gr_set_number: 2,
@@ -64,12 +59,7 @@ impl TerminalOutput {
         self.upss_id = VTID::new();
         self.upss_translation_table = charsets::ASCII;
         self.gset_ids = [VTID::new(); 4];
-        self.gset_translation_tables = [
-            charsets::ASCII,
-            charsets::ASCII,
-            charsets::ASCII,
-            charsets::ASCII,
-        ];
+        self.gset_translation_tables = [charsets::ASCII, charsets::ASCII, charsets::ASCII, charsets::ASCII];
         self.gl_set_number = 0;
         self.gr_set_number = 2;
         self.gl_translation_table = charsets::ASCII;

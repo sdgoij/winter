@@ -87,10 +87,8 @@ impl Viewport {
     pub fn intersection(&self, other: &Viewport) -> Option<Viewport> {
         let origin_x = self.origin.x().max(other.origin.x());
         let origin_y = self.origin.y().max(other.origin.y());
-        let end_x =
-            (self.origin.x() + self.size.width()).min(other.origin.x() + other.size.width());
-        let end_y =
-            (self.origin.y() + self.size.height()).min(other.origin.y() + other.size.height());
+        let end_x = (self.origin.x() + self.size.width()).min(other.origin.x() + other.size.width());
+        let end_y = (self.origin.y() + self.size.height()).min(other.origin.y() + other.size.height());
 
         if end_x > origin_x && end_y > origin_y {
             Some(Viewport {
@@ -106,10 +104,8 @@ impl Viewport {
     pub fn union(&self, other: &Viewport) -> Viewport {
         let origin_x = self.origin.x().min(other.origin.x());
         let origin_y = self.origin.y().min(other.origin.y());
-        let end_x =
-            (self.origin.x() + self.size.width()).max(other.origin.x() + other.size.width());
-        let end_y =
-            (self.origin.y() + self.size.height()).max(other.origin.y() + other.size.height());
+        let end_x = (self.origin.x() + self.size.width()).max(other.origin.x() + other.size.width());
+        let end_y = (self.origin.y() + self.size.height()).max(other.origin.y() + other.size.height());
 
         Viewport {
             origin: Point::new(origin_x, origin_y),

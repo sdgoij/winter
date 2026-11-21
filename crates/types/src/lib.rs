@@ -1,4 +1,4 @@
-//! # rusterm-types
+//! # winterm-types
 //!
 //! Core terminal types — color, character attributes, rendering metadata, and viewport.
 //! Ported from Microsoft's Windows Terminal C++ types and buffer modules.
@@ -32,7 +32,7 @@ pub use character_attrs::CharacterAttributes;
 pub use codepoint_width::codepoint_width;
 pub use color_table::ColorTable;
 pub use cursor_type::CursorType;
-pub use line_rendition::{apply_line_rendition, LineRendition};
+pub use line_rendition::{LineRendition, apply_line_rendition};
 pub use mark_kind::MarkKind;
 pub use text_color::{ColorType, TextColor};
 pub use underline_style::UnderlineStyle;

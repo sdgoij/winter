@@ -86,10 +86,7 @@ impl OutputCellRect {
 
     /// Returns whether this rectangle contains another rectangle.
     pub fn contains_rect(&self, other: &OutputCellRect) -> bool {
-        other.top >= self.top
-            && other.bottom <= self.bottom
-            && other.left >= self.left
-            && other.right <= self.right
+        other.top >= self.top && other.bottom <= self.bottom && other.left >= self.left && other.right <= self.right
     }
 
     /// Returns the intersection of this rectangle with another.
@@ -100,9 +97,7 @@ impl OutputCellRect {
         let new_right = self.right.min(other.right);
 
         if new_top <= new_bottom && new_left <= new_right {
-            Some(OutputCellRect::new(
-                new_top, new_left, new_bottom, new_right,
-            ))
+            Some(OutputCellRect::new(new_top, new_left, new_bottom, new_right))
         } else {
             None
         }
@@ -154,11 +149,7 @@ impl Default for OutputCellRect {
 
 impl std::fmt::Display for OutputCellRect {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "({},{})-({},{})",
-            self.top, self.left, self.bottom, self.right
-        )
+        write!(f, "({},{})-({},{})", self.top, self.left, self.bottom, self.right)
     }
 }
 

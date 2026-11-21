@@ -70,9 +70,6 @@ pub struct AtomicWaitNotify<T> {
     condvar: Condvar,
 }
 
-unsafe impl<T: Send> Send for AtomicWaitNotify<T> {}
-unsafe impl<T: Send> Sync for AtomicWaitNotify<T> {}
-
 impl<T: PartialEq + Send> AtomicWaitNotify<T> {
     /// Creates a new wait/notify for the given initial value.
     pub const fn new(value: T) -> Self {

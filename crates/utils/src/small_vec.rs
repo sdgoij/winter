@@ -114,13 +114,7 @@ impl<T, const N: usize> SmallVec<T, N> {
         }
         unsafe {
             if self.use_heap {
-                Some(
-                    self.heap
-                        .as_ref()
-                        .unwrap_unchecked()
-                        .get(index)?
-                        .assume_init_ref(),
-                )
+                Some(self.heap.as_ref().unwrap_unchecked().get(index)?.assume_init_ref())
             } else {
                 Some(self.inline.get(index)?.assume_init_ref())
             }
@@ -135,13 +129,7 @@ impl<T, const N: usize> SmallVec<T, N> {
         }
         unsafe {
             if self.use_heap {
-                Some(
-                    self.heap
-                        .as_mut()
-                        .unwrap_unchecked()
-                        .get_mut(index)?
-                        .assume_init_mut(),
-                )
+                Some(self.heap.as_mut().unwrap_unchecked().get_mut(index)?.assume_init_mut())
             } else {
                 Some(self.inline.get_mut(index)?.assume_init_mut())
             }
@@ -237,11 +225,7 @@ impl<T, const N: usize> SmallVec<T, N> {
         }
         let value = unsafe {
             if self.use_heap {
-                self.heap
-                    .as_mut()
-                    .unwrap_unchecked()
-                    .get_mut(index)?
-                    .assume_init_read()
+                self.heap.as_mut().unwrap_unchecked().get_mut(index)?.assume_init_read()
             } else {
                 self.inline.get_mut(index)?.assume_init_read()
             }
@@ -302,25 +286,18 @@ impl<T, const N: usize> SmallVec<T, N> {
             N * 2
         };
 
-        let mut new_heap: Box<[MaybeUninit<T>]> = std::iter::repeat_with(|| MaybeUninit::uninit())
-            .take(new_cap)
-            .collect();
+        let mut new_heap: Box<[MaybeUninit<T>]> =
+            std::iter::repeat_with(|| MaybeUninit::uninit()).take(new_cap).collect();
 
         // Copy existing elements
         unsafe {
             for i in 0..self.len {
                 if self.use_heap {
                     let src = self.heap.as_ref().unwrap_unchecked().get_unchecked(i);
-                    ptr::write(
-                        new_heap.get_unchecked_mut(i).as_mut_ptr(),
-                        src.assume_init_read(),
-                    );
+                    ptr::write(new_heap.get_unchecked_mut(i).as_mut_ptr(), src.assume_init_read());
                 } else {
                     let src = self.inline.get_unchecked(i);
-                    ptr::write(
-                        new_heap.get_unchecked_mut(i).as_mut_ptr(),
-                        src.assume_init_read(),
-                    );
+                    ptr::write(new_heap.get_unchecked_mut(i).as_mut_ptr(), src.assume_init_read());
                 }
             }
         }

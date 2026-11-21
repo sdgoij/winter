@@ -38,6 +38,12 @@ pub struct TextAttribute {
     mark_kind: MarkKind,
 }
 
+impl Default for TextAttribute {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TextAttribute {
     /// Creates a default text attribute (normal, no color).
     pub const fn new() -> Self {
@@ -290,7 +296,7 @@ mod proptests {
 
         #[test]
         fn test_set_unset_attribute_returns_to_default(mut attr in any_text_attribute()) {
-            let original = attr.clone();
+            let original = attr;
 
             // Set all attributes
             attr.set_attrs(CharacterAttributes::All);

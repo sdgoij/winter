@@ -122,7 +122,10 @@ impl EnumSet {
 
     /// Returns an iterator over the set bits.
     pub fn iter(&self) -> EnumSetIter {
-        EnumSetIter { bits: self.bits, current: 0 }
+        EnumSetIter {
+            bits: self.bits,
+            current: 0,
+        }
     }
 }
 
@@ -313,8 +316,8 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use proptest::prelude::*;
     use super::*;
+    use proptest::prelude::*;
 
     proptest! {
         #[test]

@@ -75,28 +75,19 @@ impl InclusiveRect {
     /// Returns whether a point is contained within this rectangle.
     #[inline]
     pub fn contains(&self, point: Point) -> bool {
-        point.x() >= self.left
-            && point.x() <= self.right
-            && point.y() >= self.top
-            && point.y() <= self.bottom
+        point.x() >= self.left && point.x() <= self.right && point.y() >= self.top && point.y() <= self.bottom
     }
 
     /// Returns whether another inclusive rectangle is contained within this one.
     #[inline]
     pub fn contains_rect(&self, other: InclusiveRect) -> bool {
-        self.left <= other.left
-            && other.right <= self.right
-            && self.top <= other.top
-            && other.bottom <= self.bottom
+        self.left <= other.left && other.right <= self.right && self.top <= other.top && other.bottom <= self.bottom
     }
 
     /// Returns whether this rectangle overlaps with another.
     #[inline]
     pub fn overlaps(&self, other: InclusiveRect) -> bool {
-        self.left <= other.right
-            && self.right >= other.left
-            && self.top <= other.bottom
-            && self.bottom >= other.top
+        self.left <= other.right && self.right >= other.left && self.top <= other.bottom && self.bottom >= other.top
     }
 
     /// Returns the union of this rectangle and another.

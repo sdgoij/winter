@@ -1,18 +1,58 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/utils",
     "crates/types",
-    "crates/buffer", "crates/adapter", "crates/vt",
+    "crates/buffer",
+    "crates/vt",
+    "crates/adapter",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
 authors = ["winterm contributors"]
 publish = false
 
+# The dependency ring, in the order it is allowed to point.
+#
+# `utils` sees nothing. `types` sees `utils`. `buffer` and `vt` see both and each
+# other not at all. `adapter` sees all three. A crate that needs something from a
+# crate to its right is a design error, not a manifest to edit; see
+# .agents/notes/adr/001-workspace-layering.md.
 [workspace.dependencies]
+utils = { path = "crates/utils" }
+types = { path = "crates/types" }
+buffer = { path = "crates/buffer" }
+vt = { path = "crates/vt" }
+adapter = { path = "crates/adapter" }
+
 bitflags = "2"
 proptest = "1"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[workspace.lints.rust]
+# `utils` is the one crate that opts out, at its root, because it owns the
+# lock-free primitives; `buffer`'s two iterator sites carry item-level allows
+# with a SAFETY note. Everything else is denied, so a new `unsafe` is a review
+# event rather than a silent addition.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Ratchet, not a resting place. Both lints are allowed because the ported code
+# predates them (56 production call sites, almost all in `utils`); the target is
+# `warn`, and the entry is deleted when the crate it names is clean. Do not add
+# new call sites under the allowance.
+unwrap_used = "allow"
+expect_used = "allow"
+
+[profile.test]
+# MSVC refuses a program database larger than 4 GB (LNK1140). Line tables keep a
+# panic's file and line; only variable inspection is traded away, and only for
+# tests.
+debug = 1

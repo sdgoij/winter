@@ -73,13 +73,13 @@ impl VtParameters {
         self.params.iter()
     }
 
-    /// Converts parameters to a string (semicolon-separated).
+    /// Converts parameters to the semicolon-separated form the wire uses.
+    ///
+    /// Kept inherent rather than routed through `Display` because the callers
+    /// build a parameter list, not a human-readable rendering.
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        self.params
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>()
-            .join(";")
+        self.params.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(";")
     }
 
     /// Clears all parameters.
