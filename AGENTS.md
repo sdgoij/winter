@@ -205,7 +205,7 @@ Do not add call sites under an allowance.
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
 | `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
-| `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its two backends, ADR 016) |
+| `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 
 ## Where the port stands
 
@@ -225,7 +225,9 @@ with no ctrl-event queue, and ETW. The read-data family's `IWaitRoutine` complet
 the cooked read's pager, the render settings and the window metrics wait for
 the server, renderer and window layers; `outputStream.cpp` has no counterpart
 (ADR 013). Phase 7 has the server's portable policy (ADR 015) and its pty
-layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules). Phase 8 has
+layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules), plus a
+headless `OpenConsole.exe` host it starts when one is installed, so sixel and
+kitty graphics reach the buffer (ADRs 054, 055). Phase 8 has
 the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
 It also has a first runnable shell: `crates/winterm` runs a shell on the pty and

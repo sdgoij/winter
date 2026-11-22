@@ -248,6 +248,8 @@ impl Control {
             let destination = target.get_row_at_screen_line_mut(row);
             if let (Some(source), Some(destination)) = (source, destination) {
                 destination.copy_from(source);
+                // `copy_from` is text only; a frame paints the band as well.
+                destination.copy_image_from(source);
             }
         }
     }

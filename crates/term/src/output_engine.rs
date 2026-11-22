@@ -1169,6 +1169,35 @@ mod tests {
         assert_eq!(image.cell_size(), (10, 20));
     }
 
+    // The same payload the sixel probe writes: pan/pad/size parameters, a
+    // colour definition, two bands separated by `-`.
+    #[test]
+    fn a_full_sixel_probe_paints_into_the_buffer() {
+        let mut machine = StateMachine::new(OutputStateMachineEngine::new(AdaptDispatch::new()));
+        let mut payload = String::from("\x1bPq\"1;1;10;10#0;2;0;100;0");
+        for _ in 0..2 {
+            payload.push_str("#0");
+            payload.push_str(&"~".repeat(40));
+            payload.push('-');
+        }
+        payload.push_str("\x1b\\");
+        machine.process_string(payload.as_bytes());
+
+        let buffer = machine
+            .engine_mut()
+            .dispatch_mut()
+            .page_manager_mut()
+            .active_page()
+            .buffer();
+        let buffer = buffer.read().unwrap();
+        let image = buffer
+            .get_row_at_screen_line(0)
+            .unwrap()
+            .image_slice()
+            .expect("the sixel lands in the first row's band");
+        assert_eq!(image.pixels()[0], 0xFF00_FF00);
+    }
+
     #[test]
     fn a_kitty_image_flows_from_the_parser_to_the_buffer() {
         let mut machine = StateMachine::new(OutputStateMachineEngine::new(AdaptDispatch::new()));

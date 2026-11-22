@@ -60,6 +60,11 @@ fast: fmt clippy test
 build:
     cargo build --workspace
 
+# Copy the console host Windows Terminal ships beside the built binary, so the
+# Windows pty can forward image sequences (ADR 055).
+console-host:
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1
+
 # Enable the pre-commit hook for this clone and silence the Windows CRLF warning.
 hooks:
     git config core.hooksPath .githooks

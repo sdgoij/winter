@@ -310,6 +310,23 @@ mod tests {
     }
 
     #[test]
+    fn an_image_band_reaches_the_renderers_buffer() {
+        let mut control = Control::new(Box::new(Buffer::with_output(b"\x1bP0;1;0q#1;2;0;100;0~\x1b\\")), (4, 2));
+        control.pump();
+
+        let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
+        data.refresh(&mut control, &View::new(), true, None);
+
+        let image = data
+            .buffer
+            .get_row_at_screen_line(0)
+            .expect("the first row")
+            .image_slice()
+            .expect("the snapshot keeps the image band");
+        assert_eq!(image.pixels()[0], 0xFF00_FF00);
+    }
+
+    #[test]
     fn a_selection_crossing_history_is_in_screen_rows() {
         let mut control = Control::new(Box::new(Buffer::with_output(b"one\r\ntwo\r\nthree")), (6, 2));
         control.pump();

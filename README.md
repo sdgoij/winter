@@ -28,12 +28,12 @@ after the behaviour is right.
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input; Phase 8 adds focus, clamp and AltGr rules |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames; its font collection supplies the shell's faces | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, the registry schema, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6, ADR 037) |
-| [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
+| [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
 | [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053), including tabs in the title bar, a profile menu beside the new-tab button, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
 
-1638 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1641 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -178,7 +178,7 @@ crates/adapter    applies parsed sequences to buffers: dispatch, pages, sixel, k
 crates/term       wires the parser to the adapter; the `Terminal` handle and input encoding
 crates/renderer   fonts, cell metrics, atlas, and the software paint path
 crates/host       the console side: history, input buffer, cooked read, input parser, selection
-crates/server     the console API surface; the pty layer (ConPTY and `openpty`)
+crates/server     the console API surface; the pty layer (ConPTY, `openpty`, a packed OpenConsole host)
 ```
 
 The dependency ring starts at `utils → types → {buffer, vt} → adapter → term`.

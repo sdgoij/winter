@@ -30,6 +30,10 @@ not Windows-specific belongs there, never in `winui`.
 - Kill a running session first. `cargo build -p winterm` fails with
   `Access is denied` while `winterm.exe` is alive:
   `taskkill //F //IM winterm.exe`.
+- Image sequences (sixel, kitty) need a console host that forwards them. Put an
+  `OpenConsole.exe` beside the built binary — `just console-host` copies the one
+  Windows Terminal ships — or set `WINTERM_CONSOLE_HOST`. Without one the
+  session runs on the inbox ConPTY and silently drops images (ADR 055).
 - The app's `%TEMP%` is not bash's. MSYS `$TEMP` is `/tmp`; the app and
   PowerShell use `%LOCALAPPDATA%\Temp`. A probe file written by the app is not
   in `$TEMP`.
@@ -88,6 +92,10 @@ scroll.
 - The atlas payload carries `Settings`; the shell hands the pane's colour table
   to the renderer every frame; `ShapedRow::clear` runs for every row at the
   start of a paint. These were real bugs; do not undo them.
+- An image band is part of a row, not of its cells. `TerminalData::refresh`
+  copies rows through `copy_visible_into`, so that copy has to carry the band
+  (`Row::copy_from` is text only). A missing image after a correct sixel is
+  almost always there (ADR 055).
 - The grid is the whole cells that fit the panel; the face is rasterised at the
   composition scale so a high-DPI monitor gets physical pixels.
 

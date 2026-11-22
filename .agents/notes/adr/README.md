@@ -83,3 +83,4 @@ Rules:
 | [052](052-profile-menu-overlay.md) | The WinUI profile menu is a custom overlay: the binding has no flyout; rows come from `winui::menu` | Accepted |
 | [053](053-ctrl-c-declines-without-selection.md) | `ctrl+c` is bound to copy; copy declines when nothing is selected, so `^C` still reaches the program | Accepted |
 | [054](054-kitty-graphics-over-apc.md) | Kitty graphics ride APC; the parser delivers them and the adapter paints the subset; the Windows pty host must forward them | Accepted |
+| [055](055-headless-openconsole.md) | The Windows pty launches a headless `OpenConsole.exe` when one is found, so image sequences reach the terminal; the inbox pseudoconsole is the fallback | Accepted |

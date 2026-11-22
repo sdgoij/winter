@@ -363,7 +363,7 @@ impl IBackend for SoftwareBackend {
 mod tests {
     use super::*;
     use crate::atlas::common::CursorSettings;
-    use crate::atlas::common::{FontSettings, GridLineRange, MiscellaneousSettings, Settings, ShapedRow};
+    use crate::atlas::common::{Bitmap, FontSettings, GridLineRange, MiscellaneousSettings, Settings, ShapedRow};
     use crate::render_frame_info::GridLineSet;
 
     /// A rasteriser that fills its whole glyph with coverage.
@@ -481,6 +481,30 @@ mod tests {
         backend.render(&mut payload);
 
         assert_eq!(backend.pixel(8, 0), Some(0xFFFF_0000));
+    }
+
+    #[test]
+    fn an_image_bitmap_is_scaled_into_its_cells() {
+        let mut backend = SoftwareBackend::new();
+        let mut payload = payload();
+        payload.rows.clear();
+        payload.rows.push(ShapedRow::default());
+        payload.rows[0].bitmap = Bitmap {
+            revision: 1,
+            source: vec![0xFFFF_0000; 8 * 16],
+            source_size: (8, 16),
+            target_offset: 0,
+            target_width: 1,
+            active: true,
+        };
+
+        backend.render(&mut payload);
+
+        // One cell wide at 8x16 pixels: the whole first cell is the image.
+        assert_eq!(backend.pixel(0, 0), Some(0xFFFF_0000));
+        assert_eq!(backend.pixel(7, 15), Some(0xFFFF_0000));
+        // The second cell is untouched.
+        assert_eq!(backend.pixel(8, 0), Some(0xFF00_0000));
     }
 
     #[test]
