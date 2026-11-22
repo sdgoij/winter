@@ -185,6 +185,14 @@ impl Surface {
             return Ok(());
         }
 
+        // A flip-model swap chain rotates its buffers on `Present`, so the target
+        // is re-acquired from the new back buffer each frame; drawing into the
+        // old one leaves a frame on screen that was never painted.
+        // SAFETY: the context is live and the swap chain is a composition swap
+        // chain, so buffer zero is the current back buffer.
+        unsafe { self.context.SetTarget(None::<&ID2D1Image>) };
+        self._target = Some(create_target(&self.context, &self.swap_chain)?);
+
         let clear = D2D1_COLOR_F {
             r: f32::from((background & 0xFF) as u8) / 255.0,
             g: f32::from(((background >> 8) & 0xFF) as u8) / 255.0,

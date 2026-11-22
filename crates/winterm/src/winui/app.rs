@@ -19,7 +19,7 @@ use renderer::{
     AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontInfo, RenderSettings, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
-use term::input::Key;
+use term::input::{Key, MouseButton, MouseEvent, MouseEventKind};
 use types::color_table::ColorAlias;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
@@ -63,6 +63,8 @@ struct Shell {
     next_tab: u64,
     /// The profile a new tab starts from.
     template: TerminalSettings,
+    /// The window chords, matched before the terminal sees a key.
+    bindings: Rc<[settings::Keybinding]>,
     renderer: Renderer<TerminalData>,
     shared: SharedBackend,
     panel: ElementRef<SwapChainPanel>,
@@ -77,6 +79,8 @@ struct Shell {
     /// Whether the first focus request already succeeded, so a tab click is not
     /// immediately undone by the next tick.
     focus_attempted: bool,
+    /// The cell a forwarded move last reported, so a still pointer is silent.
+    last_mouse_cell: Option<(i32, i32)>,
     face: PathBuf,
     /// The face size in DIPs, from the settings file.
     font_size: f32,
@@ -113,6 +117,9 @@ enum Message {
     /// The tab strip's new order, by id.
     Reorder(Vec<u64>),
     Focused(bool),
+    Pressed(PointerEventInfo),
+    Moved(PointerEventInfo),
+    Released(PointerEventInfo),
 }
 
 impl Component for Shell {
@@ -195,6 +202,7 @@ impl Component for Shell {
             tabs: Tabs::new(tab),
             next_tab: 1,
             template,
+            bindings: loaded.settings.keybindings.clone().into(),
             renderer,
             shared,
             panel,
@@ -207,6 +215,7 @@ impl Component for Shell {
             blink_at: Instant::now(),
             focused: false,
             focus_attempted: false,
+            last_mouse_cell: None,
             face,
             font_size,
             cell,
@@ -228,6 +237,10 @@ impl Component for Shell {
         let reorder = keys.clone();
         let got = keys.clone();
         let lost = keys.clone();
+        let pressed = keys.clone();
+        let moved = keys.clone();
+        let released = keys.clone();
+        let bindings = Rc::clone(&self.bindings);
 
         let items: Vec<KeyedView> = (0..self.tabs.len())
             .filter_map(|index| self.tabs.get(index))
@@ -262,21 +275,35 @@ impl Component for Shell {
 
         let pane = Border::new()
             .is_tab_stop(true)
+            .capture_pointer_on_press(true)
             .focus_on_pointer_release(true)
             .element_ref(&self.focus)
             .background(Color::rgb(12, 12, 12))
             .content(SwapChainPanel::new().element_ref(&self.panel))
             .on_preview_key_down(RoutedCallback::new(move |info| {
                 let _ = keys.send(Message::Key(info));
-                // A printable key still has to raise `CharacterReceived`, which
-                // is the text path; only the keys the terminal encodes itself
-                // are marked handled.
-                !matches!(key_of(info.key), Some(Key::Char(_) | Key::Space))
+                // A bound chord is the window's, so the toolkit must not also
+                // type it. A printable key with no binding still has to raise
+                // `CharacterReceived`, which is the text path; the keys the
+                // terminal encodes itself are marked handled.
+                let bound = key_of(info.key)
+                    .and_then(|key| chord_action(&bindings, key, info.modifiers))
+                    .is_some();
+                bound || !matches!(key_of(info.key), Some(Key::Char(_) | Key::Space))
             }))
             .on_character_received(RoutedCallback::new(move |info| {
                 let _ = characters.send(Message::Char(info));
                 true
             }))
+            .on_pointer_pressed(move |info: PointerEventInfo| {
+                let _ = pressed.send(Message::Pressed(info));
+            })
+            .on_pointer_moved(move |info: PointerEventInfo| {
+                let _ = moved.send(Message::Moved(info));
+            })
+            .on_pointer_released(move |info: PointerEventInfo| {
+                let _ = released.send(Message::Released(info));
+            })
             .on_got_focus(move |_| {
                 let _ = got.send(Message::Focused(true));
             })
@@ -303,7 +330,7 @@ impl Component for Shell {
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         match message {
             Message::Tick => self.tick(context),
-            Message::Key(info) => self.key(info),
+            Message::Key(info) => self.key(info, context),
             Message::Char(info) => self.character(info),
             Message::Resize {
                 width,
@@ -316,6 +343,9 @@ impl Component for Shell {
             Message::CloseTab(id) => self.close_tab(id, context),
             Message::Reorder(ids) => self.reorder(&ids),
             Message::Focused(focused) => self.focused = focused,
+            Message::Pressed(info) => self.pointer_pressed(info),
+            Message::Moved(info) => self.pointer_moved(info),
+            Message::Released(info) => self.pointer_released(info),
         }
     }
 }
@@ -508,16 +538,24 @@ impl Shell {
         }
     }
 
-    /// Turns a key press into the active terminal's encoding.
-    fn key(&mut self, info: KeyEventInfo) {
+    /// Runs a bound chord, or turns the key into the active terminal's encoding.
+    fn key(&mut self, info: KeyEventInfo, context: &ComponentContext<Self>) {
         let Some(key) = key_of(info.key) else {
             return;
         };
+        let pressed = !info.status.is_released;
+
+        // A bound chord is the window's: the shell consumes it before the tab
+        // sees the event (ADR 023).
+        if pressed && let Some(action) = chord_action(&self.bindings, key, info.modifiers) {
+            self.perform(action, context);
+            return;
+        }
 
         let event = input::Event::Key {
             key,
-            pressed: !info.status.is_released,
-            repeat: info.status.was_down && !info.status.is_released,
+            pressed,
+            repeat: info.status.was_down && pressed,
             modifiers: modifiers(info.modifiers),
         };
 
@@ -547,6 +585,226 @@ impl Shell {
             tab.control.send_key(&key);
         }
     }
+
+    /// Runs the window action a chord asked for.
+    fn perform(&mut self, action: settings::Action, context: &ComponentContext<Self>) {
+        match action {
+            settings::Action::NewTab => self.open_tab(),
+            settings::Action::CloseTab => {
+                if let Some(id) = self.tabs.active().map(|tab| tab.id) {
+                    self.close_tab(id, context);
+                }
+            }
+            settings::Action::NextTab => {
+                self.tabs.step(1);
+                let _ = self.focus.request_focus();
+            }
+            settings::Action::PrevTab => {
+                self.tabs.step(-1);
+                let _ = self.focus.request_focus();
+            }
+            settings::Action::Copy => {
+                let _ = self.copy_selection();
+            }
+            settings::Action::Paste => self.paste_clipboard(),
+            // Panes, find, the palette and the settings window are not this
+            // shell's yet, so their chords fall through.
+            _ => {}
+        }
+    }
+
+    /// Puts the selection on the clipboard.
+    fn copy_selection(&mut self) -> bool {
+        let Some(tab) = self.tabs.active_mut() else {
+            return false;
+        };
+        let Some(selection) = tab.view.selection().copied() else {
+            return false;
+        };
+        let Some(text) = tab.control.selection_text(&selection) else {
+            return false;
+        };
+
+        arboard::Clipboard::new()
+            .and_then(|mut clipboard| clipboard.set_text(text))
+            .is_ok()
+    }
+
+    /// Sends the clipboard through the terminal's bracketed-paste filter.
+    fn paste_clipboard(&mut self) {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return;
+        };
+        let Ok(text) = clipboard.get_text() else {
+            return;
+        };
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.control.paste(&text);
+        }
+    }
+
+    /// Whether the active terminal tracks the mouse.
+    fn active_tracking(&self) -> bool {
+        self.tabs.active().is_some_and(|tab| tab.control.is_tracking_mouse())
+    }
+
+    /// Starts a selection, or forwards the press to a tracking application.
+    fn pointer_pressed(&mut self, info: PointerEventInfo) {
+        let shift = info.modifiers.contains(InputModifiers::SHIFT);
+        let forward = input::forwards_to_application(self.active_tracking(), shift);
+        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+
+        if forward {
+            if let Some(position) = cell {
+                let buttons = input::mouse_buttons(
+                    info.is_left_button_pressed,
+                    info.is_middle_button_pressed,
+                    info.is_right_button_pressed,
+                );
+                let chord =
+                    input::key_modifiers(modifiers(info.modifiers), self.sides.right_alt, self.sides.right_ctrl);
+                let event = MouseEvent {
+                    position,
+                    kind: MouseEventKind::Press(MouseButton::Left),
+                    buttons,
+                    modifiers: chord,
+                    delta: 0,
+                };
+                tab.control.send_mouse(&event);
+                self.last_mouse_cell = Some(position);
+            }
+            return;
+        }
+
+        let Some((column, row)) = cell else {
+            return;
+        };
+
+        // Selection is in document coordinates: history first, then the screen.
+        let history = tab.control.max_scroll();
+        let position = (column, input::screen_to_document(history, tab.view.scroll(), row));
+
+        let count = tab.view.click(position, Instant::now());
+        if count >= 3 {
+            let width = tab.control.screen_width();
+            tab.view.select_line(position.1, width);
+        } else if count == 2 {
+            let text = tab.control.row_text(position.1);
+            tab.view.select_word(&text, position);
+        } else {
+            tab.view.select(position, modifiers(info.modifiers).alt);
+        }
+    }
+
+    /// Extends a selection, scrolls a drag past the pane, or forwards the move.
+    fn pointer_moved(&mut self, info: PointerEventInfo) {
+        let (columns, rows) = self.grid;
+        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        let shift = info.modifiers.contains(InputModifiers::SHIFT);
+        let forward = input::forwards_to_application(self.active_tracking(), shift);
+
+        let scale = f64::from(finite_scale(self.scale));
+        let width = f64::from(self.cell.0) / scale;
+        let height = f64::from(self.cell.1) / scale;
+        let outside = if info.y < 0.0 {
+            -1
+        } else if height > 0.0 && info.y >= f64::from(rows.max(0)) * height {
+            1
+        } else {
+            0
+        };
+        let column = if width > 0.0 {
+            (info.x / width).floor() as i32
+        } else {
+            0
+        };
+
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+
+        if forward {
+            if let Some(position) = cell {
+                let buttons = input::mouse_buttons(
+                    info.is_left_button_pressed,
+                    info.is_middle_button_pressed,
+                    info.is_right_button_pressed,
+                );
+                let dragging = buttons.left || buttons.middle || buttons.right;
+                if self.last_mouse_cell != Some(position) || dragging {
+                    let chord =
+                        input::key_modifiers(modifiers(info.modifiers), self.sides.right_alt, self.sides.right_ctrl);
+                    let event = MouseEvent {
+                        position,
+                        kind: MouseEventKind::Move,
+                        buttons,
+                        modifiers: chord,
+                        delta: 0,
+                    };
+                    tab.control.send_mouse(&event);
+                    self.last_mouse_cell = Some(position);
+                }
+            } else {
+                self.last_mouse_cell = None;
+            }
+            return;
+        }
+
+        if !info.is_left_button_pressed || tab.view.selection().is_none() {
+            return;
+        }
+
+        if outside != 0 {
+            // A drag that leaves the pane claims the edge row and scrolls one
+            // row towards the pointer, so the selection reaches into history.
+            let max = tab.control.max_scroll();
+            tab.view.drag_scroll(outside, max, Instant::now());
+            let row = if outside < 0 { 0 } else { rows.max(1) - 1 };
+            let column = column.clamp(0, columns.max(1) - 1);
+            let document = input::screen_to_document(max, tab.view.scroll(), row);
+            tab.view.extend((column, document));
+        } else if let Some((column, row)) = cell {
+            let history = tab.control.max_scroll();
+            let document = input::screen_to_document(history, tab.view.scroll(), row);
+            tab.view.extend((column, document));
+        }
+    }
+
+    /// Finishes a forwarded press.
+    fn pointer_released(&mut self, info: PointerEventInfo) {
+        let shift = info.modifiers.contains(InputModifiers::SHIFT);
+        if !input::forwards_to_application(self.active_tracking(), shift) {
+            self.last_mouse_cell = None;
+            return;
+        }
+
+        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+
+        if let Some(position) = cell {
+            let buttons = input::mouse_buttons(
+                info.is_left_button_pressed,
+                info.is_middle_button_pressed,
+                info.is_right_button_pressed,
+            );
+            let chord = input::key_modifiers(modifiers(info.modifiers), self.sides.right_alt, self.sides.right_ctrl);
+            let event = MouseEvent {
+                position,
+                kind: MouseEventKind::Release(MouseButton::Left),
+                buttons,
+                modifiers: chord,
+                delta: 0,
+            };
+            tab.control.send_mouse(&event);
+        }
+        self.last_mouse_cell = None;
+    }
 }
 
 /// Starts a shell, falling back to what every Windows install has.
@@ -570,6 +828,63 @@ fn tab_key(id: u64) -> String {
 /// The tab id a key names, if it names one.
 fn tab_id(key: &str) -> Option<u64> {
     key.strip_prefix("tab-")?.parse().ok()
+}
+
+/// The settings vocabulary key for a terminal key, if it has one.
+fn settings_key(key: Key) -> Option<settings::Key> {
+    Some(match key {
+        Key::Char(character) => settings::Key::Char(character.to_ascii_lowercase()),
+        Key::Tab => settings::Key::Tab,
+        Key::Enter => settings::Key::Enter,
+        Key::Escape => settings::Key::Escape,
+        Key::Space => settings::Key::Space,
+        Key::Backspace => settings::Key::Backspace,
+        Key::Insert => settings::Key::Insert,
+        Key::Delete => settings::Key::Delete,
+        Key::Home => settings::Key::Home,
+        Key::End => settings::Key::End,
+        Key::PageUp => settings::Key::PageUp,
+        Key::PageDown => settings::Key::PageDown,
+        Key::Left => settings::Key::Left,
+        Key::Right => settings::Key::Right,
+        Key::Up => settings::Key::Up,
+        Key::Down => settings::Key::Down,
+        Key::Function(number) => settings::Key::Function(number),
+        _ => return None,
+    })
+}
+
+/// The window action a chord names, if the file binds it.
+fn chord_action(bindings: &[settings::Keybinding], key: Key, modifiers: InputModifiers) -> Option<settings::Action> {
+    let key = settings_key(key)?;
+    let chord = settings::Modifiers {
+        ctrl: modifiers.contains(InputModifiers::CONTROL),
+        shift: modifiers.contains(InputModifiers::SHIFT),
+        alt: modifiers.contains(InputModifiers::ALT),
+    };
+
+    bindings
+        .iter()
+        .find(|binding| binding.keys.matches(key, chord))
+        .map(|binding| binding.action)
+}
+
+/// The grid cell a pane-relative position names, in DIPs.
+fn pointer_cell(x: f64, y: f64, grid: (i32, i32), cell: (u16, u16), scale: f32) -> Option<(i32, i32)> {
+    let scale = f64::from(finite_scale(scale));
+    let width = f64::from(cell.0) / scale;
+    let height = f64::from(cell.1) / scale;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+
+    let column = (x / width).floor() as i32;
+    let row = (y / height).floor() as i32;
+    let (columns, rows) = grid;
+    if column < 0 || row < 0 || column >= columns || row >= rows {
+        return None;
+    }
+    Some((column, row))
 }
 
 /// The face the shell paints with and the settings its atlas needs.
@@ -880,6 +1195,56 @@ mod tests {
     fn the_pty_size_follows_the_grid() {
         assert_eq!(pty_size((120, 30)), PtySize::new(120, 30));
         assert_eq!(pty_size((0, 0)), PtySize::new(1, 1));
+    }
+
+    #[test]
+    fn a_pointer_position_maps_to_a_cell() {
+        assert_eq!(pointer_cell(0.0, 0.0, (80, 24), (9, 20), 1.0), Some((0, 0)));
+        assert_eq!(pointer_cell(9.0, 20.0, (80, 24), (9, 20), 1.0), Some((1, 1)));
+        assert_eq!(pointer_cell(-1.0, 0.0, (80, 24), (9, 20), 1.0), None);
+        assert_eq!(pointer_cell(720.0, 0.0, (80, 24), (9, 20), 1.0), None);
+    }
+
+    #[test]
+    fn a_scaled_pointer_position_names_the_same_cell() {
+        // At 200% the physical cell is twice the DIP cell, and the pointer
+        // position is in DIPs.
+        assert_eq!(pointer_cell(9.0, 20.0, (80, 24), (18, 40), 2.0), Some((1, 1)));
+    }
+
+    #[test]
+    fn a_bound_chord_is_matched_before_the_terminal_sees_it() {
+        let file = settings::parse(
+            r##"
+                version = 1
+
+                [[keybindings]]
+                keys = "ctrl+shift+c"
+                action = "copy"
+            "##,
+        )
+        .expect("settings");
+
+        let mut ctrl_shift = InputModifiers::CONTROL;
+        ctrl_shift |= InputModifiers::SHIFT;
+
+        assert_eq!(
+            chord_action(&file.keybindings, Key::Char('c'), ctrl_shift),
+            Some(settings::Action::Copy)
+        );
+        // The same key without Shift is not this chord.
+        assert_eq!(
+            chord_action(&file.keybindings, Key::Char('c'), InputModifiers::CONTROL),
+            None
+        );
+    }
+
+    #[test]
+    fn a_key_without_a_settings_name_is_not_a_chord() {
+        assert_eq!(settings_key(Key::LeftShift), None);
+        assert_eq!(settings_key(Key::CapsLock), None);
+        assert_eq!(settings_key(Key::Char('A')), Some(settings::Key::Char('a')));
+        assert_eq!(settings_key(Key::Function(5)), Some(settings::Key::Function(5)));
     }
 
     #[test]
