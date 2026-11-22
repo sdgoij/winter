@@ -11,8 +11,9 @@ shared by all three.
 ## Status
 
 Early but coherent. The terminal core — parsing, the buffer, dispatch, the
-renderer, and the input encoders — is written and tested; the emulator is not
-runnable yet because the host and server layers are still landing.
+renderer, the input encoders, the console host, and a working pty layer — is
+written and tested; the emulator is not runnable yet because there is no window
+and no event loop.
 
 | Crate | What it is | State |
 |---|---|---|
@@ -21,12 +22,12 @@ runnable yet because the host and server layers are still landing.
 | [`crates/buffer`](crates/buffer) | `OutputCell`, `Row`, `TextBuffer`, marks, search, image bands | Complete for Phase 2 |
 | [`crates/vt`](crates/vt) | DFA parser for VT escape sequences | Complete for Phase 3 |
 | [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Complete for Phase 4 |
-| [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input |
+| [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input; Phase 8 adds focus, clamp and AltGr rules |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
-| [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Phase 6 under way |
-| [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Phase 7 under way (ADRs 015, 016) |
+| [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
+| [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
 
-1324 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1328 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 

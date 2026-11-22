@@ -204,7 +204,7 @@ Do not add call sites under an allowance.
 
 ## Where the port stands
 
-Phases 1–5 are complete. Phase 6 (the console host) is under way:
+Phases 1–5 are complete. Phase 6 (the console host) has its portable modules:
 `history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model,
 `InputStateMachineEngine.cpp`, the portable halves of `consoleInformation.cpp`
 and `screenInfo.cpp`, `settings.cpp`, `alias.cpp` (with its expansion wired into
@@ -218,8 +218,11 @@ layer with the read-data wait path; `registry.cpp`, `handle.cpp` and
 the cooked read's pager, the render settings and the window metrics wait for
 the server, renderer and window layers; `outputStream.cpp` has no counterpart
 (ADR 013). Phase 7 has the server's portable policy (ADR 015) and its pty
-layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules); Phases 8–14
-are not started.
+layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules). Phase 8 has
+the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
+AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
+The window backends and the app's interactivity layer are next; Phases 9–14 are
+not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

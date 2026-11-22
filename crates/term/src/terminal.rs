@@ -15,6 +15,10 @@ use crate::output_engine::OutputStateMachineEngine;
 pub struct Terminal {
     state: StateMachine<OutputStateMachineEngine<AdaptDispatch>>,
     input: TerminalInput,
+    /// Whether the window has focus, as `Terminal::FocusChanged` tracks it.
+    focused: bool,
+    /// Upstream's `_altGrAliasing`, set from the profile (default on).
+    alt_gr_aliasing: bool,
 }
 
 impl Terminal {
@@ -28,6 +32,8 @@ impl Terminal {
         Self {
             state: StateMachine::new(OutputStateMachineEngine::new(dispatch)),
             input: TerminalInput::new(),
+            focused: false,
+            alt_gr_aliasing: true,
         }
     }
 
@@ -38,16 +44,52 @@ impl Terminal {
     /// handle it itself.
     pub fn handle_key(&mut self, event: &KeyEvent) -> Option<String> {
         let modes = self.dispatch().input_modes();
+
+        // Upstream's `_altGrAliasing` (GH#5525, GH#6211): with the setting
+        // off, Ctrl+Alt is a chord and not an AltGr layer, so the translated
+        // character is discarded and the layout's base key wins.
+        if !self.alt_gr_aliasing && event.modifiers.alt() && event.modifiers.ctrl() && !event.modifiers.is_alt_gr() {
+            let suppressed = KeyEvent {
+                codepoint: None,
+                ..*event
+            };
+            return self.input.handle_key(&suppressed, &modes);
+        }
+
         self.input.handle_key(event, &modes)
+    }
+
+    /// Sets whether Ctrl+Alt without a reported AltGr state is treated as an
+    /// AltGr layer.
+    ///
+    /// Upstream takes this from the profile's `altGrAliasing`, which defaults
+    /// to on. The setting is here, on the object that consumes it, until the
+    /// settings model arrives.
+    pub fn set_alt_gr_aliasing(&mut self, enabled: bool) {
+        self.alt_gr_aliasing = enabled;
     }
 
     /// Translates a mouse event into the bytes to write to the pty.
     ///
     /// `Some("")` means the event was consumed without producing bytes, as a
     /// partly accumulated wheel turn is.
+    ///
+    /// The position is clamped into the viewport first, as upstream's
+    /// `SendMouseEvent` does (GH#6401): a drag that leaves the buffer still
+    /// reports a cell instead of being dropped.
     pub fn handle_mouse(&mut self, event: &MouseEvent) -> Option<String> {
         let modes = self.dispatch().input_modes();
-        self.input.handle_mouse(event, &modes)
+        let (width, height) = self.screen_size();
+        let last_column = width.max(1) - 1;
+        let last_row = height.max(1) - 1;
+        let clamped = MouseEvent {
+            position: (
+                event.position.0.clamp(0, last_column),
+                event.position.1.clamp(0, last_row),
+            ),
+            ..*event
+        };
+        self.input.handle_mouse(&clamped, &modes)
     }
 
     /// Formats clipboard text for the pty.
@@ -65,7 +107,17 @@ impl Terminal {
     }
 
     /// Translates a focus change into the bytes to write to the pty.
+    ///
+    /// A repeat of the state already known is not an event and produces
+    /// nothing, which is upstream's `Terminal::FocusChanged`. Enabling focus
+    /// reporting later does not replay the state that was set while it was
+    /// off; the window sends the next real change.
     pub fn handle_focus(&mut self, focused: bool) -> Option<String> {
+        if self.focused == focused {
+            return None;
+        }
+        self.focused = focused;
+
         let modes = self.dispatch().input_modes();
         self.input.handle_focus(focused, &modes)
     }
@@ -229,7 +281,7 @@ impl Default for Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Key, KeyEvent, MouseButton, MouseEvent, WheelAxis};
+    use crate::input::{Key, KeyEvent, Modifiers, MouseButton, MouseEvent, WheelAxis};
 
     #[test]
     fn a_device_attributes_query_queues_a_response() {
@@ -406,12 +458,15 @@ mod tests {
             Some("\u{9b}1;5D")
         );
 
-        // Focus reporting is off until the mode is set; S7C1T restores the
-        // two-byte introducer.
+        // Focus reporting is off until the mode is set. The state still moves,
+        // so enabling the report afterwards does not make the old state an
+        // event; only the next change is reported. S7C1T restores the two-byte
+        // introducer.
         terminal.process_str("\x1b F");
         assert_eq!(terminal.handle_focus(true), None);
         terminal.process_str("\x1b[?1004h");
-        assert_eq!(terminal.handle_focus(true).as_deref(), Some("\x1b[I"));
+        assert_eq!(terminal.handle_focus(true), None);
+        assert_eq!(terminal.handle_focus(false).as_deref(), Some("\x1b[O"));
     }
 
     #[test]
@@ -433,6 +488,76 @@ mod tests {
         terminal.process_str("\x1b[?1000l\x1b[?1006l\x1b[?1049h");
         let wheel = MouseEvent::wheel((0, 0), WheelAxis::Vertical, 120);
         assert_eq!(terminal.handle_mouse(&wheel).as_deref(), Some("\x1b[A"));
+    }
+
+    #[test]
+    fn repeated_focus_changes_are_reported_once() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b[?1004h");
+
+        assert_eq!(terminal.handle_focus(true).as_deref(), Some("\x1b[I"));
+        assert_eq!(terminal.handle_focus(true), None);
+        assert_eq!(terminal.handle_focus(false).as_deref(), Some("\x1b[O"));
+        assert_eq!(terminal.handle_focus(false), None);
+    }
+
+    #[test]
+    fn a_mouse_event_outside_the_screen_is_clamped_to_the_viewport() {
+        let mut terminal = Terminal::new();
+        terminal.resize(10, 5);
+        terminal.process_str("\x1b[?1000h\x1b[?1006h");
+
+        // GH#6401: the position is clamped, not dropped, so a drag off the
+        // buffer still reports the last cell. SGR coordinates are one-based.
+        let far = MouseEvent::press((99, 99), MouseButton::Left);
+        assert_eq!(terminal.handle_mouse(&far).as_deref(), Some("\x1b[<0;10;5M"));
+
+        let before = MouseEvent::press((-3, -1), MouseButton::Left);
+        assert_eq!(terminal.handle_mouse(&before).as_deref(), Some("\x1b[<0;1;1M"));
+    }
+
+    #[test]
+    fn disabling_alt_gr_aliasing_makes_ctrl_alt_a_control_chord() {
+        let mut terminal = Terminal::new();
+        let event = KeyEvent {
+            key: Key::Char('q'),
+            codepoint: Some('@'),
+            modifiers: Modifiers {
+                left_ctrl: true,
+                left_alt: true,
+                ..Modifiers::default()
+            },
+            ..KeyEvent::down(Key::Char('q'))
+        };
+
+        // A graphical character under Ctrl+Alt looks like an AltGr layer, so
+        // the translated character is sent.
+        assert_eq!(terminal.handle_key(&event).as_deref(), Some("@"));
+
+        terminal.set_alt_gr_aliasing(false);
+        // Now the chord is Ctrl+Alt+Q: Alt adds the escape prefix and Ctrl+Q is
+        // 0x11, the layout's base key rather than the character it produced.
+        assert_eq!(terminal.handle_key(&event).as_deref(), Some("\x1b\u{11}"));
+    }
+
+    #[test]
+    fn a_real_alt_gr_chord_is_not_suppressed() {
+        let mut terminal = Terminal::new();
+        terminal.set_alt_gr_aliasing(false);
+
+        // Right Alt with left Ctrl is what Windows sends for AltGr, so the
+        // character survives the setting.
+        let event = KeyEvent {
+            key: Key::Char('q'),
+            codepoint: Some('@'),
+            modifiers: Modifiers {
+                left_ctrl: true,
+                right_alt: true,
+                ..Modifiers::default()
+            },
+            ..KeyEvent::down(Key::Char('q'))
+        };
+        assert_eq!(terminal.handle_key(&event).as_deref(), Some("@"));
     }
 
     #[test]

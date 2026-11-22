@@ -164,6 +164,14 @@ impl Modifiers {
             && !self.enhanced
             && (self.left_alt ^ self.right_alt)
     }
+
+    /// Returns whether the state is an AltGr chord.
+    ///
+    /// Upstream's `ControlKeyStates::IsAltGrPressed`: right Alt with left Ctrl,
+    /// which is what Windows sends for the AltGr key.
+    pub const fn is_alt_gr(&self) -> bool {
+        self.right_alt && self.left_ctrl
+    }
 }
 
 /// A platform-neutral key event.

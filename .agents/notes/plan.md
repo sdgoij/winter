@@ -9,18 +9,20 @@ Verified by running the gate, not by reading the previous status:
 
 | Crate | Lines | Tests | State |
 |---|---|---|---|
-| `utils` | ~4.6k | 207 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
-| `types` | ~3.7k | 110 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor, the X11 colour-name tables, `InputModes`, the console `InputRecord` vocabulary and `FilterStringForPaste` |
-| `buffer` | ~6.8k | 201 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator` |
-| `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
-| `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
-| `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
-| `host` | ~6.3k | 182 | Phase 6 under way: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, and `Scrolling` |
+| `utils` | ~6.5k | 211 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
+| `types` | ~6.0k | 121 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor, the X11 colour-name tables, `InputModes`, the console `InputRecord` vocabulary and `FilterStringForPaste` |
+| `buffer` | ~7.1k | 206 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF) |
+| `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
+| `adapter` | ~9.7k | 180 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
+| `term` | ~5.5k | 185 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp and AltGr aliasing. 105 of the tests are the conformance corpus |
+| `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
+| `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
+| `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1235 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
-7–14 are not started.
+1328 tests, doc tests. Phases 1–7 are complete. Phase 8 has begun with the last of
+`Terminal.cpp`'s input surface; its keyboard, mouse and kitty rows are retired into
+`term` (ADR 017), and the window backends are next. Phases 9–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1060,21 +1062,51 @@ API. Non-blocking I/O and signal forwarding belong to the input layer.
 
 **Estimated effort:** 2.5 weeks (0.5 wks for tests)
 
+The encoders landed with `term` in Phase 4, not in a separate crate: a crate is
+created when its first real content exists (ADR 001), and `terminalInput.cpp`
+and `mouseInput.cpp` had a consumer there. The plan's `crates/input` rows are
+retired (ADR 017); what remains in this phase is the platform-specific window
+layer and the app's interactivity layer.
+
 ### Input Processing
 
-- [ ] `winterm/crates/input/src/keyboard.rs` — Keyboard events
-  - [ ] **Tests:** key down/up, modifier detection (Ctrl/Alt/Shift), VT key encoding, dead key handling, repeat detection, key code mapping
-  - [ ] **Property tests:** key_down → key_up sequence produces correct VT input; modifiers combine correctly
-- [ ] `winterm/crates/input/src/mouse.rs` — Mouse events
-  - [ ] **Tests:** button down/up, scroll (vertical/horizontal), motion, focus, click detection, wheel delta normalization
-  - [ ] **Property tests:** mouse move within viewport produces coordinate within bounds; scroll delta clamps to reasonable values
-- [ ] `winterm/crates/input/src/kitty.rs` — Kitty keyboard
-  - [ ] **Tests:** enable/disable, key encoding, event report, past event report, normal/dispatch/report modes
-- [ ] `winterm/crates/input/src/ime.rs` — IME composition
-  - ] **Tests:** composition start/end, preedit text, commit, cancellation
-- [ ] `winterm/crates/input/src/input_thread.rs` — Input thread
-  - [ ] **Tests:** event loop, shutdown, event delivery order
-- [ ] `winterm/crates/input/src/pty_signal.rs` — PTY signals
+- [x] ~~`winterm/crates/input/src/keyboard.rs`~~ — `terminalInput.cpp`
+  - The encoder is `crates/term/src/input/terminal_input.rs`: key down/up,
+    modifier and lock detection, the regular encodings, win32-input-mode and
+    focus reporting, with the upstream cases ported beside it.
+- [x] ~~`winterm/crates/input/src/mouse.rs`~~ — `mouseInput.cpp`
+  - The encoder is `crates/term/src/input/mouse_input.rs`: tracking modes,
+    clicks, motion, wheel accumulation and normalization, the UTF-8 and SGR
+    encodings, and alternate scroll.
+- [x] ~~`winterm/crates/input/src/kitty.rs`~~ — the kitty keyboard protocol
+  - Part of `terminal_input.rs` (ADR 009): enabling, disabling, disambiguate,
+    report-event-types, report-alternate-keys and report-all-keys.
+- [x] `Terminal.cpp`'s input surface — `crates/term/src/terminal.rs`
+  - `FocusChanged` dedups (a repeated state is not an event), `SendMouseEvent`
+    clamps the position into the viewport (GH#6401), and `_altGrAliasing` is a
+    `Terminal` setting that discards a translated character for Ctrl+Alt when
+    aliasing is off (GH#5525, GH#6211).
+- [ ] Platform event decoding — building `KeyEvent` and `MouseEvent` from the
+  window messages, with the keyboard layout the platform owns (ADR 011).
+  Lands with the window backends below.
+- [ ] IME composition — the platform control hands composed text to
+  `Terminal::handle_key` as a character event; there is no portable module.
+- [ ] ~~`winterm/crates/input/src/input_thread.rs`~~, ~~`pty_signal.rs`~~
+  - An input pump reads the pty and feeds `Terminal`, and resize reaches the
+    child through `Pty::resize`; both are the application's composition of
+    `server` and `term`, so they land with the app crate (Phase 9, ADR 017).
+
+### Interactivity
+
+`ControlInteractivity.cpp` is `src/cascadia` and maps to the application crate
+(Phase 9). Its portable state — the multi-click counter, its timer and the
+last-click position — goes with it, not into `term`.
+
+### Platform Backends
+
+The windowing stack is the first decision this phase needs. These rows assume
+hand-written backends; Phase 9 names egui and wgpu, which bring their own. Do
+not start a row before that is settled in an ADR.
 
 ### Platform Backends
 
