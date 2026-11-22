@@ -70,11 +70,11 @@ The dependency ring starts at `utils → types → {buffer, vt} → adapter → 
 ## Contributing
 
 Read [`AGENTS.md`](AGENTS.md) first: it is the working agreement, and it is short.
-Procedures (porting a C++ module, writing a commit message) are skills under
-[`.agents/skills/`](.agents/skills). Decisions that constrain future code are
-ADRs under [`.agents/notes/adr/`](.agents/notes/adr/README.md). The C++ source is
-expected at `.design/refs/terminal` (gitignored); the port is written against it,
-not from memory.
+Procedures (porting a C++ module, testing, writing a commit message) are skills
+under [`.agents/skills/`](.agents/skills). Decisions that constrain future code
+are ADRs under [`.agents/notes/adr/`](.agents/notes/adr/README.md). The C++ source
+is expected at `.design/refs/terminal` (gitignored); the port is written against
+it, not from memory.
 
 ## Licence
 

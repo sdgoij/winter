@@ -36,12 +36,17 @@ Do not claim a gate passed unless the command was run in this session and its
 result was observed. A gate that cannot be run is reported by name, never turned
 into a silent pass.
 
+Once every requirement is met and the gate is green, committing is the next
+step, including changes to the public surface or the architecture. Code, its
+tests, and the documentation that describes them are one commit.
+
 ## Verification gates
 
 ```sh
 just gate       # fmt, clippy, deny, test, doc — the whole contract
 just fast       # fmt, clippy, test — the inner loop, not the gate
 just test-crate vt
+just test-long  # release mode, the ignored cases included
 ```
 
 - `just fmt` — `cargo fmt --all --check` and `git --no-pager diff --check`. This
@@ -53,6 +58,9 @@ just test-crate vt
 - `just test` — the workspace suite.
 - `just doc` — doc tests. There are none yet; the recipe exists so the first
   example that stops compiling fails the gate.
+- `just test-long` — the `#[ignore]`d cases in release mode. Not in `gate`: it
+  depends on the host's installed fonts and is slow. Run it when touching a
+  crate that has an ignored case.
 
 Enable the pre-commit hook once per clone:
 
@@ -62,6 +70,39 @@ just hooks
 
 It runs formatting, lints, and `cargo-deny` when installed. Set
 `WINTERM_PRECOMMIT_TESTS=1` to add the suite.
+
+## Test layers
+
+Coverage is a review property, not a percentage. A layer is required when it can
+catch a failure the layer below cannot; do not add a conformance case for a pure
+rule, and do not leave a ported handler without one.
+
+| Layer | Home | Required for |
+|---|---|---|
+| Unit | `#[cfg(test)]` in the module that owns the rule | every ported type, parser state, buffer operation, dispatch handler and error path |
+| Conformance | `crates/term/tests/conformance/` | every escape sequence a handler names; expectations from ECMA-48, DEC, xterm or upstream `ut_*`, never from this implementation |
+| Property | `proptest` in the owning crate | open-ended invariants: reflow, selection bounds, hashing, parameter parsing |
+| Long-running | `#[ignore]` in the owning module | host-environment dependence and astronomically rare paths |
+
+The conformance corpus has a single entry point (`main.rs`, wired through
+`[[test]]` in `crates/term/Cargo.toml`) so its modules can live in
+subdirectories. A sequence whose expected bytes came from running this code is
+not a test; it is a regression lock on a possible bug.
+
+## Test rules
+
+- **Every bug fix gets a regression test** that fails before the fix.
+- **Every new error path gets a test** asserting the error, not just `is_err()`.
+- **Port the upstream tests with the code.** A handler whose sequence no test
+  names is not ported.
+- **No sleeps, no network, no shared state.** Each test owns its fixtures.
+- **No retries to hide flakiness.** A flaky test is a failure to fix.
+- **No vacuous tests.** Prove the test fails without the change.
+- **No golden re-baseline to make a failure green.** Expected values come from
+  upstream, a specification, or a hand-computed example.
+
+The procedure, the corpus layout, and the Windows memory trap are in the
+`winterm-testing` skill.
 
 ## Commit rules
 
@@ -73,6 +114,8 @@ period, body wrapped at 72 columns explaining what changed and why.
 - Never commit build output, `target/`, `/dist`, or a local `.db`.
 - Tracked text is LF in the index and in the working tree. `.gitattributes`
   pins it; `just lf` puts the working tree back after an editor rewrites it.
+- Stage explicit paths. `git add -A` has swept a scratch file into a commit
+  here before; the message file is `.commit-msg-tmp` and it is ignored.
 - Keep the tree clean after committing.
 
 ## Project invariants
@@ -111,8 +154,9 @@ tests pass.
 ### Workspace
 
 - **The dependency ring is the architecture** (ADR 001):
-  `utils → types → {buffer, vt} → adapter → …`. An edge that points left is a
-  design error, not a `Cargo.toml` edit.
+  `utils → types → {buffer, vt} → adapter → term`. An edge that points left is a
+  design error, not a `Cargo.toml` edit. `renderer` sits on `utils`, `types` and
+  `buffer`; `host` sits on `types`.
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
 - **`unsafe` is denied workspace-wide.** `utils` is the only crate that opts out,
@@ -128,15 +172,6 @@ tests pass.
   comment that names a constant's origin, a non-obvious constraint, or a
   trade-off stays and is updated when the rule moves.
 
-### Tests
-
-- **Every bug fix gets a regression test** that fails before the fix.
-- **Every new error path gets a test** asserting the error, not just `is_err()`.
-- **No sleeps, no network, no shared state.** Each test owns its fixtures.
-- **No retries to hide flakiness.** A flaky test is a failure to fix.
-- **No golden re-baseline to make a failure green.** Expected values come from
-  upstream, a specification, or a hand-computed example.
-
 ### Ratchets
 
 Two lints are allowed today and are the target of a cleanup, not a resting place:
@@ -151,20 +186,38 @@ Do not add call sites under an allowance.
 
 | Path | Holds |
 |---|---|
-| `.agents/notes/plan.md` | The porting plan, milestone status, and the cleanup list before Phase 5 |
+| `.agents/notes/plan.md` | The porting plan, milestone status, and what to build next |
 | `.agents/notes/adr/` | Decisions that constrain future code |
-| `.agents/skills/` | Procedures loaded on demand |
+| `.agents/skills/` | Procedures loaded on demand: porting, testing, commit messages |
 | `crates/utils` | Geometry, colour, containers, locks — the only crate with `unsafe` |
-| `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters |
-| `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, selection, marks, search |
+| `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
+| `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, selection, marks, search, images |
 | `crates/vt` | The DFA parser and its dispatch actions |
 | `crates/adapter` | `ITermDispatch`, page management, sixel, macros, charsets |
+| `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
+| `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
+| `crates/host` | The console side: history, input buffer, and the input parser |
 
-## Before starting Phase 5
+## Where the port stands
 
-The adapter is connected but not yet dispatching: `AdaptDispatch` compiles and
-holds the terminal state, and `PageManager` holds the real buffer, but
-`ITermDispatch` has no implementation, so bytes parsed by `vt` reach nothing. The
-buffer also has no `resize`/`reflow`. The list, with a check for each, is in
-`plan.md` §"Pre-Phase-5 cleanup". Do not build a renderer on a buffer whose
-width is still fixed.
+Phases 1–5 are complete. Phase 6 (the console host) is under way:
+`history.cpp` and `inputBuffer.cpp` are ported, and `cookedRead.cpp` is next,
+followed by `InputStateMachineEngine` (ADR 010), which is where
+`IInteractDispatch::write_input` finally gets a producer. Phases 7–14 are not
+started.
+
+The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
+settled, not a to-do list. The status table in `plan.md` is the live answer, and
+a row the code has outgrown is a bug in the document.
+
+## Where a rule belongs
+
+This file is read at the start of every session, so it stays high-signal.
+
+- A rule is a trap to avoid, not a map to follow. If it needs a paragraph of
+  explanation or a sequence of steps, it is a skill.
+- A procedure (porting a module, running the suite, writing a commit message)
+  lives in `.agents/skills/<name>/SKILL.md` and is referenced here in one line.
+- A rule that names one crate belongs in that crate's `.rules`, not here.
+- A new root rule must be non-obvious, repeatedly hit, and specific enough to
+  act on. A one-off observation is a note or a test, not a rule.

@@ -812,6 +812,13 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 **Estimated effort:** 3.5 weeks (0.5 wks for tests)
 
+Order: `history` and `input_buffer` are done; `cooked_read` is next, then
+`input_engine` (ADR 010), which is where a producer for
+`IInteractDispatch::write_input` appears. `console_info` and `screen_info`
+follow the input path so the buffer has a console to belong to. Each module
+lands with its tests and its declaration in `lib.rs`, as the porting skill
+requires.
+
 ### Core Console State
 
 - [ ] `winterm/crates/host/src/console_info.rs` — `ConsoleInformation`

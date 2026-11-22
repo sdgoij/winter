@@ -27,6 +27,9 @@ worth reproducing unless a test depends on them.
 | Stored cells, rows, buffer, selection | `buffer` | unit + proptest |
 | Parser state, dispatch actions | `vt` | unit + conformance sequence |
 | Applies parsed state to buffers | `adapter` | unit + `ITermDispatch` contract |
+| Parser-to-dispatch loop, the `Terminal` handle, key/mouse encoding | `term` | unit + conformance corpus |
+| Fonts, atlas, paint path | `renderer` | unit; font discovery is `#[ignore]`d |
+| Console state: history, input buffer, cooked read, input parser | `host` | unit, in module |
 
 If the module needs a type that lives in a crate the ring forbids (ADR 001), the
 type is in the wrong place — move it (ADR 002), never duplicate it. Duplicating
@@ -50,6 +53,22 @@ Terminal data is **bytes**. `char` is a rendering concept. A conversion that
 loses bytes is a bug unless the loss is the specified behaviour (UTF-8
 replacement), and then it happens in exactly one place.
 
+### Host ports
+
+`src/host` is Win32 console code. The portable part is the state machine; the
+platform part is a thin adapter that the `server` layer will provide.
+
+| Win32 | Rust here |
+|---|---|
+| `HANDLE`, `HPCON`, `HANDLE` ownership | an owned struct or `Option<Box<T>>`; never a `usize` |
+| `DWORD` mode flags | a newtype with `const` bits, as `InputMode` is |
+| `INPUT_RECORD` and its `*_RECORD` union | the shared enum in `types::input_record` (ADR 002, 010) |
+| code pages, `WideCharToMultiByte`, `NTSTATUS` | not ported; bytes are UTF-8 at the boundary |
+| `Rtl*`, wait queues, `SCREEN_INFORMATION` locks | not ported; the Rust ownership model replaces them |
+
+When the host needs a record type the adapter also uses, the type belongs in
+`types`, not in the host, and the enum grows with its first consumer.
+
 ## 4. Port the tests with the code
 
 Upstream's `ut_adapter` / `ut_parser` cases for that module become Rust tests in
@@ -67,9 +86,8 @@ against the unported stub is not a test; prove it fails before claiming it.
 
 Add `pub mod <name>;` to `lib.rs` **only when it compiles and its tests pass**.
 A module that is written but not declared is invisible to `cargo check`, drifts,
-and stops compiling — which is the current state of
-`adapter/src/adapt_dispatch.rs`. If a module cannot be finished, delete it rather
-than leave it beside the working ones.
+and stops compiling. If a module cannot be finished, delete it rather than leave
+it beside the working ones.
 
 ## 6. Run the gate
 
