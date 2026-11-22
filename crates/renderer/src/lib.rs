@@ -10,6 +10,7 @@
 //! ## Modules
 //!
 //! - [`cluster`] — `Cluster`, a shaped glyph cluster and its column count
+//! - [`composition`] — `Composition` and `CompositionRange` for IME previews
 //! - [`css_length`] — `CSSLengthPercentage` parsing and resolution
 //! - [`cursor_options`] — `CursorOptions` for drawing the cursor
 //! - [`font_info_base`] — `FontInfoBase` face name, family, weight, code page
@@ -18,6 +19,7 @@
 //! - [`render_frame_info`] — `RenderFrameInfo`, `GridLines` and `GridLineSet`
 
 pub mod cluster;
+pub mod composition;
 pub mod css_length;
 pub mod cursor_options;
 pub mod font_info;
@@ -27,6 +29,7 @@ pub mod render_frame_info;
 pub mod render_settings;
 
 pub use cluster::Cluster;
+pub use composition::{Composition, CompositionRange};
 pub use css_length::{CSSLengthPercentage, ReferenceFrame};
 pub use cursor_options::CursorOptions;
 pub use font_info::{CellSizeInDIP, FontInfo};

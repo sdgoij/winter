@@ -15,10 +15,10 @@ Verified by running the gate, not by reading the previous status:
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~2.1k | 28 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
-| `renderer` | ~2.6k | 43 | Phase 5 foundation — the portable font, cell-metric, cluster, cursor, CSS-length, frame-info and render-settings vocabulary from `src/renderer/base` and `src/renderer/inc`; the atlas and Windows back ends are not ported |
+| `renderer` | ~2.7k | 45 | Phase 5 foundation — the portable font, cell-metric, cluster, cursor, CSS-length, frame-info, composition and render-settings vocabulary from `src/renderer/base` and `src/renderer/inc`; the atlas and Windows back ends are not ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-788 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+790 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -708,7 +708,7 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] `winterm/crates/renderer/src/css_length.rs` — CSS length parsing
   - [x] **Tests:** pixel, point, percentage, `ch` and bare-number parsing, validation
 - [x] `winterm/crates/renderer/src/cursor_options.rs` — `CursorOptions`
-- [ ] `winterm/crates/renderer/src/composition.rs` — IME composition state
+- [x] `winterm/crates/renderer/src/composition.rs` — IME composition state
 
 ### Glyph Atlas Engine
 
