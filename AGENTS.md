@@ -196,15 +196,16 @@ Do not add call sites under an allowance.
 | `crates/adapter` | `ITermDispatch`, page management, sixel, macros, charsets |
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
-| `crates/host` | The console side: history, input buffer, and the input parser |
+| `crates/host` | The console side: history, input buffer, cooked read, and the input parser |
 
 ## Where the port stands
 
 Phases 1–5 are complete. Phase 6 (the console host) is under way:
-`history.cpp` and `inputBuffer.cpp` are ported, and `cookedRead.cpp` is next,
-followed by `InputStateMachineEngine` (ADR 010), which is where
-`IInteractDispatch::write_input` finally gets a producer. Phases 7–14 are not
-started.
+`history.cpp`, `inputBuffer.cpp` and the `readDataCooked.cpp` edit model are
+ported, and `InputStateMachineEngine` (ADR 010) is next, which is where
+`IInteractDispatch::write_input` finally gets a producer. The read-data family's
+`IWaitRoutine` completion path, the cooked read's pager, and doskey aliases wait
+for the server and screen layers. Phases 7–14 are not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

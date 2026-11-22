@@ -23,6 +23,7 @@
 //! - [`color_fix`] — Oklab perceptual colour nudging
 //! - [`theme_utils`] — Light/dark theme detection
 //! - [`color_table`] — 16-color palette management
+//! - [`virtual_key`] — the virtual-key codes a console input record carries
 
 pub mod character_attrs;
 pub mod charsets;
@@ -42,6 +43,7 @@ pub mod text_color;
 pub mod theme_utils;
 pub mod underline_style;
 pub mod viewport;
+pub mod virtual_key;
 
 // Re-export key types.
 pub use character_attrs::CharacterAttributes;

@@ -12,6 +12,9 @@
 //! - [`history`] — `CommandHistory`, the per-application command ring
 //! - [`input_buffer`] — `InputBuffer`, the records a client has written but not
 //!   yet read, their modes and their coalescing rules
+//! - [`read_data_cooked`] — `CookedReadData`, the edit line and history popups
+//!   behind a cooked read
 
 pub mod history;
 pub mod input_buffer;
+pub mod read_data_cooked;

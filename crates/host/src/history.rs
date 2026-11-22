@@ -163,6 +163,27 @@ impl CommandHistory {
         self.get_nth(self.last_displayed)
     }
 
+    /// Returns the entry the reader is looking at, as an index.
+    ///
+    /// Upstream exposes `LastDisplayed` as a public field; the popups read it
+    /// to seed their selection.
+    pub const fn last_displayed(&self) -> Index {
+        self.last_displayed
+    }
+
+    /// Exchanges two entries.
+    ///
+    /// Out-of-range indices and a swap of an entry with itself do nothing,
+    /// as upstream's `Swap` does. The display index follows neither entry:
+    /// it names a position, not a command.
+    pub fn swap(&mut self, first: Index, second: Index) {
+        let len = self.len() as i32;
+        if first == second || !(0..len).contains(&first) || !(0..len).contains(&second) {
+            return;
+        }
+        self.commands.swap(first as usize, second as usize);
+    }
+
     /// Empties the ring.
     pub fn empty(&mut self) {
         self.commands.clear();
@@ -450,6 +471,41 @@ mod tests {
 
         history.retrieve(SearchDirection::Previous);
         assert!(history.at_first_command());
+    }
+
+    #[test]
+    fn swap_exchanges_two_entries() {
+        let mut history = history(5);
+        history.add("a", false);
+        history.add("b", false);
+
+        history.swap(0, 1);
+        assert_eq!(history.commands().collect::<Vec<_>>(), ["b", "a"]);
+    }
+
+    #[test]
+    fn swap_ignores_out_of_range_and_self_swaps() {
+        let mut history = history(5);
+        history.add("a", false);
+        history.add("b", false);
+
+        history.swap(0, 0);
+        history.swap(0, 2);
+        history.swap(-1, 1);
+        assert_eq!(history.commands().collect::<Vec<_>>(), ["a", "b"]);
+    }
+
+    #[test]
+    fn the_displayed_index_follows_retrieval() {
+        let mut history = history(5);
+        history.add("a", false);
+        history.add("b", false);
+
+        assert_eq!(history.last_displayed(), 1);
+        history.retrieve(SearchDirection::Previous);
+        assert_eq!(history.last_displayed(), 1);
+        history.retrieve(SearchDirection::Previous);
+        assert_eq!(history.last_displayed(), 0);
     }
 
     #[test]
