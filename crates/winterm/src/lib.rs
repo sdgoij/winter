@@ -18,6 +18,7 @@
 
 pub mod blink;
 pub mod grid;
+pub mod layout;
 pub mod session;
 pub mod tabs;
 pub mod ui;

@@ -19,6 +19,7 @@ use types::CursorType;
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
+use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
 use crate::{blink::Blink, grid, session::Session, tabs::Tabs, view::View};
 
 /// The font size the grid is measured and painted at.
@@ -45,15 +46,14 @@ pub fn run() -> eframe::Result {
     eframe::run_native("winterm", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)?))))
 }
 
-/// One shell, its parser and its viewport.
-struct Tab {
+/// One pane: a shell, its parser and its viewport.
+struct Pane {
+    id: PaneId,
     terminal: Terminal,
     session: Session,
     view: View,
     /// The title the shell set with OSC 0/2.
     osc_title: Option<String>,
-    /// The title to show until the shell sets one.
-    fallback_title: String,
     /// The grid size the terminal and pty were last told about.
     size: (i32, i32),
     /// The cell the pointer was last forwarded from, for motion deduplication.
@@ -62,8 +62,8 @@ struct Tab {
     exited: bool,
 }
 
-impl Tab {
-    fn new(ctx: &egui::Context, command: PtyCommand, fallback_title: String) -> io::Result<Self> {
+impl Pane {
+    fn new(ctx: &egui::Context, id: PaneId, command: PtyCommand) -> io::Result<Self> {
         let size = PtySize::DEFAULT;
         let repaint = ctx.clone();
         let session = Session::spawn_with(&command, size, move || repaint.request_repaint())?;
@@ -71,20 +71,15 @@ impl Tab {
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
 
         Ok(Self {
+            id,
             terminal,
             session,
             view: View::new(),
             osc_title: None,
-            fallback_title,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
             exited: false,
         })
-    }
-
-    /// The title the tab strip shows.
-    fn display_title(&self) -> &str {
-        self.osc_title.as_deref().unwrap_or(&self.fallback_title)
     }
 
     /// Takes the bell count so the window can ask for attention once.
@@ -389,7 +384,17 @@ impl Tab {
         }
     }
 
-    fn paint(&self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, screen: &grid::Screen, cursor_on: bool) {
+    /// Adds the pane's grid size to the pane's own rect.
+    fn fit(&mut self, rect: egui::Rect, cell: egui::Vec2) {
+        let columns = ((rect.width() / cell.x).floor() as i32).max(1);
+        let rows = ((rect.height() / cell.y).floor() as i32).max(1);
+        if (columns, rows) != self.size {
+            self.resize(columns, rows);
+        }
+    }
+
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
+        let screen = self.snapshot();
         let painter = ui.painter().with_clip_rect(area);
         painter.rect_filled(area, 0, FALLBACK_BACKGROUND);
 
@@ -471,6 +476,179 @@ impl Tab {
     }
 }
 
+/// One tab: a pane tree, its focused pane and a title.
+struct Tab {
+    panes: Vec<Pane>,
+    layout: Layout,
+    focused: PaneId,
+    /// The title to show until a pane's shell sets one.
+    fallback_title: String,
+    next_id: u64,
+}
+
+impl Tab {
+    fn new(ctx: &egui::Context, command: PtyCommand, fallback_title: String) -> io::Result<Self> {
+        let id = PaneId(0);
+        Ok(Self {
+            panes: vec![Pane::new(ctx, id, command)?],
+            layout: Layout::leaf(id),
+            focused: id,
+            fallback_title,
+            next_id: 1,
+        })
+    }
+
+    fn focused_pane(&self) -> Option<&Pane> {
+        self.panes.iter().find(|pane| pane.id == self.focused)
+    }
+
+    fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
+        let focused = self.focused;
+        self.panes.iter_mut().find(|pane| pane.id == focused)
+    }
+
+    /// The title the tab strip shows: the focused pane's OSC title, else the
+    /// shell's name.
+    fn display_title(&self) -> &str {
+        self.focused_pane()
+            .and_then(|pane| pane.osc_title.as_deref())
+            .unwrap_or(&self.fallback_title)
+    }
+
+    /// Splits the focused pane, spawning a shell for the new half.
+    fn split(&mut self, axis: Axis, ctx: &egui::Context) -> bool {
+        let id = PaneId(self.next_id);
+        let Ok(pane) = Pane::new(ctx, id, default_command()) else {
+            return false;
+        };
+
+        if !self.layout.split(self.focused, axis, id) {
+            return false;
+        }
+
+        self.next_id += 1;
+        self.panes.push(pane);
+        self.focused = id;
+        true
+    }
+
+    /// Closes the focused pane. Returns whether a pane remains.
+    fn close_focused(&mut self) -> bool {
+        if self.layout.is_single() {
+            return false;
+        }
+        if !self.layout.remove(self.focused) {
+            return false;
+        }
+
+        let closed = self.focused;
+        self.panes.retain(|pane| pane.id != closed);
+        if let Some(id) = self.layout.leaves().first().copied() {
+            self.focused = id;
+        }
+        true
+    }
+
+    /// Moves focus to the nearest pane in `direction`.
+    fn focus(&mut self, direction: Direction) -> bool {
+        let Some(next) = layout::neighbour(&self.layout.rects(), self.focused, direction) else {
+            return false;
+        };
+        self.focused = next;
+        true
+    }
+
+    /// Grows the focused pane in `direction`.
+    fn resize(&mut self, direction: Direction) -> bool {
+        self.layout.resize(self.focused, direction, 0.05)
+    }
+
+    fn pump_output(&mut self) {
+        for pane in &mut self.panes {
+            pane.pump_output();
+        }
+    }
+
+    fn take_bells(&mut self) -> usize {
+        self.panes.iter_mut().map(Pane::take_bells).sum()
+    }
+
+    fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.handle_events(events, sides);
+        }
+    }
+
+    /// Routes the pointer to the pane under it, focusing that pane on a press.
+    fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2, sides: ModifierSides) {
+        let Some(position) = ctx.input(|input| input.pointer.hover_pos()) else {
+            return;
+        };
+        let pressed = ctx.input(|input| input.pointer.primary_pressed());
+
+        let hit = self.layout.rects().into_iter().find_map(|(id, fraction)| {
+            let rect = fraction_rect(fraction, area);
+            rect.contains(position).then_some((id, rect))
+        });
+        let Some((id, rect)) = hit else {
+            return;
+        };
+
+        if pressed {
+            self.focused = id;
+        }
+
+        if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
+            pane.handle_pointer(ctx, rect, cell, sides);
+        }
+    }
+
+    /// Sizes every pane's grid to the rectangle it occupies.
+    fn fit_panes(&mut self, area: egui::Rect, cell: egui::Vec2) {
+        for (id, fraction) in self.layout.rects() {
+            let rect = fraction_rect(fraction, area);
+            if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
+                pane.fit(rect, cell);
+            }
+        }
+    }
+
+    fn focused_snapshot(&mut self) -> grid::Screen {
+        self.focused_pane_mut().map(Pane::snapshot).unwrap_or_default()
+    }
+
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
+        let focused = self.focused;
+        for (id, fraction) in self.layout.rects() {
+            let rect = fraction_rect(fraction, area);
+            if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
+                pane.paint(ui, rect, cell, cursor_on && id == focused);
+            }
+        }
+    }
+
+    fn selection_text(&mut self) -> Option<String> {
+        self.focused_pane_mut().and_then(Pane::selection_text)
+    }
+
+    fn paste_text(&mut self, text: &str) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.paste_text(text);
+        }
+    }
+}
+
+/// Maps a pane's fractional rectangle onto the window.
+fn fraction_rect(fraction: Fraction, area: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_size(
+        egui::pos2(
+            area.min.x + fraction.x * area.width(),
+            area.min.y + fraction.y * area.height(),
+        ),
+        egui::vec2(fraction.width * area.width(), fraction.height * area.height()),
+    )
+}
+
 /// The window: a tab strip and the active tab.
 struct App {
     tabs: Tabs<Tab>,
@@ -495,6 +673,9 @@ enum TabAction {
     Previous,
     Copy,
     Paste,
+    Split(Axis),
+    Focus(Direction),
+    Resize(Direction),
 }
 
 impl App {
@@ -527,10 +708,33 @@ impl App {
                 self.tabs.select(index);
             }
             TabAction::Close(index) => self.close_tab(index, ctx),
-            TabAction::CloseActive => self.close_tab(self.tabs.index(), ctx),
+            TabAction::CloseActive => {
+                let closes_tab = match self.tabs.active_mut() {
+                    Some(tab) => !tab.close_focused(),
+                    None => false,
+                };
+                if closes_tab {
+                    self.close_tab(self.tabs.index(), ctx);
+                }
+            }
             TabAction::New => self.open_tab(ctx),
             TabAction::Next => self.tabs.step(1),
             TabAction::Previous => self.tabs.step(-1),
+            TabAction::Split(axis) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.split(axis, ctx);
+                }
+            }
+            TabAction::Focus(direction) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.focus(direction);
+                }
+            }
+            TabAction::Resize(direction) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.resize(direction);
+                }
+            }
             TabAction::Copy => {
                 if let Some(text) = self.tabs.active_mut().and_then(Tab::selection_text)
                     && let Some(clipboard) = self.clipboard.as_mut()
@@ -642,37 +846,23 @@ impl eframe::App for App {
         let cell = ctx.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
 
         let area = ui.available_rect_before_wrap();
-        let columns = ((area.width() / cell.x).floor() as i32).max(1);
-        let rows = ((area.height() / cell.y).floor() as i32).max(1);
 
         let sides = self.sides;
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
-        if (columns, rows) != tab.size {
-            tab.resize(columns, rows);
-        }
 
+        tab.fit_panes(area, cell);
         tab.handle_pointer(&ctx, area, cell, sides);
         tab.handle_events(forwarded, &mut self.sides);
 
-        let screen = tab.snapshot();
+        let screen = tab.focused_snapshot();
         let now = Instant::now();
         self.cursor_on = self.blink.update(screen.cursor_blinking, focused, now);
         if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
             ctx.request_repaint_after(delay);
         }
-        tab.paint(ui, area, cell, &screen, self.cursor_on);
-
-        if tab.exited {
-            ui.painter().text(
-                area.left_bottom() + egui::vec2(4.0, -4.0),
-                egui::Align2::LEFT_BOTTOM,
-                "[session ended]",
-                font,
-                FALLBACK_FOREGROUND,
-            );
-        }
+        tab.paint(ui, area, cell, self.cursor_on);
     }
 }
 
@@ -707,13 +897,23 @@ fn command_for(event: &egui::Event) -> Option<TabAction> {
         return None;
     };
 
-    match (*key, modifiers.ctrl, modifiers.shift) {
-        (egui::Key::T, true, true) => Some(TabAction::New),
-        (egui::Key::W, true, true) => Some(TabAction::CloseActive),
-        (egui::Key::Tab, true, false) => Some(TabAction::Next),
-        (egui::Key::Tab, true, true) => Some(TabAction::Previous),
-        (egui::Key::C, true, true) => Some(TabAction::Copy),
-        (egui::Key::V, true, true) => Some(TabAction::Paste),
+    match (*key, modifiers.ctrl, modifiers.shift, modifiers.alt) {
+        (egui::Key::T, true, true, _) => Some(TabAction::New),
+        (egui::Key::W, true, true, _) => Some(TabAction::CloseActive),
+        (egui::Key::D, true, true, _) => Some(TabAction::Split(Axis::Horizontal)),
+        (egui::Key::E, true, true, _) => Some(TabAction::Split(Axis::Vertical)),
+        (egui::Key::Tab, true, false, _) => Some(TabAction::Next),
+        (egui::Key::Tab, true, true, _) => Some(TabAction::Previous),
+        (egui::Key::C, true, true, _) => Some(TabAction::Copy),
+        (egui::Key::V, true, true, _) => Some(TabAction::Paste),
+        (egui::Key::ArrowLeft, false, false, true) => Some(TabAction::Focus(Direction::Left)),
+        (egui::Key::ArrowRight, false, false, true) => Some(TabAction::Focus(Direction::Right)),
+        (egui::Key::ArrowUp, false, false, true) => Some(TabAction::Focus(Direction::Up)),
+        (egui::Key::ArrowDown, false, false, true) => Some(TabAction::Focus(Direction::Down)),
+        (egui::Key::ArrowLeft, false, true, true) => Some(TabAction::Resize(Direction::Left)),
+        (egui::Key::ArrowRight, false, true, true) => Some(TabAction::Resize(Direction::Right)),
+        (egui::Key::ArrowUp, false, true, true) => Some(TabAction::Resize(Direction::Up)),
+        (egui::Key::ArrowDown, false, true, true) => Some(TabAction::Resize(Direction::Down)),
         _ => None,
     }
 }
@@ -1077,11 +1277,52 @@ mod tests {
         assert_eq!(command_for(&key(egui::Key::Tab, true, true)), Some(TabAction::Previous));
         assert_eq!(command_for(&key(egui::Key::C, true, true)), Some(TabAction::Copy));
         assert_eq!(command_for(&key(egui::Key::V, true, true)), Some(TabAction::Paste));
+        assert_eq!(
+            command_for(&key(egui::Key::D, true, true)),
+            Some(TabAction::Split(Axis::Horizontal))
+        );
+        assert_eq!(
+            command_for(&key(egui::Key::E, true, true)),
+            Some(TabAction::Split(Axis::Vertical))
+        );
 
         // Without both modifiers, the key belongs to the shell.
         assert_eq!(command_for(&key(egui::Key::T, true, false)), None);
         assert_eq!(command_for(&key(egui::Key::Tab, false, false)), None);
         assert_eq!(command_for(&egui::Event::Text("t".into())), None);
+    }
+
+    #[test]
+    fn alt_arrows_focus_and_alt_shift_arrows_resize() {
+        let key = |key, ctrl, shift, alt| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl,
+                shift,
+                alt,
+                ..egui::Modifiers::default()
+            },
+        };
+
+        assert_eq!(
+            command_for(&key(egui::Key::ArrowLeft, false, false, true)),
+            Some(TabAction::Focus(Direction::Left))
+        );
+        assert_eq!(
+            command_for(&key(egui::Key::ArrowDown, false, false, true)),
+            Some(TabAction::Focus(Direction::Down))
+        );
+        assert_eq!(
+            command_for(&key(egui::Key::ArrowUp, false, true, true)),
+            Some(TabAction::Resize(Direction::Up))
+        );
+
+        // Ctrl+Alt+Arrow is the shell's, and a bare arrow is a key.
+        assert_eq!(command_for(&key(egui::Key::ArrowLeft, true, false, true)), None);
+        assert_eq!(command_for(&key(egui::Key::ArrowLeft, false, false, false)), None);
     }
 
     #[test]
