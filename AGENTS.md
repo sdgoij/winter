@@ -166,8 +166,8 @@ tests pass.
   primitives; `server`'s two pty backends carry a module-level
   `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
   `winterm`'s `sound` sink does the same for `Beep` (ADR 033), and its
-  `winui::surface` and `winui::wheel` modules do for Direct2D and the wheel
-  hook (ADRs 041, 047). The two self-referential buffer iterators carry an
+  `winui::surface`, `winui::wheel` and `winui::icon` modules do for Direct2D, the
+  wheel hook and the window icon (ADRs 041, 047, 058). The two self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
 - **No new dependency without a reason in the commit.** Prefer what the

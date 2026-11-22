@@ -86,3 +86,4 @@ Rules:
 | [055](055-headless-openconsole.md) | The Windows pty launches a headless `OpenConsole.exe` when one is found, so image sequences reach the terminal; the inbox pseudoconsole is the fallback | Accepted |
 | [056](056-win32-input-records.md) | The WinUI shell sends Win32 input records so a key-down and its key-up are separate events; Space is handled and carries its own character | Accepted |
 | [057](057-batched-kitty-images.md) | A completed kitty image is deferred and painted at the end of the batch; a retransmission of the same id replaces it | Accepted |
+| [058](058-drawn-icon.md) | The icon drawing is the single source: the egui window wraps it, the Windows build embeds it, and the WinUI window is given it from the resource | Accepted |

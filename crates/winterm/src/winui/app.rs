@@ -34,6 +34,7 @@ use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
+use super::icon;
 use super::menu::{self, MenuEntry};
 use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
@@ -631,7 +632,10 @@ impl Component for Shell {
             Message::Pressed(info) => self.pointer_pressed(info),
             Message::Moved(info) => self.pointer_moved(info),
             Message::Released(info) => self.pointer_released(info),
-            Message::Window(handle) => self._wheel = wheel::install(handle),
+            Message::Window(handle) => {
+                self._wheel = wheel::install(handle);
+                icon::apply(handle);
+            }
             Message::Settings(message) => self.settings_message(message),
             Message::FindQuery(text) => self.find_query(text),
             Message::FindStep(forward) => self.find_step(forward),

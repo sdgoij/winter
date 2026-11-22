@@ -52,6 +52,7 @@ winterm = { path = "crates/winterm" }
 arboard = "3"
 bitflags = "2"
 eframe = "0.37"
+embed-resource = "3"
 toml = "1"
 fontdue = "0.9"
 libc = "0.2"
