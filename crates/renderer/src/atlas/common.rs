@@ -4,6 +4,7 @@
 //! value types the engine and its tests share.
 
 use crate::render_frame_info::GridLineSet;
+use types::LineRendition;
 
 /// The position and height of a font decoration (underline, grid line, ...).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -139,6 +140,136 @@ impl FontRelevantAttributes {
     }
 }
 
+/// Identifies a font face the shaping backend knows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FontId(pub usize);
+
+/// A run of glyphs that use one font face.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FontMapping {
+    /// The face for this run.
+    pub font: FontId,
+    /// The first glyph index in the row's glyph arrays.
+    pub glyphs_from: usize,
+    /// One past the last glyph index.
+    pub glyphs_to: usize,
+}
+
+impl FontMapping {
+    /// Returns the number of glyphs in the run.
+    pub const fn len(&self) -> usize {
+        self.glyphs_to.saturating_sub(self.glyphs_from)
+    }
+
+    /// Returns whether the run has no glyphs.
+    pub const fn is_empty(&self) -> bool {
+        self.glyphs_from >= self.glyphs_to
+    }
+}
+
+/// A glyph's sub-cell offset, in pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GlyphOffset {
+    /// Horizontal offset from the pen position.
+    pub advance_offset: f32,
+    /// Vertical offset from the baseline.
+    pub ascender_offset: f32,
+}
+
+/// One shaped glyph.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShapedGlyph {
+    /// The glyph index, or a code point for a built-in glyph.
+    pub glyph_index: u16,
+    /// The advance in pixels.
+    pub advance: f32,
+    /// The sub-cell offset.
+    pub offset: (f32, f32),
+    /// An explicit colour, if the glyph carries one (for example an emoji).
+    pub color: Option<u32>,
+}
+
+/// One shaped row of the atlas, stored as parallel arrays.
+///
+/// Ported from `common.h`'s `ShapedRow`. The parallel arrays are grouped by
+/// [`FontMapping`], and [`ShapedRow::clear`] resets them between frames.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShapedRow {
+    /// The font runs, in order.
+    pub mappings: Vec<FontMapping>,
+    /// Glyph indices; when a mapping's font is unused, these are code points.
+    pub glyph_indices: Vec<u16>,
+    /// Advances in pixels, one per glyph.
+    pub glyph_advances: Vec<f32>,
+    /// Sub-cell offsets, one per glyph.
+    pub glyph_offsets: Vec<GlyphOffset>,
+    /// Explicit glyph colours, one per glyph; zero means "use the run colour".
+    pub colors: Vec<u32>,
+    /// An image bitmap painted with the row.
+    pub bitmap: Bitmap,
+    /// The grid-line runs over the row.
+    pub grid_line_ranges: Vec<GridLineRange>,
+    /// The line rendition the row is drawn with.
+    pub line_rendition: LineRendition,
+    /// The first dirty pixel row.
+    pub dirty_top: i32,
+    /// The first clean pixel row below the dirty area.
+    pub dirty_bottom: i32,
+}
+
+impl ShapedRow {
+    /// Clears the row and marks its cell band dirty.
+    pub fn clear(&mut self, y: i32, cell_height: i32) {
+        self.mappings.clear();
+        self.glyph_indices.clear();
+        self.glyph_advances.clear();
+        self.glyph_offsets.clear();
+        self.colors.clear();
+        self.bitmap.active = false;
+        self.grid_line_ranges.clear();
+        self.line_rendition = LineRendition::SingleWidth;
+        self.dirty_top = y * cell_height;
+        self.dirty_bottom = self.dirty_top + cell_height;
+    }
+
+    /// Appends shaped glyphs for `font`, extending the last run when it matches.
+    pub fn push_glyphs(&mut self, font: FontId, glyphs: &[ShapedGlyph]) {
+        if glyphs.is_empty() {
+            return;
+        }
+
+        let from = self.glyph_indices.len();
+        for glyph in glyphs {
+            self.glyph_indices.push(glyph.glyph_index);
+            self.glyph_advances.push(glyph.advance);
+            self.glyph_offsets.push(GlyphOffset {
+                advance_offset: glyph.offset.0,
+                ascender_offset: glyph.offset.1,
+            });
+            self.colors.push(glyph.color.unwrap_or(0));
+        }
+        let to = self.glyph_indices.len();
+
+        if let Some(last) = self.mappings.last_mut()
+            && last.font == font
+            && last.glyphs_to == from
+        {
+            last.glyphs_to = to;
+        } else {
+            self.mappings.push(FontMapping {
+                font,
+                glyphs_from: from,
+                glyphs_to: to,
+            });
+        }
+    }
+
+    /// Returns the number of glyphs in the row.
+    pub const fn glyph_count(&self) -> usize {
+        self.glyph_indices.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +336,56 @@ mod tests {
         assert!(attributes.contains(FontRelevantAttributes::BOLD));
         assert!(attributes.contains(FontRelevantAttributes::ITALIC));
         assert_eq!(attributes.bits(), 0b11);
+    }
+
+    fn glyph(index: u16) -> ShapedGlyph {
+        ShapedGlyph {
+            glyph_index: index,
+            advance: 1.0,
+            offset: (0.0, 0.0),
+            color: None,
+        }
+    }
+
+    #[test]
+    fn clearing_a_shaped_row_resets_it_and_marks_the_band_dirty() {
+        let mut row = ShapedRow::default();
+        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)]);
+        row.bitmap.active = true;
+
+        row.clear(3, 16);
+
+        assert_eq!(row.glyph_count(), 0);
+        assert!(row.mappings.is_empty());
+        assert!(!row.bitmap.active);
+        assert_eq!(row.dirty_top, 48);
+        assert_eq!(row.dirty_bottom, 64);
+        assert_eq!(row.line_rendition, LineRendition::SingleWidth);
+    }
+
+    #[test]
+    fn consecutive_glyphs_of_one_font_share_a_mapping() {
+        let mut row = ShapedRow::default();
+        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)]);
+        row.push_glyphs(FontId(0), &[glyph(3)]);
+
+        assert_eq!(row.mappings.len(), 1);
+        assert_eq!(row.mappings[0].font, FontId(0));
+        assert_eq!(row.mappings[0].glyphs_from, 0);
+        assert_eq!(row.mappings[0].glyphs_to, 3);
+        assert_eq!(row.mappings[0].len(), 3);
+    }
+
+    #[test]
+    fn a_font_change_starts_a_new_mapping() {
+        let mut row = ShapedRow::default();
+        row.push_glyphs(FontId(0), &[glyph(1)]);
+        row.push_glyphs(FontId(1), &[glyph(2)]);
+
+        assert_eq!(row.mappings.len(), 2);
+        assert_eq!(row.mappings[0].glyphs_from, 0);
+        assert_eq!(row.mappings[0].glyphs_to, 1);
+        assert_eq!(row.mappings[1].glyphs_from, 1);
+        assert_eq!(row.mappings[1].glyphs_to, 2);
     }
 }
