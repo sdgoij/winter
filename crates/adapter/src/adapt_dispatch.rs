@@ -132,8 +132,8 @@ pub struct AdaptDispatch {
     term_output: Arc<Mutex<TerminalOutput>>,
     /// Sixel parser.
     sixel_parser: std::sync::Arc<std::sync::Mutex<SixelParser>>,
-    /// Font buffer.
-    font_buffer: FontBuffer,
+    /// Soft fonts built by DECDLD, shared with the data-string handler.
+    font_buffer: Arc<Mutex<FontBuffer>>,
     /// Macro buffer.
     macro_buffer: std::sync::Arc<std::sync::Mutex<MacroBuffer>>,
     /// The VT colour table shared with the DECRSTS restore handler.
@@ -363,7 +363,7 @@ impl AdaptDispatch {
             page_manager: PageManager::new(),
             term_output: Arc::new(Mutex::new(TerminalOutput::new(false))),
             sixel_parser: std::sync::Arc::new(std::sync::Mutex::new(SixelParser::new(SIXEL_DEFAULT_CONFORMANCE))),
-            font_buffer: FontBuffer::new(),
+            font_buffer: Arc::new(Mutex::new(FontBuffer::new())),
             macro_buffer: std::sync::Arc::new(std::sync::Mutex::new(MacroBuffer::new())),
             color_table: std::sync::Arc::new(std::sync::Mutex::new(ColorTable::new())),
             using_alt_buffer: false,
@@ -998,14 +998,14 @@ impl AdaptDispatch {
         std::mem::take(&mut self.pending_macro_input)
     }
 
-    /// Returns the font buffer.
-    pub fn font_buffer(&self) -> &FontBuffer {
-        &self.font_buffer
+    /// Returns the soft-font buffer.
+    pub fn font_buffer(&self) -> MutexGuard<'_, FontBuffer> {
+        self.font_buffer.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Returns the font buffer mutably.
-    pub fn font_buffer_mut(&mut self) -> &mut FontBuffer {
-        &mut self.font_buffer
+    /// Returns the soft-font buffer mutably.
+    pub fn font_buffer_mut(&self) -> MutexGuard<'_, FontBuffer> {
+        self.font_buffer.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Gets the vertical margins (top, bottom).
@@ -2138,7 +2138,11 @@ impl ITermDispatch for AdaptDispatch {
         charset_size: CharsetSize,
     ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
         let output = Arc::clone(&self.term_output);
-        let size_96 = matches!(charset_size, CharsetSize::Size96);
+        let size_96 = match charset_size {
+            CharsetSize::Size96 => true,
+            CharsetSize::Size94 => false,
+            CharsetSize::Other(_) => return None,
+        };
         let mut builder = VTID::new();
 
         Some(Box::new(move |ch| {
@@ -2769,6 +2773,55 @@ impl ITermDispatch for AdaptDispatch {
                 buffer.cursor_mut().set_visible(true);
             }
             false
+        }))
+    }
+
+    fn download_drcs(
+        &mut self,
+        font_number: VTInt,
+        start_char: VTParameter,
+        erase_control: DrcsEraseControl,
+        cell_matrix: DrcsCellMatrix,
+        font_set: DrcsFontSet,
+        font_usage: DrcsFontUsage,
+        cell_height: VTParameter,
+        charset_size: CharsetSize,
+    ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        // Only one font buffer exists, so only font numbers 0 and 1 are valid.
+        if !(0..=1).contains(&font_number) {
+            return None;
+        }
+
+        let font_buffer = Arc::clone(&self.font_buffer);
+        let term_output = Arc::clone(&self.term_output);
+
+        {
+            let mut buffer = font_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            let valid = buffer.set_erase_control(erase_control)
+                && buffer.set_attributes(cell_matrix, cell_height, font_set, font_usage)
+                && buffer.set_start_char(start_char, charset_size);
+            if !valid {
+                return None;
+            }
+        }
+
+        Some(Box::new(move |ch| {
+            let mut buffer = font_buffer.lock().unwrap_or_else(|e| e.into_inner());
+
+            if ch != '\x1b' {
+                return buffer.add_sixel_data(ch);
+            }
+
+            if buffer.finalize_sixel_data() {
+                let id = buffer.designation();
+                let mut output = term_output.lock().unwrap_or_else(|e| e.into_inner());
+                if matches!(charset_size, CharsetSize::Size96) {
+                    output.set_drcs96_designation(id);
+                } else {
+                    output.set_drcs94_designation(id);
+                }
+            }
+            true
         }))
     }
 
@@ -3679,6 +3732,16 @@ mod tests {
         drop(dispatch.restore_presentation_state(PresentationReportFormat::CursorInformationReport));
         drop(dispatch.restore_presentation_state(PresentationReportFormat::TabulationStopReport));
         drop(dispatch.request_setting());
+        drop(dispatch.download_drcs(
+            0,
+            VTParameter::from(0),
+            DrcsEraseControl::AllChars,
+            DrcsCellMatrix::Default,
+            DrcsFontSet::Size80x24,
+            DrcsFontUsage::Text,
+            VTParameter::from(0),
+            CharsetSize::Size94,
+        ));
         dispatch.set_ansi_mode(true);
         dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
         dispatch.set_line_rendition(LineRendition::DoubleWidth);
@@ -3933,6 +3996,68 @@ mod tests {
         }
         handler('\x1b');
         dispatch.answer_pending_setting_request();
+    }
+
+    #[test]
+    fn decdld_builds_a_soft_font() {
+        let mut dispatch = AdaptDispatch::new();
+        let mut handler = dispatch
+            .download_drcs(
+                0,
+                VTParameter::from(0),
+                DrcsEraseControl::AllChars,
+                DrcsCellMatrix::Other(13),
+                DrcsFontSet::Size80x24,
+                DrcsFontUsage::FullCell,
+                VTParameter::from(17),
+                CharsetSize::Size94,
+            )
+            .expect("valid DECDLD attributes");
+
+        for ch in "B~;".chars() {
+            assert!(handler(ch));
+        }
+        assert!(handler('\x1b'));
+
+        let buffer = dispatch.font_buffer();
+        assert_eq!(buffer.cell_size(), (13, 17));
+        assert_eq!(buffer.designation().as_bytes(), b"B");
+        assert!(buffer.bit_pattern()[..17].iter().any(|line| *line != 0));
+    }
+
+    #[test]
+    fn decdld_rejects_an_invalid_font_number_or_cell_size() {
+        let mut dispatch = AdaptDispatch::new();
+
+        assert!(
+            dispatch
+                .download_drcs(
+                    2,
+                    VTParameter::from(0),
+                    DrcsEraseControl::AllChars,
+                    DrcsCellMatrix::Default,
+                    DrcsFontSet::Size80x24,
+                    DrcsFontUsage::Text,
+                    VTParameter::from(0),
+                    CharsetSize::Size94,
+                )
+                .is_none()
+        );
+
+        assert!(
+            dispatch
+                .download_drcs(
+                    0,
+                    VTParameter::from(0),
+                    DrcsEraseControl::AllChars,
+                    DrcsCellMatrix::Other(18),
+                    DrcsFontSet::Size80x24,
+                    DrcsFontUsage::FullCell,
+                    VTParameter::from(38),
+                    CharsetSize::Size94,
+                )
+                .is_none()
+        );
     }
 
     #[test]

@@ -263,6 +263,16 @@ mod tests {
     }
 
     #[test]
+    fn decdld_through_the_parser_builds_a_soft_font() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1bP0;0;0;13;1;2;17;0{B~;\x1b\\");
+
+        let buffer = terminal.dispatch().font_buffer();
+        assert_eq!(buffer.cell_size(), (13, 17));
+        assert_eq!(buffer.designation().as_bytes(), b"B");
+    }
+
+    #[test]
     fn decrqss_answers_through_the_parser() {
         let mut terminal = Terminal::new();
         terminal.process_str("\x1b[1;31m\x1bP$qm\x1b\\");

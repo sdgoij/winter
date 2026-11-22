@@ -764,7 +764,8 @@ fn drcs_erase_control(value: VTInt) -> DrcsEraseControl {
     match value {
         1 => DrcsEraseControl::ReloadedChars,
         2 => DrcsEraseControl::AllRenditions,
-        _ => DrcsEraseControl::AllChars,
+        0 => DrcsEraseControl::AllChars,
+        other => DrcsEraseControl::Other(other),
     }
 }
 
@@ -774,7 +775,8 @@ fn drcs_cell_matrix(value: VTInt) -> DrcsCellMatrix {
         2 => DrcsCellMatrix::Size5x10,
         3 => DrcsCellMatrix::Size6x10,
         4 => DrcsCellMatrix::Size7x10,
-        _ => DrcsCellMatrix::Default,
+        0 => DrcsCellMatrix::Default,
+        other => DrcsCellMatrix::Other(other),
     }
 }
 
@@ -786,7 +788,8 @@ fn drcs_font_set(value: VTInt) -> DrcsFontSet {
         12 => DrcsFontSet::Size132x36,
         21 => DrcsFontSet::Size80x48,
         22 => DrcsFontSet::Size132x48,
-        _ => DrcsFontSet::Default,
+        0 => DrcsFontSet::Default,
+        other => DrcsFontSet::Other(other),
     }
 }
 
@@ -794,15 +797,16 @@ fn drcs_font_usage(value: VTInt) -> DrcsFontUsage {
     match value {
         1 => DrcsFontUsage::Text,
         2 => DrcsFontUsage::FullCell,
-        _ => DrcsFontUsage::Default,
+        0 => DrcsFontUsage::Default,
+        other => DrcsFontUsage::Other(other),
     }
 }
 
 fn charset_size(value: VTInt) -> CharsetSize {
-    if value == 0 {
-        CharsetSize::Size94
-    } else {
-        CharsetSize::Size96
+    match value {
+        0 => CharsetSize::Size94,
+        1 => CharsetSize::Size96,
+        other => CharsetSize::Other(other),
     }
 }
 

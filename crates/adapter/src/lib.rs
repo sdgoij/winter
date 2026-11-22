@@ -9,7 +9,7 @@
 //! - [`interact_dispatch`] — Input state machine callback interface
 //! - [`term_dispatch`] — Output state machine callback interface
 //! - [`adapt_dispatch`] — Main VT adapter implementation
-//! - [`font_buffer`] — Font buffer tracking
+//! - [`font_buffer`] — DECDLD soft-font construction
 //! - [`macro_buffer`] — VT macro support
 //! - [`page_manager`] — Alternate/main screen buffer switching
 //! - [`sixel_parser`] — Sixel image format parsing

@@ -809,6 +809,8 @@ pub enum DrcsEraseControl {
     ReloadedChars,
     /// Erase all renditions.
     AllRenditions,
+    /// A value no handler recognizes.
+    Other(VTInt),
 }
 
 /// DRCS cell matrix size.
@@ -824,6 +826,8 @@ pub enum DrcsCellMatrix {
     Size6x10,
     /// 7x10 matrix.
     Size7x10,
+    /// An explicit pixel width, carried verbatim as upstream's cast does.
+    Other(VTInt),
 }
 
 /// DRCS font set.
@@ -843,6 +847,8 @@ pub enum DrcsFontSet {
     Size80x48,
     /// 132x48 font set.
     Size132x48,
+    /// A value no handler recognizes.
+    Other(VTInt),
 }
 
 /// DRCS font usage.
@@ -854,6 +860,8 @@ pub enum DrcsFontUsage {
     Text,
     /// Full cell usage.
     FullCell,
+    /// A value no handler recognizes.
+    Other(VTInt),
 }
 
 /// Charset size for DECAUPSS/DECRQUPSS.
@@ -863,6 +871,8 @@ pub enum CharsetSize {
     Size94,
     /// 96-character set.
     Size96,
+    /// A value no handler recognizes.
+    Other(VTInt),
 }
 
 /// Macro delete control for DECDMAC.

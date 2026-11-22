@@ -13,11 +13,11 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~3.3k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.5k | 194 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
-| `adapter` | ~11.1k | 164 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore and tab handlers ported |
-| `term` | ~2.1k | 26 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
+| `adapter` | ~11.6k | 166 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore and tab handlers ported |
+| `term` | ~2.1k | 27 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-720 tests, doc tests. Phases 5–14 are not started.
+723 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -51,9 +51,8 @@ settled.
    reports answered from the visible page), the colour table (OSC
    4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report), and
    sixel (DCS `q`, decoded into row bands; see the sixel entry below).
-   Still ported nowhere: DRCS (the `FontBuffer` in the adapter is a
-   placeholder, not upstream's DECDLD parser) and the
-   ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings.
+   Still ported nowhere: the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt
+   action strings.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -617,12 +616,15 @@ The Windows Terminal codebase maps to these Rust module groups:
   - Methods: is_insert_mode(), is_origin_mode(), is_auto_wrap(), is_lnm_mode(), is_bracketed_paste()
   - Margin getters/setters, cursor style management, soft/hard reset
   - 7 unit tests passing
-- [ ] `winterm/crates/adapter/src/font_buffer.rs` — **wrong module**
-  - The file is a font cache (face/size/weight), not upstream's `FontBuffer`,
-    which parses DECDLD sixel data into a soft-font bit pattern. DRCS needs
-    the latter: `SetEraseControl`, `SetAttributes`, `SetStartChar`,
-    `AddSixelData`, `FinalizeSixelData`, `GetDesignation`. The cache is
-    deleted or renamed when the real port lands.
+- [x] `winterm/crates/adapter/src/font_buffer.rs` — DECDLD soft fonts
+  - `SetEraseControl`, `SetAttributes`, `SetStartChar` validate the DECDLD
+    parameters; the matrix-size and 80/132-column rules decide the cell
+    size (VT2xx/VT320/VT420/VT340/VT382 detection)
+  - `AddSixelData`/`FinalizeSixelData` parse the sixel payload, pack and
+    centre the bit patterns, and fill unused characters with the error
+    glyph
+  - 7 unit tests, including upstream's cell-size table and a bit-pattern
+    generation case
 - [x] `winterm/crates/adapter/src/macro_buffer.rs` — VT macro support
   - MacroBuffer for storing/retrieving terminal macros (IDs 0-9)
   - MacroEntry with encoding support (Text/HexPair)
@@ -662,8 +664,8 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] Cursor operations — covered in adapt_dispatch.rs tests (cursor style, margins)
 - [x] Page management — covered in page_manager.rs tests (buffer switching, state restoration)
 - [x] Macro operations — covered in macro_buffer.rs tests (define/invoke/delete)
-- [ ] Font operations — the current font cache is a placeholder; DRCS needs
-  upstream's DECDLD parser
+- [x] Font operations — DECDLD parsing and soft-font generation in
+  font_buffer.rs (cell-size detection, bit patterns, error glyphs)
 - [x] Sixel parsing — covered in sixel_parser.rs tests (commands, palette,
   aspect ratio, background) and adapt_dispatch.rs (payload paints a row band)
 - [x] Charset translation — covered in terminal_output.rs and charsets.rs tests
