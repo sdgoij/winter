@@ -16,7 +16,7 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~9.7k | 182 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~5.5k | 186 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
 | `renderer` | ~6.4k | 123 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
-| `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
+| `host` | ~9.6k | 258 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, the registry schema that layers a key over them (ADR 037), `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio` waits for the server's API surface; `handle` and `tracing` have no counterpart here (a lock with no ctrl-event queue, and ETW) |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~2.8k | 82 | Phase 10 (ADRs 022–032, 034, 035): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
@@ -24,7 +24,7 @@ Verified by running the gate, not by reading the previous status:
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1555 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1567 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -912,6 +912,13 @@ porting skill requires.
   - [ ] **Property tests:** cycling through history returns to the most recent
     command
 - [ ] `winterm/crates/host/src/handle.rs` — Handle management
+  - Not ported: `handle.cpp` is `LockConsole` and `UnlockConsole`, which take
+    the console lock and, on the outermost unlock, drain the ctrl-event queue.
+    `ConsoleInformation` owns the lock (`lock`/`unlock`/`recursion_depth`), so
+    the locking half is already there, and this port has no ctrl-event queue to
+    drain: the input records come from the pty. A wrapper whose extra work is a
+    call to nothing would be a stub, so the file has no counterpart until a
+    ctrl-event source exists.
 - [x] ~~`winterm/crates/host/src/output_stream.rs` — Output stream~~
   - Not ported: `outputStream.cpp` implements `ITerminalApi`, a seam this port
     replaced with adapter-owned state and host-drained queues. ADR 013 records
@@ -969,9 +976,9 @@ porting skill requires.
     upstream's "no input line" path.
 - [x] `winterm/crates/host/src/cmdline.rs` — Word delimiters
   - [x] Ported from `cmdline.cpp`: `IsWordDelim` for a character and for a
-    cell's text, and `DelimiterClass`. The configurable list follows
-    `registry.cpp`'s defaults until the registry is ported; the cooked read now
-    shares this one home.
+    cell's text, and `DelimiterClass`. The configurable list is
+    `registry::DEFAULT_WORD_DELIMITERS`, the same list the registry key
+    replaces; the cooked read shares this one home.
   - [x] **Tests:** every default delimiter and space, multi-character and empty
     text, and the three classes
 - [x] `winterm/crates/host/src/input_key_info.rs` — Keyboard state
@@ -986,8 +993,26 @@ porting skill requires.
 - [ ] `winterm/crates/host/src/directio.rs` — Direct I/O
   - Deferred: `directio.cpp` implements the `ApiRoutines` entry points, which
     need the server, the codepage/`CHAR_INFO` translation and the VT writer —
-    the seam ADR 013 declined to invent. It lands with Phase 7.
-- [ ] `winterm/crates/host/src/registry.rs` — Registry access
+    the seam ADR 013 declined to invent. It has no portable half to land ahead
+    of them, so the module waits for the server's API surface.
+- [x] `winterm/crates/host/src/registry.rs` — Registry access
+  - Ported from `registry.cpp` and `RegistrySerialization.cpp` as a schema, not
+    a reader (ADR 037): the value names, the type each is coerced as (DWORD,
+    WORD, boolean, byte, coordinate, string), the values handled by hand —
+    colour entries, code page, the word-delimiter quirk, a window position
+    turning auto-placement off, `AllowAltF4Close` above one — behind a `Values`
+    source with an in-memory `Map`. `Settings::apply_registry` layers what a key
+    held over the defaults, and `cmdline` re-exports the delimiter list from
+    here. The Win32 reads are the server's.
+  - **Tests:** every mapped value and its coercion, an empty key leaving every
+    value absent, a value of the wrong type ignored, the low-bits and
+    coordinate rules, a cursor type outside the six shapes, `AllowAltF4Close`,
+    the three word-delimiter cases, the colour entries as COLORREFs, the
+    layering over the defaults, and a position turning auto-placement off
+  - Not ported: the answerback message, `UseDx`, `CopyColor`,
+    `TextMeasurement`, `MSAADelay`, `UIADelay` and `EnableBuiltinGlyphs`, which
+    have no field here; and the code page's East Asian rule, which needs the
+    host's OEM code page.
 - [x] `winterm/crates/host/src/utils.rs` — Console utilities
   - [x] Ported from `utils.cpp`: `CalcWindowSizeX`/`CalcWindowSizeY`,
     `CalcCursorYOffsetInPixels`, `ConvertStringToDec`, `s_CompareCoords` and
@@ -999,6 +1024,11 @@ porting skill requires.
   - Not ported: `_LoadString` and `s_LoadStringEx`, which read Win32 string
     resources through the window layer.
 - [ ] `winterm/crates/host/src/tracing.rs` — Event tracing
+  - Not ported: `tracing.cpp` is ETW — `TraceLoggingWrite` against a provider
+    manifest, plus a debug-flag word and a variadic string tracer. There is no
+    ETW outside Windows, no manifest in this port, and no consumer for the
+    events: what the user can act on is the settings window and the window's
+    own notifications. ADR 013 records why the host has no seam for it.
 - [x] `winterm/crates/host/src/alias.rs` — Command aliases
   - [x] Ported from `alias.cpp` and `alias.h`: the per-application table with
     case-insensitive application and alias names, add/get/remove/list, the

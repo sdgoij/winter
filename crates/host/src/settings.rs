@@ -503,6 +503,105 @@ impl Settings {
     pub const fn set_terminal_scrolling(&mut self, enabled: bool) {
         self.terminal_scrolling = enabled;
     }
+
+    /// Applies what a console key holds over the current settings.
+    ///
+    /// A value the key does not hold leaves the current one, which is upstream's
+    /// rule: the registry is a layer over the constructor's defaults. A key that
+    /// names a window position also turns automatic placement off, whatever the
+    /// coordinate says (`Registry::LoadFromRegistry`).
+    pub fn apply_registry(&mut self, from: &crate::registry::ConsoleSettings) {
+        if let Some(value) = from.popup_fill_attribute {
+            self.popup_fill_attribute = value;
+        }
+        if let Some(value) = from.insert_mode {
+            self.insert_mode = value;
+        }
+        if let Some(value) = from.line_selection {
+            self.line_selection = value;
+        }
+        if let Some(value) = from.filter_on_paste {
+            self.filter_on_paste = value;
+        }
+        if let Some(value) = from.wrap_text {
+            self.wrap_text = value;
+        }
+        if let Some(value) = from.ctrl_key_shortcuts_disabled {
+            self.ctrl_key_shortcuts_disabled = value;
+        }
+        if let Some(value) = from.quick_edit {
+            self.quick_edit = value;
+        }
+        if let Some(value) = from.window_alpha {
+            // Upstream writes the byte as the key gives it; the clamping setter
+            // is for the API, not for the registry.
+            self.window_alpha = value;
+        }
+        if let Some(value) = from.font_size {
+            self.font_size = value;
+        }
+        if let Some(value) = from.font_family {
+            self.font_family = value;
+        }
+        if let Some(value) = from.font_weight {
+            self.font_weight = value;
+        }
+        if let Some(value) = &from.face_name {
+            self.set_face_name(value);
+        }
+        if let Some(value) = from.cursor_size {
+            self.cursor_size = value;
+        }
+        if let Some(value) = from.history_buffer_size {
+            self.history_buffer_size = value;
+        }
+        if let Some(value) = from.number_of_history_buffers {
+            self.number_of_history_buffers = value;
+        }
+        if let Some(value) = from.history_no_dup {
+            self.history_no_dup = value;
+        }
+        if let Some(value) = from.scroll_scale {
+            self.scroll_scale = value;
+        }
+        if let Some(value) = from.fill_attribute {
+            self.fill_attribute = value;
+        }
+        if let Some(value) = from.screen_buffer_size {
+            self.screen_buffer_size = value;
+        }
+        if let Some(value) = from.window_size {
+            self.window_size = value;
+        }
+        if let Some(value) = from.trim_leading_zeros {
+            self.trim_leading_zeros = value;
+        }
+        if let Some(value) = from.enable_color_selection {
+            self.enable_color_selection = value;
+        }
+        if let Some(value) = from.window_origin {
+            self.window_origin = value;
+            self.auto_position = false;
+        }
+        if let Some(value) = from.cursor_type {
+            self.cursor_type = value;
+        }
+        if let Some(value) = from.intercept_copy_paste {
+            self.intercept_copy_paste = value;
+        }
+        if let Some(value) = from.terminal_scrolling {
+            self.terminal_scrolling = value;
+        }
+        if let Some(value) = from.virt_term_level {
+            self.virt_term_level = value;
+        }
+        if let Some(value) = from.code_page {
+            self.code_page = value;
+        }
+        if let Some(value) = from.allow_alt_f4_close {
+            self.allow_alt_f4_close = value;
+        }
+    }
 }
 
 impl Default for Settings {
@@ -661,5 +760,38 @@ mod tests {
         assert_eq!(settings.cursor_size(), 50);
         assert!(!settings.terminal_scrolling());
         assert!(settings.intercept_copy_paste());
+    }
+
+    #[test]
+    fn a_key_layers_over_the_defaults_and_leaves_the_rest_alone() {
+        let defaults = Settings::new();
+        let mut settings = Settings::new();
+        settings.apply_registry(&crate::registry::load(
+            &crate::registry::Map::new()
+                .dword("InsertMode", 1)
+                .dword("CodePage", 65001),
+        ));
+
+        assert!(settings.insert_mode(), "the key's value is applied");
+        assert_eq!(settings.code_page(), 65001);
+        assert_eq!(
+            settings.history_buffer_size(),
+            defaults.history_buffer_size(),
+            "a value the key does not hold keeps the default"
+        );
+    }
+
+    #[test]
+    fn a_window_position_turns_automatic_placement_off() {
+        let mut settings = Settings::new();
+        assert!(settings.auto_position());
+
+        settings.apply_registry(&crate::registry::load(
+            &crate::registry::Map::new().dword("WindowPosition", (10 << 16) | 20),
+        ));
+
+        assert!(!settings.auto_position(), "a position means the user placed it");
+        assert_eq!(settings.window_origin().x, 20);
+        assert_eq!(settings.window_origin().y, 10);
     }
 }

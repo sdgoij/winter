@@ -1,13 +1,13 @@
 //! `cmdline.cpp` — word delimiters.
 //!
 //! Ported from `src/host/cmdline.cpp`. Upstream keeps the user's delimiter
-//! list in `globals.WordDelimiters`, filled from the registry; `registry.cpp`
-//! is not ported yet, so these functions read the defaults `registry.cpp`
-//! supplies. Space is always a delimiter and is deliberately not part of the
-//! list, because the list holds only the configurable ones.
+//! list in `globals.WordDelimiters`, filled from the registry; [`crate::registry`]
+//! owns the defaults and the key that replaces them. Space is always a
+//! delimiter and is deliberately not part of the list, because the list holds
+//! only the configurable ones.
 
 /// The console's default word delimiters, from `registry.cpp`.
-pub const DEFAULT_WORD_DELIMITERS: [char; 12] = ['\\', '+', '!', ':', '=', '/', '.', '<', '>', ';', '|', '&'];
+pub use crate::registry::DEFAULT_WORD_DELIMITERS;
 
 /// Returns whether `character` separates words.
 pub fn is_word_delim(character: char) -> bool {
@@ -46,7 +46,7 @@ mod tests {
     fn space_and_every_configured_delimiter_break_words() {
         assert!(is_word_delim(' '));
         for delimiter in DEFAULT_WORD_DELIMITERS {
-            assert!(is_word_delim(delimiter), "expected {delimiter:?} to be a delimiter");
+            assert!(is_word_delim(*delimiter), "expected {delimiter:?} to be a delimiter");
         }
         assert!(!is_word_delim('a'));
         assert!(!is_word_delim('\u{00e9}'));

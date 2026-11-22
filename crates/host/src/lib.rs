@@ -37,6 +37,7 @@ pub mod input_buffer;
 pub mod input_key_info;
 pub mod input_state_machine_engine;
 pub mod read_data_cooked;
+pub mod registry;
 pub mod screen_info;
 pub mod scrolling;
 pub mod selection;

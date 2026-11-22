@@ -215,8 +215,10 @@ the cooked read), `inputKeyInfo.cpp`, `scrolling.cpp`, `selection.cpp` and
 console, a screen, its settings, working aliases, a key description, scroll
 handling, a selection moved by keys and the mouse, and the shared console
 helpers. `directio.cpp` is the `ApiRoutines` surface and waits for the server
-layer with the read-data wait path; `registry.cpp`, `handle.cpp` and
-`tracing.cpp` follow. The read-data family's `IWaitRoutine` completion path,
+layer with the read-data wait path; `registry.cpp` is a portable schema that
+layers a key over the settings, with the Win32 reads left to the server
+(ADR 037); `handle.cpp` and `tracing.cpp` have no counterpart here — a lock
+with no ctrl-event queue, and ETW. The read-data family's `IWaitRoutine` completion path,
 the cooked read's pager, the render settings and the window metrics wait for
 the server, renderer and window layers; `outputStream.cpp` has no counterpart
 (ADR 013). Phase 7 has the server's portable policy (ADR 015) and its pty
