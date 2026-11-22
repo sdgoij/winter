@@ -35,3 +35,4 @@ Rules:
 | [004](004-incremental-dispatch.md) | Port the dispatcher family by family, with explicit `unhandled` defaults | Accepted |
 | [005](005-images-in-the-buffer.md) | Images are buffer content: per-row bands, carried by cell operations | Accepted |
 | [006](006-render-loop-model.md) | The renderer is host-driven; no thread, timers are data | Accepted |
+| [007](007-gpu-backend-and-surface.md) | The GPU backend is created by the UI layer with a surface | Accepted |
