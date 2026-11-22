@@ -225,9 +225,9 @@ It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
 paints the buffer through egui on winit and wgpu (ADR 018), with wheel
 scrollback, mouse selection that reaches into history, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC
-titles, bell attention, cursor shapes, tabs (ADR 021) and splittable panes
-(Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to resize). Settings are
-next; the native backends follow.
+titles, bell attention, cursor shapes, text decorations, tabs (ADR 021) and
+splittable panes (Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to
+resize). Settings are next; the native backends follow.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

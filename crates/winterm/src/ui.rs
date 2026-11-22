@@ -16,6 +16,7 @@ use term::input::{
     WheelAxis,
 };
 use types::CursorType;
+use types::UnderlineStyle;
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
@@ -30,6 +31,10 @@ const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
 /// The fill behind selected cells. Opaque, because the text is painted over it.
 const SELECTION_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
+/// The line between panes.
+const DIVIDER: egui::Color32 = egui::Color32::from_rgb(60, 60, 60);
+/// The line around the focused pane.
+const FOCUS_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 140, 200);
 
 /// Starts the window and the shell inside it.
 pub fn run() -> eframe::Result {
@@ -454,9 +459,22 @@ impl Pane {
                 if run.text.is_empty() {
                     continue;
                 }
+
+                let attribute = run.attribute;
+                if attribute.is_invisible() {
+                    continue;
+                }
+
                 let left = area.min.x + run.column as f32 * cell.x;
-                let foreground = resolve(run.attribute.get_foreground(), &table, ColorAlias::DefaultForeground)
+                let width = cell.x * run.cells as f32;
+                let background = resolve(attribute.get_background(), &table, ColorAlias::DefaultBackground)
+                    .unwrap_or(FALLBACK_BACKGROUND);
+                let mut foreground = resolve(attribute.get_foreground(), &table, ColorAlias::DefaultForeground)
                     .unwrap_or(FALLBACK_FOREGROUND);
+                if attribute.is_faint() {
+                    foreground = fade(foreground, background);
+                }
+
                 painter.text(
                     egui::pos2(left, top),
                     egui::Align2::LEFT_TOP,
@@ -464,6 +482,38 @@ impl Pane {
                     font.clone(),
                     foreground,
                 );
+
+                // Decorations follow the text, in the text's colour unless the
+                // underline asks for its own.
+                let underline = if attribute.get_underline_color().is_default() {
+                    foreground
+                } else {
+                    resolve(attribute.get_underline_color(), &table, ColorAlias::DefaultForeground)
+                        .unwrap_or(foreground)
+                };
+                let line = |y: f32, color: egui::Color32| {
+                    painter.line_segment(
+                        [egui::pos2(left, y), egui::pos2(left + width, y)],
+                        egui::Stroke::new(1.0, color),
+                    );
+                };
+
+                if attribute.is_top_horizontal_displayed() {
+                    line(top, foreground);
+                }
+                if attribute.is_crossed_out() {
+                    line(top + cell.y * 0.5, foreground);
+                }
+                match attribute.get_underline_style() {
+                    UnderlineStyle::NoUnderline => {}
+                    UnderlineStyle::DoublyUnderlined => {
+                        line(top + cell.y - 2.0, underline);
+                        line(top + cell.y - 4.0, underline);
+                    }
+                    // Curly, dotted and dashed are drawn straight: the shape
+                    // of the line is a font detail this shell does not stage.
+                    _ => line(top + cell.y - 1.0, underline),
+                }
             }
         }
 
@@ -619,10 +669,19 @@ impl Tab {
 
     fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
         let focused = self.focused;
+        let multiple = self.panes.len() > 1;
+
         for (id, fraction) in self.layout.rects() {
             let rect = fraction_rect(fraction, area);
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
                 pane.paint(ui, rect, cell, cursor_on && id == focused);
+            }
+
+            // With more than one pane the borders double as the focus cue.
+            if multiple {
+                let color = if id == focused { FOCUS_BORDER } else { DIVIDER };
+                ui.painter()
+                    .rect_stroke(rect, 0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
             }
         }
     }
@@ -925,6 +984,17 @@ fn command_title(command: &PtyCommand) -> String {
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("shell")
         .to_string()
+}
+
+/// Blends a colour halfway towards the background, which is what faint text
+/// looks like without a separate font weight.
+fn fade(foreground: egui::Color32, background: egui::Color32) -> egui::Color32 {
+    let blend = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+    egui::Color32::from_rgb(
+        blend(foreground.r(), background.r()),
+        blend(foreground.g(), background.g()),
+        blend(foreground.b(), background.b()),
+    )
 }
 
 /// The pointer state one frame needs.
@@ -1244,6 +1314,18 @@ mod tests {
         assert_eq!(
             resolve(TextColor::new(), &table, ColorAlias::DefaultBackground),
             Some(egui::Color32::from_rgb(0x0C, 0x0C, 0x0C))
+        );
+    }
+
+    #[test]
+    fn faint_text_blends_halfway_to_the_background() {
+        assert_eq!(
+            fade(egui::Color32::BLACK, egui::Color32::WHITE),
+            egui::Color32::from_rgb(127, 127, 127)
+        );
+        assert_eq!(
+            fade(egui::Color32::from_rgb(10, 20, 30), egui::Color32::from_rgb(10, 20, 30)),
+            egui::Color32::from_rgb(10, 20, 30)
         );
     }
 
