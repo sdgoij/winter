@@ -85,6 +85,14 @@ scroll.
 - The grid is the whole cells that fit the panel; the face is rasterised at the
   composition scale so a high-DPI monitor gets physical pixels.
 
+## Title bar
+
+The `TabView` is the `TitleBar` control's `left_header`, and the pane is the
+second root row. The row carries a solid background and a `-8` DIP top margin:
+this snapshot leaves a strip of the system caption title above the control's
+content. Tabs and `+` stay interactive; the rest of the row drags the window.
+The window title remains the active tab's title for the taskbar.
+
 ## Find bar
 
 Ctrl+Shift+F toggles the active tab's bar (`find::FindBar`). It is an overlay in

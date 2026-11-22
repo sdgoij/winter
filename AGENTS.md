@@ -234,8 +234,9 @@ a `Connection` trait with the viewport and selection in the widget and an event
 queue for the bell, a notification and an exit — a shell that exits closes its
 tab (ADR 036) — split into `app.rs`, `terminal_widget.rs`, `config.rs`,
 `window.rs` and `icon.rs` (ADR 038). On Windows the shell is WinUI 3
-(`winui/`, ADRs 040–048): a native window with a `TabView` whose tabs each own a
-terminal, the ptys polled on a timer, and the active tab's pixels blitted by
+(`winui/`, ADRs 040–051): a native window whose title bar is the `TabView`,
+with one terminal per tab, the ptys polled on a timer, and the active tab's
+pixels blitted by
 Direct2D onto a `SwapChainPanel`, with the pane's grid fitted to the panel's
 cells and the face rasterised at its composition scale, a start that runs the
 settings file's profile and paints its font size and scheme, a poll that

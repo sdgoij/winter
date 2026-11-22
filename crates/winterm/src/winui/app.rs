@@ -410,11 +410,27 @@ impl Component for Shell {
                 .client_size(self.initial_client.0, self.initial_client.1),
         );
 
-        // The tab strip sizes to its own strip, and the pane takes the rest; the
-        // panel stays mounted, so switching tabs never rebuilds the surface.
+        // The tab strip is the title bar, as in Windows Terminal: the TitleBar
+        // control extends the client area and hands the system the drag region,
+        // leaving room for the caption buttons on its right.
+        let title_bar = Border::new()
+            .background(Color::rgb(32, 32, 36))
+            // This snapshot leaves an 8-DIP strip of the system caption title
+            // above the control's content; pulling the row up covers it
+            // (ADR 051).
+            .margin(Thickness::new(0.0, -8.0, 0.0, 0.0))
+            .content(
+                TitleBar::new()
+                    .is_back_button_visible(false)
+                    .is_pane_toggle_button_visible(false)
+                    .left_header(strip),
+            );
+
+        // The pane takes the rest; the panel stays mounted, so switching tabs
+        // never rebuilds the surface.
         let root: View = Grid::new()
             .rows([GridLength::Auto, GridLength::STAR])
-            .children((strip, pane.grid_row(1)))
+            .children((title_bar, pane.grid_row(1)))
             .into();
 
         if self.settings_window.is_open() {
