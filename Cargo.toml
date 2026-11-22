@@ -21,10 +21,10 @@ publish = false
 # The dependency ring, in the order it is allowed to point.
 #
 # `utils` sees nothing. `types` sees `utils`. `buffer` and `vt` see both and each
-# other not at all. `adapter` sees all three. `renderer` sees `utils` and `types`
-# (and `buffer` once it reads cells), so `adapter` may later call into it. A
-# crate that needs something from a crate to its right is a design error, not a
-# manifest to edit; see .agents/notes/adr/001-workspace-layering.md.
+# other not at all. `adapter` sees all three. `renderer` sees `utils`, `types`
+# and `buffer`, so `adapter` may later call into it. A crate that needs
+# something from a crate to its right is a design error, not a manifest to
+# edit; see .agents/notes/adr/001-workspace-layering.md.
 [workspace.dependencies]
 utils = { path = "crates/utils" }
 types = { path = "crates/types" }
