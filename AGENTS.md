@@ -16,8 +16,8 @@ pass while one in a crate you never opened fails. Run what CI runs, all of it,
 before claiming anything is green.
 
 The `Justfile` is the one place to look for commands. `.github/workflows/`
-is the truth; `ci.yml` and `release.yml` both call `gate.yml`, so the gate CI
-runs is one file. If the Justfile and that file disagree, CI wins. A
+is the truth; one workflow file holds the gate and the release, so the gate CI
+runs and the gate a tag runs are the same jobs. If the two disagree, CI wins. A
 pre-commit hook is a floor, not a substitute.
 
 ## Change workflow

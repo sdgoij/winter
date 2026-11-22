@@ -1,7 +1,8 @@
 # Winterm developer tasks.
 #
 # One place for the commands in AGENTS.md. `.github/workflows/ci.yml` runs the
-# same recipes on three platforms; if the two disagree, CI is the truth.
+# same recipes on every platform it supports; if the two disagree, CI is the
+# truth.
 #
 #   just            list what is here
 #   just gate       everything CI runs, before committing

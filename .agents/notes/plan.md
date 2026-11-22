@@ -1618,8 +1618,9 @@ user-visible change carries — a probe that launches the app, drives it and rea
 the screen — recorded in the commit.
 
 **J. Cross-platform matrix.** Redundant: every portable crate's tests already
-run on ubuntu, windows and macos in the same gate (`.github/workflows/ci.yml`),
-so "the same sequences give the same buffer on every platform" is the gate.
+run on ubuntu (x86-64 and arm64), windows and macos in the same gate
+(`.github/workflows/ci.yml`), so "the same sequences give the same buffer on
+every platform" is the gate.
 
 ---
 
@@ -1708,7 +1709,7 @@ state at a glance, with the owning crate's measured test count.
 | **11. Audio** | ✅ DONE | 7 tests; bell and DECPS tones (ADR 033) |
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
-| **14. CI/CD** | ✅ DONE | The gate on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`, `gate.yml`); a `v*` tag publishes a versioned archive per platform (`release.yml`, `just package`) |
+| **14. CI/CD** | ✅ DONE | One workflow (`.github/workflows/ci.yml`): the gate on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`); a `v*` tag packages a versioned archive per host and publishes it (`just package`) |
 
 ## Test coverage
 
@@ -1727,7 +1728,7 @@ case enforces is not a target.
 | **Clipboard formatting** | User expectations | Round-trip tests for plain, HTML and RTF through the buffer's copy path |
 | **DPI awareness** | Multi-monitor quality | The WinUI pane fits its composition scale (ADR 043); egui's scale factor covers the other shells |
 | **Sixel/image rendering** | Advanced features | Conformance cases with known sixel images; band layout in the buffer (ADR 005) |
-| **Cross-platform windowing** | Platform parity | The two shells share `input`, `view`, `tabs` and `term_control`; CI runs the gate on all three platforms |
+| **Cross-platform windowing** | Platform parity | The two shells share `input`, `view`, `tabs` and `term_control`; CI runs the gate on every supported host |
 
 ## Historical proposal
 
