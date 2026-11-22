@@ -9,6 +9,7 @@
 use std::cell::Cell;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetWindowRect, HC_ACTION, HHOOK, MSLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx,
     WH_MOUSE_LL, WM_MOUSEWHEEL,
@@ -49,6 +50,13 @@ pub fn take() -> i32 {
         cell.set(total - notches * WHEEL_DELTA);
         notches
     })
+}
+
+/// Whether Shift is held, which keeps the wheel for the viewport.
+pub fn shift_held() -> bool {
+    // SAFETY: no pointers are involved; the call reads the input state of the
+    // calling thread's desktop.
+    unsafe { GetAsyncKeyState(VK_SHIFT.0 as i32) < 0 }
 }
 
 impl Drop for Wheel {

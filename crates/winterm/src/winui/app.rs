@@ -19,7 +19,7 @@ use renderer::{
     AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontInfo, RenderSettings, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
-use term::input::{Key, MouseButton, MouseEvent, MouseEventKind};
+use term::input::{Key, MouseButton, MouseEvent, MouseEventKind, WheelAxis};
 use types::color_table::ColorAlias;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
@@ -82,6 +82,8 @@ struct Shell {
     focus_attempted: bool,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
+    /// The cell the pointer is over, so a wheel can be aimed at a program.
+    pointer_cell: Option<(i32, i32)>,
     /// The message hook the wheel arrives through; kept alive for the session.
     _wheel: Option<Wheel>,
     face: PathBuf,
@@ -222,6 +224,7 @@ impl Component for Shell {
             focused: false,
             focus_attempted: false,
             last_mouse_cell: None,
+            pointer_cell: None,
             _wheel: None,
             face,
             font_size,
@@ -410,7 +413,7 @@ impl Shell {
         // The binding has no wheel event, so the message hook collected it.
         let notches = wheel::take();
         if notches != 0 {
-            self.scroll_active(notches);
+            self.wheel(notches);
         }
 
         let blink_on = self.blink_on;
@@ -684,6 +687,28 @@ impl Shell {
         tab.view.scroll_by(rows, max);
     }
 
+    /// Sends a wheel to a tracking program, or scrolls the viewport.
+    ///
+    /// Shift keeps the wheel for the viewport, so a person can always scroll
+    /// back out of a full-screen program (ADR 019).
+    fn wheel(&mut self, notches: i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+
+        let shift = wheel::shift_held();
+        let forward = input::forwards_to_application(tab.control.is_tracking_mouse(), shift);
+        if forward && let Some(position) = self.pointer_cell {
+            let event = MouseEvent::wheel(position, WheelAxis::Vertical, notches * 120);
+            if tab.control.send_mouse(&event) {
+                return;
+            }
+        }
+
+        let max = tab.control.max_scroll();
+        tab.view.scroll_by(notches, max);
+    }
+
     /// Scrolls the active viewport by `direction` pages.
     fn scroll_page_active(&mut self, direction: i32) {
         let Some(tab) = self.tabs.active_mut() else {
@@ -712,6 +737,7 @@ impl Shell {
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         let forward = input::forwards_to_application(self.active_tracking(), shift);
         let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        self.pointer_cell = cell;
 
         let Some(tab) = self.tabs.active_mut() else {
             return;
@@ -763,6 +789,7 @@ impl Shell {
     fn pointer_moved(&mut self, info: PointerEventInfo) {
         let (columns, rows) = self.grid;
         let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        self.pointer_cell = cell;
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         let forward = input::forwards_to_application(self.active_tracking(), shift);
 

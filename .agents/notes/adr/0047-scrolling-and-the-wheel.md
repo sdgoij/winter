@@ -1,6 +1,6 @@
 # ADR 047 — Scrolling is actions, and the WinUI wheel is a low-level hook
 
-- Status: Accepted
+- Status: Amended by 048 (the wheel reaches a tracking program)
 - Date: 2026-11-22
 - Related: `crates/winterm/src/winui/wheel.rs`, `crates/winterm/src/winui/app.rs`,
   `crates/settings/src/actions.rs`, `crates/settings/src/keybindings.rs`,
@@ -52,8 +52,9 @@ read-only observer.
   window, not the pane's inner rectangle.
 - `Shift+PageUp`/`PageDown` no longer reach a program by default; a file that
   wants that back binds them to `unbound` (ADR 031).
-- The wheel does not yet reach a mouse-tracking program: it always scrolls the
-  viewport, because the hook has a screen point and not a cell.
+- The wheel did not reach a mouse-tracking program: it always scrolled the
+  viewport, because the hook has a screen point and not a cell. (Amended by
+  ADR 048: a tracking program now receives it unless Shift is held.)
 
 ## Alternatives considered
 

@@ -308,6 +308,7 @@ fn cell_count(value: i32) -> u16 {
 mod tests {
     use super::*;
     use crate::term_connection::tests::Buffer;
+    use term::input::WheelAxis;
 
     /// A control whose connection produces `output`, and a handle to that
     /// connection so the test can see what was sent.
@@ -443,5 +444,23 @@ mod tests {
         let written = connection.written();
         assert!(written.starts_with(b"\x1b["), "{written:?}");
         assert!(written.ends_with(b"c"), "{written:?}");
+    }
+
+    #[test]
+    fn only_a_tracking_program_receives_the_wheel() {
+        let (mut control, connection) = control_with(b"");
+        control.pump();
+
+        // A terminal that is not tracking the mouse leaves the wheel to the
+        // viewport, so `send_mouse` reports the event was not taken.
+        assert!(!control.send_mouse(&MouseEvent::wheel((3, 2), WheelAxis::Vertical, 120)));
+        assert!(connection.written().is_empty());
+
+        // DECSET 1000 turns the same event into an X10 report at the pointer.
+        connection.send(b"\x1b[?1000h");
+        control.pump();
+        assert!(control.is_tracking_mouse());
+        assert!(control.send_mouse(&MouseEvent::wheel((3, 2), WheelAxis::Vertical, 120)));
+        assert!(connection.written().ends_with(b"\x1b[M`$#"));
     }
 }
