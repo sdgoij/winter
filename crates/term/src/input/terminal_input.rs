@@ -253,7 +253,15 @@ impl TerminalInput {
     pub fn handle_key(&self, event: &KeyEvent, modes: &InputModes) -> Option<String> {
         // Win32 input mode sees every key, but only while the kitty protocol is
         // not in use: otherwise the shell would never see kitty sequences.
-        if modes.win32_input && modes.kitty_flags == 0 {
+        //
+        // A record describes the key by its virtual key, which the console turns
+        // back into a key event. A host that reports no virtual key — a portable
+        // front end has no Win32 key identity to report — would send a record
+        // with nothing in it: text still types through the character field, but
+        // Enter, Backspace and the arrows are dropped. The legacy encoding says
+        // the same thing in the form the console parses for every client, so it
+        // is used instead.
+        if modes.win32_input && modes.kitty_flags == 0 && event.virtual_key != 0 {
             return Some(self.win32_output(event, modes));
         }
 
@@ -1463,6 +1471,39 @@ mod tests {
             TerminalInput::new().handle_key(&event, &modes).as_deref(),
             Some("\x1b[65;30;97;1;16;1_")
         );
+    }
+
+    #[test]
+    fn win32_input_mode_falls_back_when_the_key_has_no_virtual_key() {
+        // ConPTY asks for Win32 input mode (DECSET 9001) as soon as a client
+        // starts, and a portable front end has no Win32 key identity to put in
+        // the record. A record of zeros is not a key event the console can use:
+        // the character field still types, but these keys would do nothing.
+        let modes = InputModes {
+            win32_input: true,
+            ..InputModes::default()
+        };
+        let input = TerminalInput::new();
+
+        assert_eq!(
+            input.handle_key(&KeyEvent::down(Key::Enter), &modes).as_deref(),
+            Some("\r")
+        );
+        assert_eq!(
+            input.handle_key(&KeyEvent::down(Key::Backspace), &modes).as_deref(),
+            Some("\x7f")
+        );
+        assert_eq!(
+            input.handle_key(&KeyEvent::down(Key::Left), &modes).as_deref(),
+            Some("\x1b[D")
+        );
+
+        // Text still arrives, as the character the event carries.
+        let text = KeyEvent {
+            codepoint: Some('a'),
+            ..KeyEvent::down(Key::Unidentified)
+        };
+        assert_eq!(input.handle_key(&text, &modes).as_deref(), Some("a"));
     }
 
     #[test]
