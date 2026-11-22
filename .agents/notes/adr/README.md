@@ -33,3 +33,4 @@ Rules:
 | [002](002-one-type-universe.md) | One home per type; `adapter` consumes `buffer` and `vt` | Accepted |
 | [003](003-porting-method.md) | Port method: upstream as oracle, one module per C++ file, no stubs | Accepted |
 | [004](004-incremental-dispatch.md) | Port the dispatcher family by family, with explicit `unhandled` defaults | Accepted |
+| [005](005-images-in-the-buffer.md) | Images are buffer content: per-row bands, carried by cell operations | Accepted |
