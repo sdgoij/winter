@@ -1040,11 +1040,45 @@ const CONFLICT: egui::Color32 = egui::Color32::from_rgb(220, 170, 60);
 /// The settings the window can edit, held apart from the settings in force.
 ///
 /// Whether the draft is dirty is computed by comparing it with the settings in
-/// force, so no widget has to remember to set a flag (ADR 028).
+/// force, so no widget has to remember to set a flag (ADRs 028, 030).
 struct Draft {
     font_size: f32,
     default_profile: Option<String>,
     default_scheme: Option<String>,
+    profiles: Vec<ProfileDraft>,
+}
+
+/// One profile as the window edits it.
+///
+/// The arguments are text while they are being edited: splitting them on every
+/// keystroke would make a space impossible to type. They are split on
+/// whitespace when the draft is applied, and the file stays the place for an
+/// argument that contains a space (ADR 030).
+struct ProfileDraft {
+    name: String,
+    command: String,
+    args: String,
+    title: String,
+}
+
+impl ProfileDraft {
+    fn from_profile(profile: &settings::Profile) -> Self {
+        Self {
+            name: profile.name.clone(),
+            command: profile.command.clone(),
+            args: profile.args.join(" "),
+            title: profile.title.clone().unwrap_or_default(),
+        }
+    }
+
+    fn to_profile(&self) -> settings::Profile {
+        settings::Profile {
+            name: self.name.clone(),
+            command: self.command.clone(),
+            args: self.args.split_whitespace().map(str::to_string).collect(),
+            title: (!self.title.is_empty()).then(|| self.title.clone()),
+        }
+    }
 }
 
 impl Draft {
@@ -1053,14 +1087,13 @@ impl Draft {
             font_size: settings.font.size,
             default_profile: settings.default_profile.clone(),
             default_scheme: settings.default_scheme.clone(),
+            profiles: settings.profiles.iter().map(ProfileDraft::from_profile).collect(),
         }
     }
 
     /// Whether the draft has edits that a save would write.
     fn differs_from(&self, settings: &Settings) -> bool {
-        self.font_size != settings.font.size
-            || self.default_profile != settings.default_profile
-            || self.default_scheme != settings.default_scheme
+        self.apply_to(settings) != *settings
     }
 
     /// The document a save writes: the settings in force with the edits applied.
@@ -1069,6 +1102,7 @@ impl Draft {
         settings.font.size = self.font_size;
         settings.default_profile = self.default_profile.clone();
         settings.default_scheme = self.default_scheme.clone();
+        settings.profiles = self.profiles.iter().map(ProfileDraft::to_profile).collect();
         settings
     }
 }
@@ -1863,6 +1897,7 @@ fn draft_editor(
             ui.end_row();
 
             ui.strong("Default profile");
+            let names: Vec<String> = draft.profiles.iter().map(|profile| profile.name.clone()).collect();
             let selected = draft.default_profile.clone().unwrap_or_default();
             let selected = if selected.is_empty() {
                 "(none)".to_string()
@@ -1872,8 +1907,8 @@ fn draft_editor(
             egui::ComboBox::from_id_salt("winterm-settings-profile")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    for profile in &settings.profiles {
-                        ui.selectable_value(&mut draft.default_profile, Some(profile.name.clone()), &profile.name);
+                    for name in names {
+                        ui.selectable_value(&mut draft.default_profile, Some(name.clone()), name);
                     }
                 });
             ui.end_row();
@@ -1891,6 +1926,51 @@ fn draft_editor(
             ui.end_row();
         });
 
+    ui.separator();
+    ui.strong("Profiles");
+    ui.label("Arguments are split on spaces; quote an argument in the file.");
+
+    let mut remove = None;
+    egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+        for (index, profile) in draft.profiles.iter_mut().enumerate() {
+            egui::Grid::new(("winterm-profile", index))
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut profile.name);
+                    ui.end_row();
+
+                    ui.label("Command");
+                    ui.text_edit_singleline(&mut profile.command);
+                    ui.end_row();
+
+                    ui.label("Arguments");
+                    ui.text_edit_singleline(&mut profile.args);
+                    ui.end_row();
+
+                    ui.label("Title");
+                    ui.text_edit_singleline(&mut profile.title);
+                    ui.end_row();
+
+                    ui.label("");
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                    ui.end_row();
+                });
+        }
+    });
+    if let Some(index) = remove {
+        draft.profiles.remove(index);
+    }
+    if ui.button("Add profile").clicked() {
+        let mut profile = ProfileDraft::from_profile(&settings::Profile::default());
+        profile.name = format!("profile {}", draft.profiles.len() + 1);
+        draft.profiles.push(profile);
+    }
+
+    ui.separator();
     let dirty = draft.differs_from(settings);
     ui.horizontal(|ui| {
         if ui.add_enabled(dirty, egui::Button::new("Save")).clicked() {
@@ -2505,6 +2585,61 @@ mod tests {
         draft.default_scheme = None;
         assert_eq!(draft.apply_to(&settings).default_scheme, None);
         assert!(draft.differs_from(&settings));
+    }
+
+    #[test]
+    fn a_profile_round_trips_through_the_draft_text() {
+        let profile = settings::Profile {
+            name: "pwsh".to_string(),
+            command: "pwsh.exe".to_string(),
+            args: vec!["-NoLogo".to_string(), "-NoProfile".to_string()],
+            title: Some("PowerShell".to_string()),
+        };
+
+        let draft = ProfileDraft::from_profile(&profile);
+        assert_eq!(draft.args, "-NoLogo -NoProfile");
+        assert_eq!(draft.to_profile(), profile);
+
+        // Blank text comes back as absent.
+        let bare = ProfileDraft {
+            name: "sh".to_string(),
+            command: "/bin/sh".to_string(),
+            args: "   ".to_string(),
+            title: String::new(),
+        };
+        let profile = bare.to_profile();
+        assert_eq!(profile.args, Vec::<String>::new());
+        assert_eq!(profile.title, None);
+    }
+
+    #[test]
+    fn the_draft_edits_the_profile_list() {
+        let settings = settings::parse(
+            r#"
+                [[profiles]]
+                name = "a"
+                command = "sh"
+
+                [[profiles]]
+                name = "b"
+                command = "zsh"
+            "#,
+        )
+        .expect("settings");
+
+        let mut draft = Draft::from_settings(&settings);
+        assert!(!draft.differs_from(&settings));
+
+        draft.profiles[1].command = "bash".to_string();
+        draft
+            .profiles
+            .push(ProfileDraft::from_profile(&settings::Profile::default()));
+        assert!(draft.differs_from(&settings));
+
+        let document = draft.apply_to(&settings);
+        assert_eq!(document.profiles.len(), 3);
+        assert_eq!(document.profiles[1].command, "bash");
+        assert_eq!(document.profiles[2].name, "default");
     }
 
     #[test]
