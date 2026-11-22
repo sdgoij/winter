@@ -77,3 +77,4 @@ Rules:
 | [046](046-winui-chords-and-selection.md) | The WinUI shell matches bound chords before the terminal and selects with the pointer | Accepted |
 | [047](047-scrolling-and-the-wheel.md) | Scrolling is six actions; the WinUI wheel is read by a low-level mouse hook | Amended by 048 |
 | [048](048-wheel-reaches-a-tracking-program.md) | The wheel is forwarded to a mouse-tracking program; Shift keeps it for the viewport | Accepted |
+| [049](049-winui-settings-dialog.md) | The WinUI settings window is a modal dialog over the shared `config::Draft` | Accepted |

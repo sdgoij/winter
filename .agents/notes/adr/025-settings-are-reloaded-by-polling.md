@@ -72,9 +72,9 @@ Negative:
 - A profile change does not restart running shells, so the window and the panes
   can disagree about the profile until a tab is opened.
 - The application still does not write the file; editing stays in an editor.
-- Both shells poll: `App::logic` on egui and `Shell::tick` on WinUI. Until the
-  WinUI shell has a settings window, a rejected save keeps the running settings
-  and is reported on stderr.
+- Both shells poll: `App::logic` on egui and `Shell::tick` on WinUI. A rejected
+  save keeps the running settings; the settings dialog reports it (the egui
+  window in its status row, the WinUI dialog above the editor).
 
 ## Alternatives considered
 

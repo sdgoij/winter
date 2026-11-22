@@ -16,6 +16,7 @@ description: Build, run and live-check the WinUI 3 shell in crates/winterm/src/w
 | `app.rs` | `Shell` component, one `Control` and `View` per tab, the timer, chords, pointer and wheel dispatch |
 | `surface.rs` | D3D11 device, composition swap chain, Direct2D blit (permitted `unsafe`) |
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
+| `settings.rs` | The settings `ContentDialog` over `config::Draft` |
 | `mod.rs` | Module boundary and `run()` |
 
 `app.rs` owns the only `Renderer` and swap chain. Both shells share `input.rs`,
@@ -82,6 +83,18 @@ scroll.
   start of a paint. These were real bugs; do not undo them.
 - The grid is the whole cells that fit the panel; the face is rasterised at the
   composition scale so a high-DPI monitor gets physical pixels.
+
+## Settings dialog
+
+`settings.rs` draws the editor with a `ContentDialog` and sends
+`SettingsMessage`s; the draft, validation and preview are `config::Draft`, shared
+with the egui window (ADR 049). Save and Revert are in-content buttons so a save
+that fails keeps the dialog open and shows the error; the dialog's own Close
+button discards unsaved edits. A dirty draft is not overwritten by the poll —
+the dialog says the file changed and Save or Revert resolves it.
+
+While the dialog is open the wheel hook's copy is dropped: the dialog's
+`ScrollViewer` scrolls, not the terminal behind it.
 
 ## Do not
 

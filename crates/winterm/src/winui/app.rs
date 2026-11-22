@@ -33,6 +33,7 @@ use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
+use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
 
@@ -68,6 +69,8 @@ struct Shell {
     bindings: Rc<[settings::Keybinding]>,
     /// The settings file in force, so a save can resolve its parts again.
     settings: settings::Settings,
+    /// The settings dialog and its draft.
+    settings_window: SettingsWindow,
     /// The file the settings were read from, polled for a save (ADR 025).
     settings_path: Option<PathBuf>,
     /// The file's stamp at the last read, so a save is noticed.
@@ -116,7 +119,7 @@ struct Shell {
 ///
 /// The variants carry the toolkit's event records; the timer carries nothing,
 /// which is what lets `set_timeout` stay `Send`.
-enum Message {
+pub(super) enum Message {
     Tick,
     Key(KeyEventInfo),
     Char(CharacterEventInfo),
@@ -139,6 +142,8 @@ enum Message {
     Released(PointerEventInfo),
     /// The shell's window, so the wheel hook can be installed.
     Window(isize),
+    /// One edit in the settings dialog.
+    Settings(SettingsMessage),
 }
 
 impl Component for Shell {
@@ -156,6 +161,7 @@ impl Component for Shell {
         let settings_path = loaded.path.clone();
         let settings_stamp = settings_path.as_deref().and_then(settings::stamp);
         let (template, bindings, font_size) = resolved_settings(&loaded.settings);
+        let settings_window = SettingsWindow::new(&loaded);
         let settings = loaded.settings;
 
         let session = spawn_shell(&template.command, size).expect("a shell");
@@ -231,6 +237,7 @@ impl Component for Shell {
             template,
             bindings,
             settings,
+            settings_window,
             settings_path,
             settings_stamp,
             settings_at: Instant::now(),
@@ -272,6 +279,7 @@ impl Component for Shell {
         let pressed = keys.clone();
         let moved = keys.clone();
         let released = keys.clone();
+        let dialog = keys.clone();
         let bindings = Rc::clone(&self.bindings);
 
         let items: Vec<KeyedView> = (0..self.tabs.len())
@@ -353,10 +361,19 @@ impl Component for Shell {
 
         // The tab strip sizes to its own strip, and the pane takes the rest; the
         // panel stays mounted, so switching tabs never rebuilds the surface.
-        Grid::new()
+        let root: View = Grid::new()
             .rows([GridLength::Auto, GridLength::STAR])
             .children((strip, pane.grid_row(1)))
-            .into()
+            .into();
+
+        if self.settings_window.is_open() {
+            root.content_dialog(
+                self.settings_window
+                    .view(&self.settings, self.settings_path.as_deref(), &dialog),
+            )
+        } else {
+            root
+        }
     }
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
@@ -379,6 +396,7 @@ impl Component for Shell {
             Message::Moved(info) => self.pointer_moved(info),
             Message::Released(info) => self.pointer_released(info),
             Message::Window(handle) => self._wheel = wheel::install(handle),
+            Message::Settings(message) => self.settings_message(message),
         }
     }
 }
@@ -433,8 +451,10 @@ impl Shell {
         }
 
         // The binding has no wheel event, so the message hook collected it.
+        // A modal dialog owns the wheel while it is open; our copy is dropped so
+        // the dialog's own scroller moves and the terminal behind it stays put.
         let notches = wheel::take();
-        if notches != 0 {
+        if notches != 0 && !self.settings_window.is_open() {
             self.wheel(notches);
         }
 
@@ -529,11 +549,24 @@ impl Shell {
     }
 
     /// Reloads the settings file when a save changed its stamp.
+    ///
+    /// A dirty draft is not overwritten: the dialog says the file changed and
+    /// lets Save win or Revert load it (ADR 025).
     fn poll_settings(&mut self) {
         let Some(path) = &self.settings_path else {
             return;
         };
-        if settings::stamp(path) != self.settings_stamp {
+        if settings::stamp(path) == self.settings_stamp {
+            return;
+        }
+
+        let dirty = self
+            .settings_window
+            .draft()
+            .is_some_and(|draft| draft.differs_from(&self.settings));
+        if dirty {
+            self.settings_window.set_conflict();
+        } else {
             self.reload_settings();
         }
     }
@@ -546,15 +579,22 @@ impl Shell {
     fn reload_settings(&mut self) {
         let loaded = settings::load_with_report();
         self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
+        let warnings: Vec<String> = loaded.warnings.iter().map(ToString::to_string).collect();
+        let migrated_from = loaded.migrated_from.clone();
         if let Some(error) = loaded.error {
             // A half-written save must not replace the settings a running
             // session is using; the next valid save is read again.
-            eprintln!("winterm: settings not reloaded: {error}");
+            self.settings_window.set_error(error.to_string());
             return;
         }
 
         self.settings = loaded.settings;
         self.settings_path = loaded.path;
+        self.settings_window.set_report(warnings, migrated_from);
+        self.settings_window.clear_error();
+        self.settings_window.clear_conflict();
+        self.settings_window.sync_draft(&self.settings);
+
         let (template, bindings, font_size) = resolved_settings(&self.settings);
         self.template = template;
         self.bindings = bindings;
@@ -577,6 +617,43 @@ impl Shell {
             if let Some(tab) = self.tabs.get_mut(index) {
                 tab.control.apply_scheme(scheme.as_ref());
             }
+        }
+    }
+
+    /// Shows or hides the settings dialog; closing discards unsaved edits.
+    fn toggle_settings(&mut self) {
+        if self.settings_window.is_open() {
+            self.settings_window.close();
+            let _ = self.focus.request_focus();
+        } else {
+            self.settings_window.open(&self.settings);
+        }
+    }
+
+    /// Applies one settings-dialog edit and runs the command it may ask for.
+    fn settings_message(&mut self, message: SettingsMessage) {
+        match self.settings_window.apply(message) {
+            SettingsCommand::None => {}
+            SettingsCommand::Save => self.save_settings(),
+            SettingsCommand::Revert => self.reload_settings(),
+            SettingsCommand::Close => {
+                let _ = self.focus.request_focus();
+            }
+        }
+    }
+
+    /// Writes the draft through the same path startup reads.
+    fn save_settings(&mut self) {
+        let Some(document) = self.settings_window.document(&self.settings) else {
+            return;
+        };
+
+        match settings::save(&document) {
+            Ok(()) => {
+                self.settings_window.clear_error();
+                self.reload_settings();
+            }
+            Err(error) => self.settings_window.set_error(error.to_string()),
         }
     }
 
@@ -723,8 +800,9 @@ impl Shell {
             settings::Action::ScrollDownPage => self.scroll_page_active(-1),
             settings::Action::ScrollToTop => self.scroll_to_active(false),
             settings::Action::ScrollToBottom => self.scroll_to_active(true),
-            // Panes, find, the palette and the settings window are not this
-            // shell's yet, so their chords fall through.
+            settings::Action::OpenSettings => self.toggle_settings(),
+            // Panes, find and the palette are not this shell's yet, so their
+            // chords fall through.
             _ => {}
         }
     }

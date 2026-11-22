@@ -12,5 +12,6 @@ pub mod surface;
 mod wheel;
 
 mod app;
+mod settings;
 
 pub use app::run;
