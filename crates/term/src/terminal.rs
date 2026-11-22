@@ -50,6 +50,20 @@ impl Terminal {
         self.input.handle_mouse(event, &modes)
     }
 
+    /// Formats clipboard text for the pty.
+    ///
+    /// The text is filtered (control codes dropped, line endings rewritten to
+    /// a carriage return) and wrapped in the bracketed-paste markers when the
+    /// program asked for them. The caller writes the result to the pty.
+    pub fn paste(&mut self, text: &str) -> String {
+        let filtered = types::filter_string_for_paste(text, types::FilterOption::PASTE);
+        if self.dispatch().is_bracketed_paste() {
+            format!("\x1b[200~{filtered}\x1b[201~")
+        } else {
+            filtered
+        }
+    }
+
     /// Translates a focus change into the bytes to write to the pty.
     pub fn handle_focus(&mut self, focused: bool) -> Option<String> {
         let modes = self.dispatch().input_modes();

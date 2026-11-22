@@ -8,6 +8,7 @@
 //! documented behaviour — never from what this code happens to do. When a case
 //! here disagrees with the reference, the reference wins.
 
+mod bracketed_paste;
 mod csi;
 mod dcs;
 mod escape;

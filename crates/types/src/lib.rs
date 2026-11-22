@@ -14,6 +14,7 @@
 //! - [`charsets`] — 94/96-character translation tables
 //! - [`dispatch_types`] — VT parameter types, dispatch enums, and mode flags
 //! - [`input_modes`] — the snapshot of input-affecting modes an input engine reads
+//! - [`paste`] — filtering clipboard text before it reaches the pty
 //! - [`sgr_stack`] — `SgrStack` for XTPUSHSGR / XTPOPSGR
 //! - [`viewport`] — `Viewport` screen dimension type
 //! - [`line_rendition`] — `LineRendition` for DECDHL/DECSWL/DECDWL
@@ -32,6 +33,7 @@ pub mod dispatch_types;
 pub mod input_modes;
 pub mod line_rendition;
 pub mod mark_kind;
+pub mod paste;
 pub mod sgr_stack;
 pub mod text_attribute;
 pub mod text_color;
@@ -48,6 +50,7 @@ pub use dispatch_types::*;
 pub use input_modes::InputModes;
 pub use line_rendition::LineRendition;
 pub use mark_kind::MarkKind;
+pub use paste::{FilterOption, filter_string_for_paste};
 pub use sgr_stack::SgrStack;
 pub use text_attribute::TextAttribute;
 pub use text_color::{ColorType, TextColor};
