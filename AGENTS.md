@@ -237,9 +237,10 @@ menu), a command palette (Ctrl+Shift+P) over the profiles and the window's
 actions, an in-terminal find bar (Ctrl+Shift+F), a scrollbar with prompt marks,
 desktop notifications for a program's OSC 777, the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
-(ADRs 022–024, 034), a settings window (Ctrl+,) that reports the file it loaded, lists
-what normalization adjusted (ADR 027), edits everything the file holds —
-font size, defaults, profiles, keybindings and schemes (ADRs 028, 030–032) — and
+(ADRs 022–024, 034), a theme the tab strip paints (ADR 035), a settings window
+(Ctrl+,) that reports the file it loaded, lists what normalization adjusted
+(ADR 027), edits everything the file holds — font size, defaults, profiles,
+keybindings, schemes and themes (ADRs 028, 030–032, 035) — and
 previews the document a save would write, with a poll that reloads the file when
 it is saved (ADR 025). Phase 11 has the bell and DECPS: `crates/audio` turns a
 note into a tone with upstream's arithmetic, a bell flashes the pane and rings

@@ -51,6 +51,21 @@ pub enum Warning {
         /// The repeated name.
         name: String,
     },
+    /// A theme had no name, so nothing can select it and it is dropped.
+    NamelessTheme {
+        /// The theme's position in the list, from zero.
+        index: usize,
+    },
+    /// `theme` names no theme, so the shell's own colours paint.
+    UnknownTheme {
+        /// The name the file wrote.
+        name: String,
+    },
+    /// Two themes share a name; the first is the one selected.
+    DuplicateThemeName {
+        /// The repeated name.
+        name: String,
+    },
     /// The font size was outside the range the shell honours.
     ClampedFontSize {
         /// The size the file wrote.
@@ -95,6 +110,16 @@ impl fmt::Display for Warning {
             }
             Self::DuplicateSchemeName { name } => {
                 write!(f, "more than one scheme is named \"{name}\"; the first is used")
+            }
+            Self::NamelessTheme { index } => {
+                write!(f, "theme {index} has no name and is ignored")
+            }
+            Self::UnknownTheme { name } => write!(
+                f,
+                "theme names \"{name}\", which is not a theme; the shell's own colours paint"
+            ),
+            Self::DuplicateThemeName { name } => {
+                write!(f, "more than one theme is named \"{name}\"; the first is used")
             }
             Self::ClampedFontSize { written, used } => {
                 write!(

@@ -1413,9 +1413,11 @@ struct Draft {
     font_size: f32,
     default_profile: Option<String>,
     default_scheme: Option<String>,
+    theme: Option<String>,
     profiles: Vec<ProfileDraft>,
     keybindings: Vec<BindingDraft>,
     schemes: Vec<SchemeDraft>,
+    themes: Vec<ThemeDraft>,
 }
 
 /// One profile as the window edits it.
@@ -1526,15 +1528,81 @@ impl SchemeDraft {
     }
 }
 
+/// One theme as the window edits it.
+///
+/// Four fills, each text until the document is built, like a scheme's colours
+/// (ADR 032). An empty field leaves that fill to the shell, and a text that
+/// does not parse keeps the window from saving.
+struct ThemeDraft {
+    name: String,
+    tab_row_background: String,
+    tab_row_unfocused: String,
+    tab_background: String,
+    tab_unfocused: String,
+}
+
+impl ThemeDraft {
+    fn from_theme(theme: &settings::Theme) -> Self {
+        Self {
+            name: theme.name.clone(),
+            tab_row_background: written(theme.tab_row.background),
+            tab_row_unfocused: written(theme.tab_row.unfocused_background),
+            tab_background: written(theme.tab.background),
+            tab_unfocused: written(theme.tab.unfocused_background),
+        }
+    }
+
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            tab_row_background: String::new(),
+            tab_row_unfocused: String::new(),
+            tab_background: String::new(),
+            tab_unfocused: String::new(),
+        }
+    }
+
+    fn to_theme(&self) -> Result<settings::Theme, String> {
+        Ok(settings::Theme {
+            name: self.name.clone(),
+            tab_row: settings::TabRowTheme {
+                background: read("tab row", &self.tab_row_background)?,
+                unfocused_background: read("tab row, unfocused", &self.tab_row_unfocused)?,
+            },
+            tab: settings::TabTheme {
+                background: read("tab", &self.tab_background)?,
+                unfocused_background: read("tab, unfocused", &self.tab_unfocused)?,
+            },
+        })
+    }
+}
+
+/// A colour as the window's text field writes it.
+fn written(color: Option<settings::Color>) -> String {
+    color.map(|color| color.to_string()).unwrap_or_default()
+}
+
+/// A text field's colour, or None when the field is empty.
+fn read(label: &str, text: &str) -> Result<Option<settings::Color>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    settings::Color::parse(text)
+        .map(Some)
+        .map_err(|_| format!("{label}: `{text}` is not a colour"))
+}
+
 impl Draft {
     fn from_settings(settings: &Settings) -> Self {
         Self {
             font_size: settings.font.size,
             default_profile: settings.default_profile.clone(),
             default_scheme: settings.default_scheme.clone(),
+            theme: settings.theme.clone(),
             profiles: settings.profiles.iter().map(ProfileDraft::from_profile).collect(),
             keybindings: settings.keybindings.iter().map(BindingDraft::from_binding).collect(),
             schemes: settings.schemes.iter().map(SchemeDraft::from_scheme).collect(),
+            themes: settings.themes.iter().map(ThemeDraft::from_theme).collect(),
         }
     }
 
@@ -1552,6 +1620,7 @@ impl Draft {
         document.font.size = self.font_size;
         document.default_profile = self.default_profile.clone();
         document.default_scheme = self.default_scheme.clone();
+        document.theme = self.theme.clone();
         document.profiles = self.profiles.iter().map(ProfileDraft::to_profile).collect();
         document.keybindings = self
             .keybindings
@@ -1564,7 +1633,18 @@ impl Draft {
             .map(SchemeDraft::to_scheme)
             .collect::<Result<Vec<_>, _>>()
             .ok()?;
+        document.themes = self
+            .themes
+            .iter()
+            .map(ThemeDraft::to_theme)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
         Some(document)
+    }
+
+    /// Why the themes cannot be built, one message per bad colour.
+    fn theme_errors(&self) -> Vec<String> {
+        self.themes.iter().filter_map(|theme| theme.to_theme().err()).collect()
     }
 
     /// Why the schemes cannot be built, one message per bad colour.
@@ -2009,14 +2089,36 @@ impl App {
     fn tab_bar(&self, ui: &mut egui::Ui) -> Vec<TabAction> {
         let mut actions = Vec::new();
         let active = self.tabs.index();
+        let theme = self.settings.theme();
+        let focused = ui.ctx().input(|input| input.focused);
 
-        egui::Panel::top("winterm-tabs").show(ui, |ui| {
+        let mut panel = egui::Panel::top("winterm-tabs");
+        if let Some(fill) = theme
+            .and_then(|theme| theme.tab_row_background(focused))
+            .and_then(|color| egui_color(color.text_color()))
+        {
+            panel = panel.frame(egui::Frame::new().fill(fill));
+        }
+
+        panel.show(ui, |ui| {
             ui.horizontal(|ui| {
                 for index in 0..self.tabs.len() {
                     let Some(tab) = self.tabs.get(index) else {
                         continue;
                     };
-                    if ui.selectable_label(index == active, tab.display_title()).clicked() {
+
+                    let fill = theme
+                        .and_then(|theme| theme.tab_background(index == active))
+                        .and_then(|color| egui_color(color.text_color()));
+                    let button = match fill {
+                        Some(fill) => egui::Button::selectable(
+                            index == active,
+                            egui::RichText::new(tab.display_title()).color(contrasting_text(fill)),
+                        )
+                        .fill(fill),
+                        None => egui::Button::selectable(index == active, tab.display_title()),
+                    };
+                    if ui.add(button).clicked() {
                         actions.push(TabAction::Select(index));
                     }
                     if ui.small_button("×").clicked() {
@@ -2677,7 +2779,7 @@ fn paint_cursor_bar(
 /// Kept out of the window so the strings are testable without an egui context;
 /// the window adds only layout.
 fn settings_rows(settings: &Settings, path: Option<&Path>, error: Option<&str>) -> Vec<(&'static str, String)> {
-    let mut rows = Vec::with_capacity(6);
+    let mut rows = Vec::with_capacity(8);
 
     rows.push((
         "File",
@@ -2704,9 +2806,33 @@ fn settings_rows(settings: &Settings, path: Option<&Path>, error: Option<&str>) 
             .scheme()
             .map_or_else(|| "(built-in)".to_string(), |scheme| scheme.name.clone()),
     ));
+    rows.push((
+        "Theme",
+        settings
+            .theme()
+            .map_or_else(|| "(shell)".to_string(), |theme| theme.name.clone()),
+    ));
     rows.push(("Font", format!("{} pt", settings.font.size)));
 
     rows
+}
+
+/// Draws a colour field's swatch, or what an empty or broken field means.
+fn color_swatch(ui: &mut egui::Ui, text: &str, empty: &str) {
+    match settings::Color::parse(text)
+        .ok()
+        .and_then(|color| egui_color(color.text_color()))
+    {
+        Some(color) => {
+            ui.colored_label(color, "██");
+        }
+        None if text.trim().is_empty() => {
+            ui.label(empty);
+        }
+        None => {
+            ui.label("");
+        }
+    }
 }
 
 /// Draws the editable fields and the Save/Revert buttons.
@@ -2752,6 +2878,19 @@ fn draft_editor(
                     ui.selectable_value(&mut draft.default_scheme, None, "built-in");
                     for name in names {
                         ui.selectable_value(&mut draft.default_scheme, Some(name.clone()), name);
+                    }
+                });
+            ui.end_row();
+
+            ui.strong("Theme");
+            let names: Vec<String> = draft.themes.iter().map(|theme| theme.name.clone()).collect();
+            let selected = draft.theme.clone().unwrap_or_else(|| "shell".to_string());
+            egui::ComboBox::from_id_salt("winterm-settings-theme")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut draft.theme, None, "shell");
+                    for name in names {
+                        ui.selectable_value(&mut draft.theme, Some(name.clone()), name);
                     }
                 });
             ui.end_row();
@@ -2871,20 +3010,7 @@ fn draft_editor(
                         for (color, text) in settings::SchemeColor::ALL.iter().zip(scheme.colours.iter_mut()) {
                             ui.label(color.name());
                             ui.text_edit_singleline(text);
-                            match settings::Color::parse(text)
-                                .ok()
-                                .and_then(|color| egui_color(color.text_color()))
-                            {
-                                Some(color) => {
-                                    ui.colored_label(color, "██");
-                                }
-                                None if text.trim().is_empty() => {
-                                    ui.label("built-in");
-                                }
-                                None => {
-                                    ui.label("");
-                                }
-                            }
+                            color_swatch(ui, text, "built-in");
                             ui.end_row();
                         }
 
@@ -2904,6 +3030,57 @@ fn draft_editor(
         draft.schemes.push(SchemeDraft::new(name));
     }
     for error in draft.scheme_errors() {
+        ui.colored_label(CONFLICT, error);
+    }
+
+    ui.separator();
+    ui.strong("Themes");
+    ui.label("A theme paints the tab row and its tabs. An empty field keeps the shell's colour.");
+
+    let mut remove_theme = None;
+    egui::ScrollArea::vertical()
+        .id_salt("winterm-themes")
+        .max_height(220.0)
+        .show(ui, |ui| {
+            for (index, theme) in draft.themes.iter_mut().enumerate() {
+                egui::Grid::new(("winterm-theme", index))
+                    .num_columns(3)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut theme.name);
+                        ui.label("");
+                        ui.end_row();
+
+                        let fields = [
+                            ("tab row", &mut theme.tab_row_background),
+                            ("tab row, unfocused", &mut theme.tab_row_unfocused),
+                            ("tab", &mut theme.tab_background),
+                            ("tab, unfocused", &mut theme.tab_unfocused),
+                        ];
+                        for (label, text) in fields {
+                            ui.label(label);
+                            ui.text_edit_singleline(text);
+                            color_swatch(ui, text, "shell");
+                            ui.end_row();
+                        }
+
+                        ui.label("");
+                        if ui.small_button("Remove theme").clicked() {
+                            remove_theme = Some(index);
+                        }
+                        ui.end_row();
+                    });
+            }
+        });
+    if let Some(index) = remove_theme {
+        draft.themes.remove(index);
+    }
+    if ui.button("Add theme").clicked() {
+        let name = format!("theme {}", draft.themes.len() + 1);
+        draft.themes.push(ThemeDraft::new(name));
+    }
+    for error in draft.theme_errors() {
         ui.colored_label(CONFLICT, error);
     }
 
@@ -2974,6 +3151,20 @@ fn egui_color(color: TextColor) -> Option<egui::Color32> {
     match color.get_type() {
         ColorType::Rgb { r, g, b } => Some(egui::Color32::from_rgb(r, g, b)),
         _ => None,
+    }
+}
+
+/// Black or white, whichever reads on `fill`.
+///
+/// A theme names a background and no foreground, so the tab label has to pick
+/// a side. The weights are the usual luminance ones; the cut-off is where a
+/// mid grey stops reading as dark.
+fn contrasting_text(fill: egui::Color32) -> egui::Color32 {
+    let luminance = 0.299 * f32::from(fill.r()) + 0.587 * f32::from(fill.g()) + 0.114 * f32::from(fill.b());
+    if luminance > 140.0 {
+        egui::Color32::from_gray(20)
+    } else {
+        egui::Color32::from_gray(230)
     }
 }
 
@@ -3862,11 +4053,62 @@ mod tests {
     }
 
     #[test]
+    fn a_theme_round_trips_through_the_draft() {
+        let colour = |spec: &str| Some(settings::Color::parse(spec).expect("colour"));
+        let theme = settings::Theme {
+            name: "night".to_string(),
+            tab_row: settings::TabRowTheme {
+                background: colour("#101010"),
+                unfocused_background: colour("#0A0A0A"),
+            },
+            tab: settings::TabTheme {
+                background: colour("#202020"),
+                unfocused_background: None,
+            },
+        };
+
+        let draft = ThemeDraft::from_theme(&theme);
+        assert_eq!(draft.name, "night");
+        assert_eq!(draft.to_theme().expect("theme"), theme);
+
+        // An empty field is an unset colour, not a broken one.
+        assert_eq!(draft.tab_unfocused, "");
+
+        let mut bad = draft;
+        bad.tab_background = "#12345".to_string();
+        let error = bad.to_theme().expect_err("a bad colour");
+        assert!(error.contains("tab:"), "{error}");
+        assert!(error.contains("#12345"), "{error}");
+    }
+
+    #[test]
+    fn the_draft_edits_the_themes_and_blocks_a_bad_colour() {
+        let settings = settings::parse("theme = \"night\"\n[[themes]]\nname = \"night\"").expect("settings");
+        let mut draft = Draft::from_settings(&settings);
+        assert!(!draft.differs_from(&settings));
+        assert_eq!(draft.themes.len(), 1);
+
+        draft.themes[0].tab_background = "#202020".to_string();
+        assert!(draft.differs_from(&settings));
+        let document = draft.document(&settings).expect("document");
+        assert_eq!(
+            document.themes[0].tab.background,
+            Some(settings::Color::parse("#202020").expect("colour"))
+        );
+
+        draft.themes[0].tab_background = "nope".to_string();
+        assert!(draft.document(&settings).is_none());
+        assert_eq!(draft.theme_errors().len(), 1);
+        assert!(draft.differs_from(&settings));
+    }
+
+    #[test]
     fn the_settings_rows_report_what_the_file_asked_for() {
         let settings = settings::parse(
             r#"
                 default_profile = "zsh"
                 default_scheme = "muted"
+                theme = "night"
 
                 [[profiles]]
                 name = "zsh"
@@ -3874,6 +4116,9 @@ mod tests {
 
                 [[schemes]]
                 name = "muted"
+
+                [[themes]]
+                name = "night"
 
                 [font]
                 size = 18
@@ -3894,6 +4139,7 @@ mod tests {
         assert_eq!(value("Profile"), "zsh (/bin/zsh)");
         assert_eq!(value("Keybindings"), "19");
         assert_eq!(value("Scheme"), "muted");
+        assert_eq!(value("Theme"), "night");
         assert_eq!(value("Font"), "18 pt");
 
         // A file that was not used still reports what is running and why.
@@ -3908,6 +4154,7 @@ mod tests {
         assert_eq!(value("File"), "(none on this platform)");
         assert_eq!(value("Status"), "bad file");
         assert_eq!(value("Scheme"), "(built-in)");
+        assert_eq!(value("Theme"), "(shell)");
         assert_eq!(value("Font"), "16 pt");
     }
 

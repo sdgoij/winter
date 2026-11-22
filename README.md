@@ -27,11 +27,11 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames; its font collection supplies the shell's faces | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
-| [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034) |
+| [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1533 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1542 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -39,9 +39,12 @@ fourteen-phase plan, the milestone table, and the next module are in
 
 `crates/settings` reads `%APPDATA%\winterm\settings.toml` on Windows and
 `$XDG_CONFIG_HOME/winterm/settings.toml` (else
-`$HOME/.config/winterm/settings.toml`) elsewhere. A missing or invalid file
+`$HOME/.config/winterm/settings.toml`) elsewhere. A missing file is written
+with the defaults on first start, so there is something to edit; an invalid one
 starts PowerShell on Windows (the user's `SHELL` elsewhere) from the default
-profiles and the default chords; the application never writes the file.
+profiles and the default chords. An installation from the earlier JSON schema
+keeps its profiles: `settings.json` beside the new file is read once and
+written out as TOML (ADR 034).
 
 ```toml
 version = 1
@@ -112,6 +115,13 @@ colour is written in the grammar Windows Terminal accepts — `#RGB`, `#RRGGBB`,
 A scheme is chosen by `default_scheme`; a name that matches nothing paints the
 built-in palette. A bad colour rejects the file (ADR 024).
 
+`theme` names a window theme, and a theme names the fills the tab strip paints:
+`tab_row.background`, `tab_row.unfocused_background`, `tab.background` and
+`tab.unfocused_background`. A fill that is left out keeps the shell's colour,
+an unfocused fill falls back to the focused one, and the tab label picks black
+or white by the fill's luminance. An unknown name keeps the shell's colours
+(ADR 035).
+
 `font.size` sets the grid's point size (4–100), written as an integer or a
 float; a size outside that range is clamped. The face is not configurable yet:
 the shell uses one embedded monospace family.
@@ -120,9 +130,10 @@ The settings window (Ctrl+, or the gear beside the tabs) shows the file that was
 read, whether it parsed, and what is in force, and lists what normalization had
 to adjust — an unknown `default_profile`, a blank command, a clamped size
 (ADR 027). It edits everything the file holds: the font size, the default
-profile and scheme, the profile list, the keybinding list (a chord that does not
-parse blocks **Save**) and the schemes (a text field and a swatch per colour;
-an empty field keeps the built-in colour). A **Preview** section shows the exact
+profile, scheme and theme, the profile list, the keybinding list (a chord that
+does not parse blocks **Save**), the schemes (a text field and a swatch per
+colour; an empty field keeps the built-in colour) and the themes (a name and
+four fills). A **Preview** section shows the exact
 document a save would write; a value that does not parse leaves it empty and
 the editor names the row that blocks the save. The window scrolls, so the
 buttons stay reachable however far the lists grow. **Save** writes the file and

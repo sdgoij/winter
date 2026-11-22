@@ -20,6 +20,8 @@ pub fn settings() -> Settings {
         profiles,
         keybindings: DEFAULT_KEYBINDINGS.to_vec(),
         schemes: Vec::new(),
+        theme: None,
+        themes: Vec::new(),
         font: Font::default(),
     }
 }

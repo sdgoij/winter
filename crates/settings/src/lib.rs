@@ -17,6 +17,7 @@ mod palette;
 mod parser;
 mod profiles;
 mod sgr_aliases;
+mod themes;
 mod validation;
 mod watch;
 
@@ -31,6 +32,7 @@ pub use parser::{
 };
 pub use profiles::{Profile, default_profiles, default_shell};
 pub use sgr_aliases::SchemeColor;
+pub use themes::{TabRowTheme, TabTheme, Theme};
 pub use validation::Warning;
 pub use watch::{Stamp, stamp};
 
@@ -58,6 +60,10 @@ pub struct Settings {
     pub keybindings: Vec<Keybinding>,
     /// The colour schemes this installation knows.
     pub schemes: Vec<Scheme>,
+    /// The theme the window paints with, by name.
+    pub theme: Option<String>,
+    /// The themes this installation knows.
+    pub themes: Vec<Theme>,
     /// The grid's type.
     pub font: Font,
 }
@@ -75,6 +81,8 @@ fn empty() -> Settings {
         profiles: Vec::new(),
         keybindings: Vec::new(),
         schemes: Vec::new(),
+        theme: None,
+        themes: Vec::new(),
         font: Font::default(),
     }
 }
@@ -113,6 +121,16 @@ impl Settings {
         self.default_scheme
             .as_deref()
             .and_then(|name| self.schemes.iter().find(|scheme| scheme.name == name))
+    }
+
+    /// Returns the theme the window should paint with, if the file names one.
+    ///
+    /// A name that matches nothing is not replaced by another theme: the shell
+    /// keeps its own colours, as an unknown scheme keeps the built-in palette.
+    pub fn theme(&self) -> Option<&Theme> {
+        self.theme
+            .as_deref()
+            .and_then(|name| self.themes.iter().find(|theme| theme.name == name))
     }
 
     /// Fills in what a partial file leaves out.
@@ -201,6 +219,29 @@ impl Settings {
             && !self.schemes.iter().any(|scheme| scheme.name == *name)
         {
             warnings.push(Warning::UnknownDefaultScheme { name: name.clone() });
+        }
+
+        let mut themes = Vec::with_capacity(self.themes.len());
+        for (index, theme) in std::mem::take(&mut self.themes).into_iter().enumerate() {
+            if theme.name.trim().is_empty() {
+                warnings.push(Warning::NamelessTheme { index });
+            } else {
+                themes.push(theme);
+            }
+        }
+        for (index, theme) in themes.iter().enumerate() {
+            if themes[..index].iter().any(|earlier| earlier.name == theme.name) {
+                warnings.push(Warning::DuplicateThemeName {
+                    name: theme.name.clone(),
+                });
+            }
+        }
+        self.themes = themes;
+
+        if let Some(name) = &self.theme
+            && !self.themes.iter().any(|theme| theme.name == *name)
+        {
+            warnings.push(Warning::UnknownTheme { name: name.clone() });
         }
 
         let written = self.font.size;
@@ -369,6 +410,7 @@ mod tests {
         let toml = r##"
             default_profile = "zsh"
             default_scheme = "muted"
+            theme = "night"
 
             [[profiles]]
             name = "zsh"
@@ -386,6 +428,16 @@ mod tests {
             cursor_color = "#E6E6E6"
             red = "rgb:ff/00/00"
 
+            [[themes]]
+            name = "night"
+
+            [themes.tab_row]
+            background = "#101010"
+
+            [themes.tab]
+            background = "#202020"
+            unfocused_background = "#181818"
+
             [font]
             size = 18
         "##;
@@ -394,6 +446,53 @@ mod tests {
         assert!(text.starts_with("version = 1"), "{text}");
 
         assert_eq!(parse(&text).expect("parse"), settings);
+
+        let theme = settings.theme().expect("the theme");
+        assert_eq!(
+            theme.tab_row.background.map(|color| color.to_string()).as_deref(),
+            Some("#101010")
+        );
+        assert_eq!(
+            theme.tab_background(false).map(|color| color.to_string()).as_deref(),
+            Some("#181818")
+        );
+    }
+
+    #[test]
+    fn a_theme_is_selected_by_name_and_a_nameless_one_is_dropped() {
+        let toml = r##"
+            theme = "night"
+
+            [[themes]]
+            name = "night"
+
+            [[themes]]
+            [themes.tab]
+            background = "#123456"
+        "##;
+        let (settings, warnings) = parse_with_warnings(toml).expect("parse");
+
+        assert_eq!(settings.theme().map(|theme| theme.name.as_str()), Some("night"));
+        assert_eq!(settings.themes.len(), 1);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| matches!(warning, Warning::NamelessTheme { index: 1 })),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_theme_that_names_nothing_paints_the_shells_own_colours() {
+        let (settings, warnings) = parse_with_warnings("theme = \"missing\"").expect("parse");
+
+        assert!(settings.theme().is_none());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| matches!(warning, Warning::UnknownTheme { name } if name == "missing")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

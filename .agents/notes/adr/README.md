@@ -63,3 +63,4 @@ Rules:
 | [032](032-settings-window-edits-schemes.md) | The window edits schemes as text fields with swatches; an empty field means the built-in colour | Accepted |
 | [033](033-audio-tone-model.md) | Audio is a portable tone model in `audio`; the Windows `Beep` sink lives in the app | Accepted |
 | [034](034-settings-file-and-migration.md) | A fresh install is given the default file; an earlier `settings.json` is migrated once and kept | Accepted |
+| [035](035-themes.md) | A theme is the four fills the tab strip paints; the rest of upstream's `Theme` is WinUI-only | Accepted |
