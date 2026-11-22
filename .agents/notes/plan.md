@@ -15,9 +15,10 @@ Verified by running the gate, not by reading the previous status:
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~2.1k | 28 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
+| `renderer` | ~1.4k | 26 | Phase 5 foundation — the portable font, cell-metric, cluster, cursor and CSS-length vocabulary from `src/renderer/base` and `src/renderer/inc`; the atlas and Windows back ends are not ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-733 tests, doc tests. Phases 5–14 are not started.
+759 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -696,16 +697,17 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [ ] `winterm/crates/renderer/src/render_settings.rs` — `RenderSettings`
 - [ ] `winterm/crates/renderer/src/render_frame_info.rs` — `RenderFrameInfo`
 - [ ] `winterm/crates/renderer/src/render_engine_base.rs` — `RenderEngineBase`
-- [ ] `winterm/crates/renderer/src/cluster.rs` — `Cluster` (per-glyph shaping result)
-- [ ] `winterm/crates/renderer/src/font_info.rs` — `FontInfo`
-- [ ] `winterm/crates/renderer/src/font_info_desired.rs` — `FontInfoDesired`
+- [x] `winterm/crates/renderer/src/cluster.rs` — `Cluster` (per-glyph shaping result)
+- [x] `winterm/crates/renderer/src/font_info_base.rs` — `FontInfoBase`
+- [x] `winterm/crates/renderer/src/font_info.rs` — `FontInfo`
+- [x] `winterm/crates/renderer/src/font_info_desired.rs` — `FontInfoDesired`
 - [ ] `winterm/crates/renderer/src/font_cache.rs` — LRU font cache
   - [ ] **Tests:** add/get/evict, LRU eviction order, capacity enforcement, hit rate
   - [ ] **Property tests:** with infinite capacity, cache never evicts; with capacity N, cache holds at most N entries
 - [ ] `winterm/crates/renderer/src/font_resource.rs` — Font resource loading
-- [ ] `winterm/crates/renderer/src/css_length.rs` — CSS length parsing
-  - [ ] **Tests:** pixel, percentage, em, rem parsing, validation
-- [ ] `winterm/crates/renderer/src/cursor_options.rs` — `CursorOptions`
+- [x] `winterm/crates/renderer/src/css_length.rs` — CSS length parsing
+  - [x] **Tests:** pixel, point, percentage, `ch` and bare-number parsing, validation
+- [x] `winterm/crates/renderer/src/cursor_options.rs` — `CursorOptions`
 - [ ] `winterm/crates/renderer/src/composition.rs` — IME composition state
 
 ### Glyph Atlas Engine
