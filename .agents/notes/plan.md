@@ -27,8 +27,9 @@ for a program's OSC 777, a settings window that reports the file, lists what it 
 1576 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
-`term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
-tabs, panes and the shell's own modules (ADR 038); Phase 10 has the settings
+`term` (ADR 017), and native window backends are deferred (ADR 018); ADR 039
+proposes the Windows chrome path over the same window. Phase 9 has tabs, panes
+and the shell's own modules (ADR 038); Phase 10 has the settings
 file, its profiles, its keybindings, its colour schemes, the window themes the
 tab strip paints, the default file a
 first start is written, the migration from the earlier JSON file and the table
@@ -1151,7 +1152,10 @@ The first shell is egui on winit and wgpu (ADR 018), in
 and `icon.rs` (ADR 038). The rows below are retired: they assume four
 hand-written backends, and ADR 018 defers them until the application works
 everywhere. A native backend replaces those five without touching `session.rs` or
-`grid.rs`.
+`grid.rs`. ADR 039 (proposed) keeps that boundary but reads "native" as native
+appearance on the window winit already creates: a drawn caption, the toolkit's
+own theme and icon commands, and one `cfg(windows)` module for the DWM and
+system-menu calls that have no toolkit equivalent.
 
 - [x] ~~`winterm/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
   - Retired: winit supplies the window, event loop, DPI and clipboard (ADR 018).
