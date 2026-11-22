@@ -278,6 +278,79 @@ pub fn color_from_rgb100(r: i32, g: i32, b: i32) -> TextColor {
     TextColor::rgb(scale(r), scale(g), scale(b))
 }
 
+/// Parses an XParseColor spec into a packed `COLORREF` (`0x00BBGGRR`).
+///
+/// Ported from `Utils::ColorFromXParseColorSpec`: `rgb:<red>/<green>/<blue>`
+/// with one to four hex digits per component, or `#<red><green><blue>` with a
+/// uniform digit count. The X11 colour-name table is not ported yet, so a name
+/// such as `red` returns `None`.
+pub fn color_from_xparse_color_spec(spec: &str) -> Option<u32> {
+    let bytes = spec.as_bytes();
+
+    if bytes.len() > 4 && bytes[..4].eq_ignore_ascii_case(b"rgb:") {
+        // 9 is `rgb:h/h/h`, 18 is `rgb:hhhh/hhhh/hhhh`; anything outside
+        // cannot hold three components.
+        if !(9..=18).contains(&bytes.len()) {
+            return None;
+        }
+
+        let mut rest = &spec[4..];
+        let mut values = [0u32; 3];
+        for (component, value) in values.iter_mut().enumerate() {
+            let (digits, tail) = split_hex_prefix(rest, 4)?;
+            if component < 2 {
+                rest = tail.strip_prefix('/')?;
+            } else if !tail.is_empty() {
+                return None;
+            }
+
+            let parameter = u32::from_str_radix(digits, 16).ok()?;
+            let multiplier = 0x11;
+            let divisor = (multiplier << 8) >> (4 * (4 - digits.len() as u32));
+            *value = parameter * multiplier / divisor;
+        }
+        return Some(pack_colorref(values));
+    }
+
+    if bytes.first() == Some(&b'#') {
+        let digits = match bytes.len() {
+            4 => 1,
+            7 => 2,
+            10 => 3,
+            13 => 4,
+            _ => return None,
+        };
+
+        let mut values = [0u32; 3];
+        for (component, value) in values.iter_mut().enumerate() {
+            let start = 1 + component * digits;
+            let part = &spec[start..start + digits];
+            if !part.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
+            let parameter = u32::from_str_radix(part, 16).ok()?;
+            let multiplier = 0x10;
+            let divisor = (multiplier << 8) >> (4 * (4 - digits as u32));
+            *value = parameter * multiplier / divisor;
+        }
+        return Some(pack_colorref(values));
+    }
+
+    None
+}
+
+fn split_hex_prefix(s: &str, max: usize) -> Option<(&str, &str)> {
+    let count = s.bytes().take(max).take_while(u8::is_ascii_hexdigit).count();
+    if count == 0 {
+        return None;
+    }
+    Some((&s[..count], &s[count..]))
+}
+
+fn pack_colorref(values: [u32; 3]) -> u32 {
+    (values[0] & 0xFF) | ((values[1] & 0xFF) << 8) | ((values[2] & 0xFF) << 16)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,5 +457,33 @@ mod tests {
             let (h, l, s) = color_to_hls(color);
             assert_eq!(color_from_hls(h, l, s), color);
         }
+    }
+
+    #[test]
+    fn xparse_color_accepts_rgb_components_of_any_width() {
+        assert_eq!(color_from_xparse_color_spec("rgb:f/0/0"), Some(0x0000_00FF));
+        assert_eq!(color_from_xparse_color_spec("rgb:ff/00/00"), Some(0x0000_00FF));
+        assert_eq!(color_from_xparse_color_spec("rgb:fff/000/000"), Some(0x0000_00FF));
+        assert_eq!(color_from_xparse_color_spec("rgb:ffff/0000/0000"), Some(0x0000_00FF));
+        assert_eq!(color_from_xparse_color_spec("RGB:ff/00/00"), Some(0x0000_00FF));
+    }
+
+    #[test]
+    fn xparse_color_accepts_the_sharp_sign_form() {
+        assert_eq!(color_from_xparse_color_spec("#ff0000"), Some(0x0000_00FF));
+        assert_eq!(color_from_xparse_color_spec("#00ff00"), Some(0x0000_FF00));
+        assert_eq!(color_from_xparse_color_spec("#0000ff"), Some(0x00FF_0000));
+        // A single digit scales by 16, as upstream does.
+        assert_eq!(color_from_xparse_color_spec("#f00"), Some(0x0000_00F0));
+    }
+
+    #[test]
+    fn xparse_color_rejects_malformed_specs() {
+        assert_eq!(color_from_xparse_color_spec("rgb:ff/00"), None);
+        assert_eq!(color_from_xparse_color_spec("rgb:ff/00/00/00"), None);
+        assert_eq!(color_from_xparse_color_spec("rgb:gg/00/00"), None);
+        assert_eq!(color_from_xparse_color_spec("#ff00"), None);
+        assert_eq!(color_from_xparse_color_spec("red"), None);
+        assert_eq!(color_from_xparse_color_spec(""), None);
     }
 }

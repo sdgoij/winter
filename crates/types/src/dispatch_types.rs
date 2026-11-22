@@ -249,6 +249,19 @@ impl VTID {
         id
     }
 
+    /// Creates a VTID from the bytes of a completed sequence.
+    ///
+    /// The bytes are the collected intermediates followed by the final byte;
+    /// bytes past [`Self::MAX_BYTES`] are ignored.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut id = Self::new();
+        for &byte in bytes.iter().take(Self::MAX_BYTES) {
+            id.bytes[id.len] = byte;
+            id.len += 1;
+        }
+        id
+    }
+
     /// Adds an intermediate byte.
     pub fn with_intermediate(mut self, byte: u8) -> Self {
         if self.len >= Self::MAX_INTERMEDIATES {

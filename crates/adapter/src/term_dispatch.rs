@@ -647,6 +647,11 @@ pub trait ITermDispatch: std::fmt::Debug {
         self.unhandled("do_wt_action");
     }
 
+    /// Do urxvt action.
+    fn do_urxvt_action(&mut self, string: &str) {
+        self.unhandled("do_urxvt_action");
+    }
+
     // ─── Sixel ──────────────────────────────────────────────────────
 
     /// Define Sixel image.

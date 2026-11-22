@@ -14,7 +14,6 @@
 //! - [`hyperlinks`] — Hyperlink map for OSC 8 hyperlinks
 //! - [`selection`] — Text selection types
 //! - [`cell_width`] — Character-to-column mapping
-//! - [`line_rendition_ext`] — Screen/buffer line conversion helpers
 //! - [`output_cell_iterator`] — Cell iterators
 //! - [`output_cell_rect`] — Rectangular cell regions
 //! - [`image_slice`] — Image slice for sixel rendering
@@ -26,7 +25,7 @@ pub mod cursor;
 pub mod dbcs_attribute;
 pub mod hyperlinks;
 pub mod image_slice;
-pub mod line_rendition_ext;
+
 pub mod marks;
 pub mod output_cell;
 pub mod output_cell_iterator;

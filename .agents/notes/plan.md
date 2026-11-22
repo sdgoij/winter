@@ -10,13 +10,14 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~2.9k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), the charset tables, `SgrStack` and the colour table |
-| `buffer` | ~6.2k | 200 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
+| `types` | ~2.9k | 84 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table and the XParseColor spec parser |
+| `buffer` | ~6.1k | 188 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~9.9k | 142 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
+| `term` | ~1.5k | 13 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-678 tests, doc tests. Phases 5–14 are not started.
+676 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -47,8 +48,7 @@ settled.
    into the buffer's hyperlink registry, OSC 0/2 title, OSC 7 CWD, OSC 52
    clipboard), macros (DECDMAC text/hex with repeats, DECINVM, DECMSR,
    DECCKSR), window manipulation (CSI 1/2/3/7/8/14/16/18 t, with the
-   reports answered from the visible page), and the colour table (OSC
-   from the visible page), the colour table (OSC
+   reports answered from the visible page), the colour table (OSC
    4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report), and
    sixel (DCS `q`, decoded into row bands; see the sixel entry below).
    Still ported nowhere: DECAC colour assignment, presentation state
@@ -58,7 +58,18 @@ settled.
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
 
+   The parser now reaches this list: `term::OutputStateMachineEngine`
+   implements `IStateMachineEngine` and maps the C0/ESC/CSI/OSC/DCS/VT52
+   families onto `ITermDispatch`. A family with no adapter handler is still
+   reported by `unhandled`, not silently dropped.
+
 **Settled.**
+
+- **The parser-to-dispatch loop exists in `term`.** The crate sits to the
+  right of `adapter` in the ring and owns both grammars. `LineRendition` was
+  the fabricated screen/buffer enum; it is now upstream's buffer enum
+  (single/double width, double-height top/bottom), and the module that
+  mis-used it is gone.
 
 - **The stray `adapter/src/main.rs` binary is gone.** The crate is a library
   only again.
@@ -202,8 +213,9 @@ winterm/
 │   ├── host/               (console host state machine)
 │   ├── input/              (keyboard, mouse, IME processing)
 │   ├── renderer/           (render engine, glyph atlas, text shaping)
-│   ├── server/             (PTY abstraction, handle table)
-│   ├── settings/           (config model, profiles, themes, keybindings)
+│   ├── server/            (PTY abstraction, handle table)
+│   ├── settings/          (config model, profiles, themes, keybindings)
+│   ├── term/              (parser-to-dispatch loop, output/input engines)
 │   ├── types/              (color, viewport, character attributes, cursors)
 │   ├── ui/                 (window metrics, event loop, platform backends)
 │   ├── utils/              (utility types: geometry, primitives, small_vec, enumset, hash, etc.)
@@ -511,10 +523,14 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] `crates/vt/src/charsets.rs` — VT character sets (G0-G3 management)
   - [x] **Tests:** G0/G1/G2/G3 assignment, default charset, alternate charset
     activation, SI/SO switching
-- [ ] `crates/term/src/output_engine.rs` — `OutputStateMachineEngine`
-  - Belongs to `term`, not `vt`: the ring forbids `vt` from knowing
-    `ITermDispatch`. See the note after the workspace layout.
-  - [ ] **Tests:** execute/print/ESC/SS3/CSI/OSC/DCS families
+- [x] `crates/term/src/output_engine.rs` — `OutputStateMachineEngine`
+  - [x] C0 execute, print (through one UTF-8 decoder), ESC, VT52, CSI,
+    OSC and DCS mapping, ported from `OutputStateMachineEngine.cpp`
+  - [x] **Tests:** C0, cursor, SGR, charset designation, save/restore,
+    OSC title, hyperlink, clipboard, REP, unknown sequences, an incomplete
+    UTF-8 prefix, and a sixel DCS end-to-end into the buffer
+  - [ ] **Gap:** the X11 colour-name table is not ported, so OSC 4/10-12
+    accept `rgb:` and `#` specs but not names such as `red`
 - [ ] `crates/term/src/input_engine.rs` — `InputStateMachineEngine`
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor

@@ -1,0 +1,16 @@
+[package]
+name = "term"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "Parser-to-dispatch glue: the output state machine engine"
+
+[dependencies]
+types.workspace = true
+vt.workspace = true
+adapter.workspace = true
+
+[lints]
+workspace = true

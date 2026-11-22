@@ -15,7 +15,7 @@
 //! - [`dispatch_types`] — VT parameter types, dispatch enums, and mode flags
 //! - [`sgr_stack`] — `SgrStack` for XTPUSHSGR / XTPOPSGR
 //! - [`viewport`] — `Viewport` screen dimension type
-//! - [`line_rendition`] — Screen/buffer line conversion functions
+//! - [`line_rendition`] — `LineRendition` for DECDHL/DECSWL/DECDWL
 //! - [`codepoint_width`] — Unicode width detection
 //! - [`theme_utils`] — Light/dark theme detection
 //! - [`color_table`] — 16-color palette management
@@ -41,7 +41,7 @@ pub use codepoint_width::codepoint_width;
 pub use color_table::ColorTable;
 pub use cursor_type::CursorType;
 pub use dispatch_types::*;
-pub use line_rendition::{LineRendition, apply_line_rendition};
+pub use line_rendition::LineRendition;
 pub use mark_kind::MarkKind;
 pub use sgr_stack::SgrStack;
 pub use text_attribute::TextAttribute;

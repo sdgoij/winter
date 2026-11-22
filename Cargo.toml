@@ -6,6 +6,7 @@ members = [
     "crates/buffer",
     "crates/vt",
     "crates/adapter",
+    "crates/term",
 ]
 
 [workspace.package]
@@ -28,6 +29,7 @@ types = { path = "crates/types" }
 buffer = { path = "crates/buffer" }
 vt = { path = "crates/vt" }
 adapter = { path = "crates/adapter" }
+term = { path = "crates/term" }
 
 bitflags = "2"
 proptest = "1"
