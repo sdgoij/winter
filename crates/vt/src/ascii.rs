@@ -26,6 +26,9 @@ pub const CR: u8 = 0x0D;
 /// Escape (ESC) — initiates an escape sequence.
 pub const ESC: u8 = 0x1B;
 
+/// Delete (DEL) — ignored inside escape sequences.
+pub const DEL: u8 = 0x7F;
+
 /// Cancel (CAN) — cancels the rest of the current sequence.
 pub const CAN: u8 = 0x18;
 

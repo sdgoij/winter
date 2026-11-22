@@ -33,7 +33,7 @@ impl AdaptDispatch {
     /// Ported from `_ApplyGraphicsOptions`: applies each option in order.
     pub(crate) fn apply_graphics_options(options: &VTParameters, attributes: &mut TextAttribute) {
         let mut index = 0;
-        while index < options.len() {
+        while index < options.size() {
             index += Self::apply_graphics_option(options, index, attributes);
         }
     }
@@ -135,7 +135,7 @@ impl AdaptDispatch {
 
     /// Ported from `SetCharacterProtectionAttribute` (DECSCA).
     pub(crate) fn apply_logical_attribute(options: &VTParameters, attributes: &mut TextAttribute) {
-        for index in 0..options.len() {
+        for index in 0..options.size() {
             match options.at(index).value_or(0) {
                 1 => attributes.set_protected(true),
                 // Default and Unprotected both clear it; every other value is
@@ -269,12 +269,7 @@ fn underline_style_from_int(value: i32) -> Option<UnderlineStyle> {
 }
 
 fn collect_sub_params(sub_params: VTSubParameters<'_>) -> Vec<VTParameter> {
-    let mut mut_params = sub_params;
-    let mut collected = Vec::new();
-    while let Some(param) = mut_params.next_param() {
-        collected.push(*param);
-    }
-    collected
+    sub_params.iter().copied().collect()
 }
 
 #[cfg(test)]

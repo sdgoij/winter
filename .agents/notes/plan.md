@@ -10,13 +10,13 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~2.6k | 85 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables, `SgrStack` and the colour table |
+| `types` | ~2.9k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), the charset tables, `SgrStack` and the colour table |
 | `buffer` | ~6.2k | 200 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
-| `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
+| `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~9.9k | 142 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-687 tests, doc tests. Phases 5–14 are not started.
+678 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -181,8 +181,8 @@ settled.
   `new_alternate`, and two tests assert it. The three-field stub is gone.
 
 Note on the ring: `adapter` depends on `buffer`, not on `vt`. The parser-to-
-dispatch loop (`StateMachine` → `DispatchAction` → `ITermDispatch`) belongs to
-whatever owns both, which is the application crate, not the adapter.
+dispatch loop (`StateMachine` → `IStateMachineEngine` → `ITermDispatch`) belongs
+to `term`, the crate that owns both.
 
 ## Monorepo Workspace Layout
 
@@ -480,34 +480,46 @@ The Windows Terminal codebase maps to these Rust module groups:
 ## Phase 3: VT State Machine — Escape Sequence Parser
 
 **Estimated effort:** 4 weeks (1 wk for tests)
-**Tests:** 57 passing
+**Tests:** 46 passing
 
 ### Core State Machine
 
-- [x] `crates/vt/src/state_machine.rs` — `StateMachine` DFA (19 states)
-  - [x] **Tests:** all state transitions (Ground, Escape, CsiParam, CsiIntermediate, OscStr, DcsParam, etc.), `process_char()`, `reset_state()`, `state()`, `params()`, `intermediate()`, `string()`, parser mode switching
-  - [x] **Property tests:** feeding empty string produces no actions; feeding identical string twice produces identical actions; reset clears all state
-  - [ ] **Fuzz tests:** `honggfuzz` on random byte sequences → valid or graceful recovery
-- [ ] `crates/vt/src/state_machine_engine.rs` — `IStateMachineEngine` trait
-  - [ ] **Tests:** trait object construction, all virtual methods called correctly
-- [ ] `crates/vt/src/output_engine.rs` — `OutputStateMachineEngine`
-  - [ ] **Tests:** `ActionExecute()` for all execute chars (BEL, BS, HT, LF, CR, FF, ESC), `ActionPrint()`, `ActionPrintString()`, `ActionEscDispatch()` for all escape codes (ESC $, ESC (, ESC ), ESC B, ESC D, ESC H, ESC M, ESC Z, ESC 7, ESC 8, ESC =, ESC >, ESC #3-8, ESC c), `ActionCsiDispatch()` for all CSI commands (SGR, CUP, CUD, CUF, CUB, CNL, CPL, CHA, CHT, ED, EL, IL, DL, DCH, ICH, SU, SD, NP, PP, HVP, TBC, SM, RM, DECSET, DECRST, DSR, DECSTBM, DECSLRM, DECSCUSR, DECSTR), `ActionOscDispatch()` for all OSC codes, `ActionDcsDispatch()` for DCS commands including Sixel, `ActionSs3Dispatch()`
-  - [ ] **Property tests:** every CSI action resets parser to Ground state; OSC action with valid parameter calls handler exactly once
-- [ ] `crates/vt/src/input_engine.rs` — `InputStateMachineEngine`
-  - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste, kitty keyboard (KKP), Win32 input mode (9001), focus tracking (1004), cursor events (1005/1015/1036)
-  - [ ] **Property tests:** enabling mouse mode via DECSET 1000 then pressing mouse key produces correct CSI u sequence
-- [x] `crates/vt/src/dispatch_types.rs` — `VtId`, `VtParameters`, `DeviceAttributesResponse`
-  - [x] **Tests:** VtId construction/comparison, parameter parsing, device attribute bitflags
-- [x] `crates/vt/src/ascii.rs` — ASCII constants + helper functions (`is_printable`, `is_control`, `is_digit`, `is_intermediate`, `is_csi_dispatch`)
-- [x] `crates/vt/src/base64.rs` — Base64 encode/decode with proper padding handling
-  - [x] **Tests:** standard/base64url, padding, roundtrip, invalid input handling
+- [x] `crates/vt/src/state_machine.rs` — `StateMachine` DFA (20 states)
+  - [x] Parameters (32 max, clamped at 65535), sub-parameters (`:`-delimited,
+    6 max per parameter), intermediates, OSC command and string, the DCS
+    data-string hand-off, VT52 mode and C1 introducers
+  - [x] CAN/SUB interrupt from anywhere; DEL is ignored inside sequences
+  - [x] **Tests:** each state family, empty/private/intermediate CSI,
+    sub-parameters, OSC BEL and ST, a DCS handler and an unsupported DCS,
+    VT52 raw parameters, SOS/PM/APC, and a 20 000-byte no-panic run
+  - [x] **Divergence:** a disabled C1 byte is dispatched as data rather than
+    dropped. Upstream sees decoded `wchar_t`s; this parser sees UTF-8 bytes,
+    and continuation bytes of many characters fall in `0x80..=0x9F`.
+  - [ ] **Fuzz target:** `honggfuzz`/`afl.rs` remains to be wired
+- [x] `crates/vt/src/i_state_machine_engine.rs` — `IStateMachineEngine`
+  - [x] Byte-oriented callbacks; `IS_INPUT` selects the input grammar
+  - [x] `ActionPassThroughString` and injection tracking omitted: they exist
+    for ConPTY, and a terminal has nowhere to forward a sequence to
+- [x] `crates/types/src/dispatch_types.rs` — `VTID` (intermediates plus the
+  final byte, with `subsequence`) and `VTParameters` (flat sub-parameter
+  buffer with one range per parameter)
+- [x] `crates/vt/src/state.rs` — the 20 `VTStates` from upstream
+- [x] `crates/vt/src/ascii.rs` — ASCII constants + helper functions
+- [x] `crates/vt/src/base64.rs` — Base64 encode/decode with proper padding
+  - [x] **Tests:** standard/base64url, padding, roundtrip, invalid input
   - [x] **Property tests:** `decode(encode(s)) == s` for byte lengths 0-256
 - [x] `crates/vt/src/charsets.rs` — VT character sets (G0-G3 management)
-  - [x] **Tests:** G0/G1/G2/G3 set assignment, default charset, alternate charset activation, SI/SO switching
+  - [x] **Tests:** G0/G1/G2/G3 assignment, default charset, alternate charset
+    activation, SI/SO switching
+- [ ] `crates/term/src/output_engine.rs` — `OutputStateMachineEngine`
+  - Belongs to `term`, not `vt`: the ring forbids `vt` from knowing
+    `ITermDispatch`. See the note after the workspace layout.
+  - [ ] **Tests:** execute/print/ESC/SS3/CSI/OSC/DCS families
+- [ ] `crates/term/src/input_engine.rs` — `InputStateMachineEngine`
+  - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
+    kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor
+    events (1005/1015/1036)
 - [ ] `crates/vt/src/tracing.rs` — VT sequence tracing
-- [x] `crates/vt/src/parameters.rs` — VT parameter parsing
-  - [x] **Tests:** empty params, single param, multi-param, semicolon-separated, subparameters, overflow, missing params, negative values
-  - [x] **Property tests:** parsing then serializing parameter list preserves all values
 
 ### VT Conformance Test Sequences (Deliverable)
 

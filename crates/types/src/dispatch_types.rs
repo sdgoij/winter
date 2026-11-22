@@ -48,26 +48,39 @@ impl Default for VTParameter {
     }
 }
 
-/// Sub-parameters span for a single VT parameter.
-#[derive(Debug, Clone)]
+/// Sub-parameters of a single VT parameter.
+///
+/// Ported from `VTSubParameters` in `DispatchTypes.hpp`; `at` returns an
+/// unset parameter past the end so callers never index out of bounds.
+#[derive(Debug, Clone, Copy)]
 pub struct VTSubParameters<'a> {
-    sub_params: std::slice::Iter<'a, VTParameter>,
+    sub_params: &'a [VTParameter],
 }
 
 impl<'a> VTSubParameters<'a> {
-    /// Creates a new VTSubParameters from an iterator.
-    pub fn new(params: std::slice::Iter<'a, VTParameter>) -> Self {
-        Self { sub_params: params }
+    /// Creates a new view over sub-parameters.
+    pub const fn new(sub_params: &'a [VTParameter]) -> Self {
+        Self { sub_params }
     }
 
-    /// Returns the next sub-parameter.
-    pub fn next_param(&mut self) -> Option<&'a VTParameter> {
-        self.sub_params.next()
+    /// Returns the sub-parameter at the given index.
+    pub fn at(&self, index: usize) -> VTParameter {
+        self.sub_params.get(index).copied().unwrap_or_default()
     }
 
-    /// Returns whether there are more sub-parameters.
-    pub fn has_more(&self) -> bool {
-        self.sub_params.clone().next().is_some()
+    /// Returns the number of sub-parameters.
+    pub fn len(&self) -> usize {
+        self.sub_params.len()
+    }
+
+    /// Returns whether there are no sub-parameters.
+    pub fn is_empty(&self) -> bool {
+        self.sub_params.is_empty()
+    }
+
+    /// Iterates over the sub-parameters.
+    pub fn iter(&self) -> impl Iterator<Item = &'a VTParameter> {
+        self.sub_params.iter()
     }
 }
 
@@ -75,15 +88,21 @@ impl<'a> VTSubParameters<'a> {
 #[derive(Debug, Clone)]
 pub struct VTParameters {
     params: Vec<VTParameter>,
-    /// Ranges where sub-parameters exist: (start_index, count)
-    sub_param_ranges: Vec<(usize, usize)>,
+    /// Sub-parameters in one flat buffer.
+    sub_params: Vec<VTParameter>,
+    /// One `(start, end)` range into `sub_params` for each parameter.
+    sub_param_ranges: Vec<(u8, u8)>,
 }
+
+/// An unset parameter, used when an empty list is treated as one parameter.
+const DEFAULT_PARAMETER: VTParameter = VTParameter::new();
 
 impl VTParameters {
     /// Creates empty parameters.
     pub fn new() -> Self {
         Self {
             params: Vec::new(),
+            sub_params: Vec::new(),
             sub_param_ranges: Vec::new(),
         }
     }
@@ -92,7 +111,17 @@ impl VTParameters {
     pub fn from_values(values: Vec<VTInt>) -> Self {
         Self {
             params: values.into_iter().map(VTParameter::from).collect(),
+            sub_params: Vec::new(),
             sub_param_ranges: Vec::new(),
+        }
+    }
+
+    /// Creates parameters from the parser's flat buffers.
+    pub fn from_parts(params: Vec<VTParameter>, sub_params: Vec<VTParameter>, sub_param_ranges: Vec<(u8, u8)>) -> Self {
+        Self {
+            params,
+            sub_params,
+            sub_param_ranges,
         }
     }
 
@@ -111,9 +140,17 @@ impl VTParameters {
         self.params.is_empty()
     }
 
-    /// Returns the number of parameters.
+    /// Returns the number of parameters actually collected.
     pub fn len(&self) -> usize {
         self.params.len()
+    }
+
+    /// Returns the effective parameter count.
+    ///
+    /// Ported from `VTParameters::size`: an empty list is equivalent to a
+    /// single unspecified parameter, so `ESC [ m` resets the attributes.
+    pub fn size(&self) -> usize {
+        self.params.len().max(1)
     }
 
     /// Returns the parameter at the given index.
@@ -123,26 +160,35 @@ impl VTParameters {
 
     /// Returns the sub-parameters for the parameter at the given index.
     pub fn sub_params_for(&self, index: usize) -> Option<VTSubParameters<'_>> {
-        let (start, count) = self.sub_param_ranges.iter().find(|(idx, _)| *idx == index)?;
-        if *count == 0 {
+        let (start, end) = *self.sub_param_ranges.get(index)?;
+        if end <= start {
             return None;
         }
-        let start = *start;
-        let count = *count;
-        if start + count > self.params.len() {
-            return None;
-        }
-        Some(VTSubParameters::new(self.params[start..start + count].iter()))
+        Some(VTSubParameters::new(&self.sub_params[start as usize..end as usize]))
     }
 
     /// Returns whether the parameter at the given index has sub-parameters.
     pub fn has_sub_params_for(&self, index: usize) -> bool {
-        self.sub_params_for(index).is_some_and(|sp| sp.has_more())
+        self.sub_param_ranges
+            .get(index)
+            .is_some_and(|&(start, end)| end > start)
+    }
+
+    /// Returns whether any parameter has sub-parameters.
+    pub fn has_sub_params(&self) -> bool {
+        !self.sub_params.is_empty()
     }
 
     /// Iterates over all parameters.
+    ///
+    /// An empty list yields one unspecified parameter, matching `for_each`.
     pub fn iter(&self) -> impl Iterator<Item = VTParameter> + '_ {
-        self.params.iter().copied()
+        let params: &[VTParameter] = if self.params.is_empty() {
+            std::slice::from_ref(&DEFAULT_PARAMETER)
+        } else {
+            &self.params
+        };
+        params.iter().copied()
     }
 
     /// Returns the raw slice of parameters.
@@ -169,58 +215,96 @@ impl From<VTInt> for VTParameters {
     }
 }
 
-/// VT ID (intermediate bytes) for CSI/DSC/ESC sequences.
+/// VT ID (intermediate bytes plus the final byte) for CSI/DCS/ESC sequences.
+///
+/// Ported from `VTID` in `DispatchTypes.hpp`: the bytes are the collected
+/// intermediates followed by the final character, so `ESC ( 0` finalizes to
+/// `["(", "0"]`. At most six intermediates are kept; an overflow resets the
+/// identifier, whose zeroed bytes match no handler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VTID {
-    bytes: [u8; Self::MAX_INTERMEDIATES],
+    bytes: [u8; Self::MAX_BYTES],
     len: usize,
 }
 
 impl VTID {
-    /// Maximum number of intermediate bytes.
-    pub const MAX_INTERMEDIATES: usize = 8;
+    /// Maximum number of bytes (six intermediates plus the final byte).
+    pub const MAX_BYTES: usize = 7;
+    /// Maximum number of intermediates before the identifier is reset.
+    const MAX_INTERMEDIATES: usize = 6;
 
     /// Creates an empty VTID.
     pub const fn new() -> Self {
         Self {
-            bytes: [0; Self::MAX_INTERMEDIATES],
+            bytes: [0; Self::MAX_BYTES],
             len: 0,
         }
     }
 
+    /// Creates a VTID holding a single byte.
+    pub const fn from_byte(byte: u8) -> Self {
+        let mut id = Self::new();
+        id.bytes[0] = byte;
+        id.len = 1;
+        id
+    }
+
     /// Adds an intermediate byte.
     pub fn with_intermediate(mut self, byte: u8) -> Self {
-        if self.len < Self::MAX_INTERMEDIATES {
-            self.bytes[self.len] = byte;
-            self.len += 1;
+        if self.len >= Self::MAX_INTERMEDIATES {
+            // Upstream zeroes the accumulator but keeps the shift, so the
+            // overflowed identifier is six zero bytes plus the final byte.
+            // A zeroed id matches no handler.
+            self.bytes = [0; Self::MAX_BYTES];
+            self.len = Self::MAX_INTERMEDIATES;
+            return self;
         }
+        self.bytes[self.len] = byte;
+        self.len += 1;
         self
     }
 
-    /// Finalizes and returns the VTID.
-    pub fn finalize(self) -> Self {
+    /// Appends the final byte and returns the identifier.
+    ///
+    /// Ported from `VTIDBuilder::Finalize`.
+    pub fn finalize_with(mut self, final_char: u8) -> Self {
+        if self.len >= Self::MAX_BYTES {
+            self = Self::new();
+        }
+        self.bytes[self.len] = final_char;
+        self.len += 1;
         self
     }
 
-    /// Returns the byte at the given index.
+    /// Returns the byte at the given index, or 0 past the end.
     pub fn byte_at(&self, index: usize) -> u8 {
-        if index >= self.len {
-            return 0;
-        }
-        self.bytes[index]
+        self.bytes.get(index).copied().unwrap_or(0)
     }
 
-    /// Returns the number of intermediate bytes.
+    /// Returns the identifier starting at `offset`.
+    ///
+    /// Ported from `VTID::SubSequence`.
+    pub fn subsequence(&self, offset: usize) -> Self {
+        if offset >= self.len {
+            return Self::new();
+        }
+        let mut id = Self::new();
+        id.bytes[..self.len - offset].copy_from_slice(&self.bytes[offset..self.len]);
+        id.len = self.len - offset;
+        id
+    }
+
+    /// Returns the number of bytes.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Returns whether there are no intermediate bytes.
+    /// Returns whether the identifier is empty.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Returns the bytes as a slice.
+    /// Returns the bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len]
     }
@@ -881,12 +965,40 @@ mod tests {
 
     #[test]
     fn test_vtid_with_bytes() {
-        let vtid = VTID::new().with_intermediate(b'A').with_intermediate(b'B').finalize();
+        let vtid = VTID::new()
+            .with_intermediate(b'A')
+            .with_intermediate(b'B')
+            .finalize_with(b'C');
         assert!(!vtid.is_empty());
-        assert_eq!(vtid.len(), 2);
-        // Bytes are stored in little-endian order
+        assert_eq!(vtid.len(), 3);
+        // Bytes are stored in collection order, intermediates then final.
         assert_eq!(vtid.byte_at(0), b'A');
         assert_eq!(vtid.byte_at(1), b'B');
+        assert_eq!(vtid.byte_at(2), b'C');
+        assert_eq!(vtid.as_bytes(), b"ABC");
+    }
+
+    #[test]
+    fn test_vtid_subsequence() {
+        let vtid = VTID::new().with_intermediate(b'(').finalize_with(b'0');
+        assert_eq!(vtid.subsequence(1).as_bytes(), b"0");
+        assert!(vtid.subsequence(2).is_empty());
+    }
+
+    #[test]
+    fn test_vtid_intermediate_overflow_resets() {
+        let mut vtid = VTID::new();
+        for _ in 0..6 {
+            vtid = vtid.with_intermediate(b'#');
+        }
+        // The seventh intermediate cannot leave room for the final byte, so
+        // the accumulator is zeroed and the final goes in the last slot.
+        vtid = vtid.with_intermediate(b'#');
+        assert_eq!(vtid.as_bytes(), &[0, 0, 0, 0, 0, 0]);
+        let vtid = vtid.finalize_with(b'X');
+        assert_eq!(vtid.len(), 7);
+        assert_eq!(vtid.byte_at(0), 0);
+        assert_eq!(vtid.byte_at(6), b'X');
     }
 
     #[test]

@@ -6,9 +6,8 @@
 //! ## Modules
 //!
 //! - [`ascii`] — ASCII constants for VT sequence parsing
-//! - [`parameters`] — `VtParameters` for CSI/OSC/DCS parameter parsing
-//! - [`dispatch_types`] — `VtId`, `VtSequence`, `DeviceAttributesResponse`
-//! - [`state`] — `VtState` enum (19 states of the DFA)
+//! - [`i_state_machine_engine`] — the callbacks the parser drives
+//! - [`state`] — `VtState` enum (the DFA's states)
 //! - [`state_machine`] — `StateMachine` DFA parser
 //! - [`base64`] — Base64 encode/decode utilities
 //! - [`charsets`] — VT character set management (G0-G3)
@@ -16,15 +15,13 @@
 pub mod ascii;
 pub mod base64;
 pub mod charsets;
-pub mod dispatch_types;
-pub mod parameters;
+pub mod i_state_machine_engine;
 pub mod state;
 pub mod state_machine;
 
 // Re-export key types.
 pub use base64::{Base64Error, decode, encode};
 pub use charsets::{Charset, Charsets};
-pub use dispatch_types::{DeviceAttributesResponse, DeviceOptions, VtId, VtSequence};
-pub use parameters::VtParameters;
+pub use i_state_machine_engine::{IStateMachineEngine, StringHandler};
 pub use state::VtState;
-pub use state_machine::{DispatchAction, StateMachine};
+pub use state_machine::{MAX_PARAMETER_COUNT, MAX_PARAMETER_VALUE, MAX_SUBPARAMETER_COUNT, ParserMode, StateMachine};

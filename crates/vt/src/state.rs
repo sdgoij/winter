@@ -1,50 +1,52 @@
 //! VT state machine states.
 //!
-//! Ported from the state definitions in the Windows Terminal C++ VT module.
-//! The VT parser is a DFA with 19 states.
+//! Ported from `StateMachine::VTStates` in `stateMachine.hpp`. The parser is a
+//! deterministic finite automaton over these states.
 
-/// The 19 states of the VT state machine.
+/// The states of the VT state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VtState {
     /// Ground state — normal character processing.
     #[default]
     Ground,
-    /// Prefix state — received a C1 prefix (0x90-0x9F).
-    Prefix,
-    /// Escape state — received ESC (0x1B), awaiting next byte.
+    /// Escape state — received ESC, awaiting the sequence body.
     Escape,
-    /// Escape first — received ESC followed by a prefix byte.
-    EscapeFirst,
-    /// DPAD state — parsing a two-byte sequence (DPCP/DPAF).
-    Dpad,
-    /// DCS param state — parsing DCS parameter bytes.
-    DcsParam,
-    /// DCS string state — inside a DCS string.
-    DcsStr,
-    /// DCS passthrough — DCS string content (not accumulating).
-    DcsPassthrough,
-    /// CSI intermediate — parsing CSI intermediate bytes.
+    /// Escape intermediate — collecting `0x20..=0x2F` after ESC.
+    EscapeIntermediate,
+    /// CSI entry — received `ESC [`.
+    CsiEntry,
+    /// CSI intermediate — collecting intermediates after CSI parameters.
     CsiIntermediate,
-    /// CSI param state — parsing CSI parameter bytes.
-    CsiParam,
-    /// CSI ignore state — inside a CSI ignore sequence.
+    /// CSI ignore — the rest of the sequence is discarded.
     CsiIgnore,
-    /// OSC string state — inside an OSC string.
-    OscStr,
-    /// OSC passthrough — OSC content passthrough.
-    OscPassthrough,
-    /// SS3 ignore state.
-    Ss3Ignore,
-    /// SS3 param state.
+    /// CSI parameter — collecting `0x30..=0x3F` parameters.
+    CsiParam,
+    /// CSI sub-parameter — collecting `0x30..=0x3F` after a `:`.
+    CsiSubParam,
+    /// OSC parameter — collecting the numeric OSC command.
+    OscParam,
+    /// OSC string — collecting the OSC payload.
+    OscString,
+    /// OSC termination — saw ESC, awaiting the `\` of ST.
+    OscTermination,
+    /// SS3 entry — received `ESC O` for the input engine.
+    Ss3Entry,
+    /// SS3 parameter.
     Ss3Param,
-    /// APM ignore state.
-    ApmIgnore,
-    /// APM string state.
-    ApmStr,
-    /// APM passthrough state.
-    ApmPassthrough,
-    /// Error state — unrecoverable error.
-    Error,
+    /// VT52 parameter — collecting the two bytes of a direct cursor address.
+    Vt52Param,
+    /// DCS entry — received `ESC P`.
+    DcsEntry,
+    /// DCS ignore — the rest of the DCS string is discarded.
+    DcsIgnore,
+    /// DCS intermediate — collecting intermediates before the final byte.
+    DcsIntermediate,
+    /// DCS parameter — collecting parameters before the final byte.
+    DcsParam,
+    /// DCS pass-through — handing data-string bytes to the engine's handler.
+    DcsPassThrough,
+    /// SOS/PM/APC string — ignored until the string terminator.
+    SosPmApcString,
 }
 
 impl VtState {
@@ -52,24 +54,25 @@ impl VtState {
     pub const fn name(self) -> &'static str {
         match self {
             VtState::Ground => "Ground",
-            VtState::Prefix => "Prefix",
             VtState::Escape => "Escape",
-            VtState::EscapeFirst => "EscapeFirst",
-            VtState::Dpad => "Dpad",
-            VtState::DcsParam => "DcsParam",
-            VtState::DcsStr => "DcsStr",
-            VtState::DcsPassthrough => "DcsPassthrough",
+            VtState::EscapeIntermediate => "EscapeIntermediate",
+            VtState::CsiEntry => "CsiEntry",
             VtState::CsiIntermediate => "CsiIntermediate",
-            VtState::CsiParam => "CsiParam",
             VtState::CsiIgnore => "CsiIgnore",
-            VtState::OscStr => "OscStr",
-            VtState::OscPassthrough => "OscPassthrough",
-            VtState::Ss3Ignore => "Ss3Ignore",
+            VtState::CsiParam => "CsiParam",
+            VtState::CsiSubParam => "CsiSubParam",
+            VtState::OscParam => "OscParam",
+            VtState::OscString => "OscString",
+            VtState::OscTermination => "OscTermination",
+            VtState::Ss3Entry => "Ss3Entry",
             VtState::Ss3Param => "Ss3Param",
-            VtState::ApmIgnore => "ApmIgnore",
-            VtState::ApmStr => "ApmStr",
-            VtState::ApmPassthrough => "ApmPassthrough",
-            VtState::Error => "Error",
+            VtState::Vt52Param => "Vt52Param",
+            VtState::DcsEntry => "DcsEntry",
+            VtState::DcsIgnore => "DcsIgnore",
+            VtState::DcsIntermediate => "DcsIntermediate",
+            VtState::DcsParam => "DcsParam",
+            VtState::DcsPassThrough => "DcsPassThrough",
+            VtState::SosPmApcString => "SosPmApcString",
         }
     }
 }
