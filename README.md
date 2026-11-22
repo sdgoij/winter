@@ -31,7 +31,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
 | [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views | Phase 9 complete (ADRs 018–022, 036, 038) |
 
-1600 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1606 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 

@@ -106,6 +106,35 @@ impl<T> Tabs<T> {
         let count = self.items.len() as i32;
         self.active = (self.active as i32 + delta).rem_euclid(count) as usize;
     }
+
+    /// Reorders the items, where `order[new]` is the item's old index.
+    ///
+    /// The active tab stays active: its new position is looked up. An `order`
+    /// that is not a permutation of the current indices is ignored, so a
+    /// toolkit that reports a half-finished drag cannot corrupt the list.
+    pub fn reorder(&mut self, order: &[usize]) -> bool {
+        let count = self.items.len();
+        if order.len() != count {
+            return false;
+        }
+
+        let mut seen = vec![false; count];
+        for &index in order {
+            if index >= count || seen[index] {
+                return false;
+            }
+            seen[index] = true;
+        }
+
+        let active = order.iter().position(|&old| old == self.active).unwrap_or(0);
+        let mut slots: Vec<Option<T>> = self.items.drain(..).map(Some).collect();
+        self.items = order
+            .iter()
+            .filter_map(|&old| slots.get_mut(old).and_then(Option::take))
+            .collect();
+        self.active = active;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -114,6 +143,34 @@ mod tests {
 
     fn titles<T: Copy>(tabs: &Tabs<T>) -> Vec<T> {
         (0..tabs.len()).filter_map(|index| tabs.get(index).copied()).collect()
+    }
+
+    #[test]
+    fn reordering_keeps_the_active_tab_active() {
+        let mut tabs = Tabs::new("a");
+        tabs.add("b");
+        tabs.add("c");
+        tabs.select(1);
+
+        // New order: c, b, a.
+        assert!(tabs.reorder(&[2, 1, 0]));
+
+        assert_eq!(titles(&tabs), vec!["c", "b", "a"]);
+        assert_eq!(tabs.active(), Some(&"b"));
+        assert_eq!(tabs.index(), 1);
+    }
+
+    #[test]
+    fn an_order_that_is_not_a_permutation_is_ignored() {
+        let mut tabs = Tabs::new("a");
+        tabs.add("b");
+        tabs.add("c");
+
+        assert!(!tabs.reorder(&[0, 1]));
+        assert!(!tabs.reorder(&[0, 0, 1]));
+        assert!(!tabs.reorder(&[0, 1, 3]));
+        assert_eq!(titles(&tabs), vec!["a", "b", "c"]);
+        assert_eq!(tabs.active(), Some(&"c"));
     }
 
     #[test]

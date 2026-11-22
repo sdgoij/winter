@@ -73,3 +73,4 @@ Rules:
 | [042](042-winui-binding-version.md) | The WinUI binding is the `windows-reactor-pre` 0.108 snapshot, because 0.100 has no input events | Accepted |
 | [043](0043-pane-fits-panel-and-dpi.md) | The WinUI pane fits the panel's cells and DPI; the atlas payload carries the engine's settings | Accepted |
 | [044](0044-winui-reads-settings.md) | The WinUI shell reads the settings file at startup; the pane's palette is handed to the renderer each frame | Accepted |
+| [045](0045-winui-draws-the-active-tab.md) | The WinUI shell keeps one renderer and one swap chain and paints the active tab | Accepted |

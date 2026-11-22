@@ -149,6 +149,13 @@ impl AtlasEngine {
 
 impl RenderEngine for AtlasEngine {
     fn start_paint(&mut self) -> RenderResult<StartPaint> {
+        // A row is rebuilt from scratch each frame: leftover glyphs from the last
+        // frame would be drawn over content that no longer has them (a cleared
+        // line, or another tab's screen).
+        let cell_height = i32::from(self.settings.font.cell_size.1).max(1);
+        for (index, row) in self.payload.rows.iter_mut().enumerate() {
+            row.clear(index as i32, cell_height);
+        }
         Ok(StartPaint::Continue)
     }
 
@@ -579,6 +586,26 @@ mod tests {
                 .iter()
                 .all(|cell| *cell == 0xFF33_2211)
         );
+    }
+
+    #[test]
+    fn a_frame_starts_with_empty_rows() {
+        let (mut engine, _log) = engine();
+        engine.paint_background().expect("background");
+        engine
+            .paint_buffer_line(&[Cluster::new("AB", 2)], Point::new(0, 0), false)
+            .expect("line");
+        assert_eq!(engine.payload().rows[0].glyph_count(), 2);
+
+        // The shell clears at the start of every frame; the next line is the
+        // whole row, so a shorter one must not leave the old glyphs behind.
+        engine.start_paint().expect("start");
+        assert_eq!(engine.payload().rows[0].glyph_count(), 0);
+
+        engine
+            .paint_buffer_line(&[Cluster::new("A", 1)], Point::new(0, 0), false)
+            .expect("line");
+        assert_eq!(engine.payload().rows[0].glyph_count(), 1);
     }
 
     #[test]

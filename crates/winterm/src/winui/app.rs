@@ -1,9 +1,9 @@
-//! The WinUI 3 shell: one pane, a native window, the renderer's pixels.
+//! The WinUI 3 shell: a tab strip, a native window, the renderer's pixels.
 //!
-//! The component owns the `Control`, the renderer and the swap-chain surface.
-//! A timer polls the pty on the UI thread (the connection is not `Send`, so it
-//! cannot be moved to `spawn_background`), paints a frame, and presents it
-//! through [`Surface`] (ADRs 006, 040, 041).
+//! The component owns one terminal per tab, the renderer and the swap-chain
+//! surface. A timer polls every pty on the UI thread (the connection is not
+//! `Send`, so it cannot be moved to `spawn_background`), paints the active tab
+//! and presents it through [`Surface`] (ADRs 006, 021, 040, 041).
 //!
 //! The panel reports its size in DIPs and its composition scale; the grid is
 //! however many whole cells fit, and the face is rasterised at the scale so a
@@ -26,6 +26,7 @@ use windows_reactor::*;
 
 use crate::input;
 use crate::session::Session;
+use crate::tabs::Tabs;
 use crate::term_control::Control;
 use crate::term_events::TerminalEvent;
 use crate::term_settings::TerminalSettings;
@@ -46,10 +47,22 @@ pub fn run() -> windows_core::Result<()> {
     App::run_component::<Shell>(())
 }
 
-/// The application's state and its messages.
-struct Shell {
+/// One tab: its own terminal, selection and title.
+struct Tab {
+    /// Stable across reorders, because the toolkit's close event names it.
+    id: u64,
     control: Control,
     view: ViewState,
+    title: String,
+}
+
+/// The application's state and its messages.
+struct Shell {
+    tabs: Tabs<Tab>,
+    /// The id the next tab is given.
+    next_tab: u64,
+    /// The profile a new tab starts from.
+    template: TerminalSettings,
     renderer: Renderer<TerminalData>,
     shared: SharedBackend,
     panel: ElementRef<SwapChainPanel>,
@@ -58,10 +71,12 @@ struct Shell {
     _observation: ElementObservation,
     timer: Option<ComponentTimer>,
     sides: input::ModifierSides,
-    title: String,
     blink_on: bool,
     blink_at: Instant,
     focused: bool,
+    /// Whether the first focus request already succeeded, so a tab click is not
+    /// immediately undone by the next tick.
+    focus_attempted: bool,
     face: PathBuf,
     /// The face size in DIPs, from the settings file.
     font_size: f32,
@@ -74,10 +89,6 @@ struct Shell {
     /// The window's opening client size in DIPs. It is a constant, so the
     /// declaration only resizes the window once and never fights the user.
     initial_client: (f64, f64),
-    /// The default background and foreground, as `COLORREF`s, so a face rebuilt
-    /// at a new scale keeps the scheme.
-    background: u32,
-    foreground: u32,
 }
 
 /// What the window sends back to the component.
@@ -94,6 +105,14 @@ enum Message {
         scale_x: f32,
         scale_y: f32,
     },
+    /// The tab strip selected `index`, or nothing.
+    Select(Option<usize>),
+    NewTab,
+    /// The user asked for the tab with this id to close.
+    CloseTab(u64),
+    /// The tab strip's new order, by id.
+    Reorder(Vec<u64>),
+    Focused(bool),
 }
 
 impl Component for Shell {
@@ -108,22 +127,23 @@ impl Component for Shell {
         // (ADR 034). A broken file still yields the defaults.
         settings::ensure_file();
         let loaded = settings::load_with_report();
-        let terminal = TerminalSettings::resolve(&loaded.settings);
+        let template = TerminalSettings::resolve(&loaded.settings);
         let font_size = loaded.settings.font.size;
 
-        let session = Session::spawn(&terminal.command, size)
-            .or_else(|_| Session::spawn(&PtyCommand::new("powershell.exe"), size))
-            .or_else(|_| Session::spawn(&PtyCommand::new("cmd.exe"), size))
-            .expect("a shell");
+        let session = spawn_shell(&template.command, size).expect("a shell");
         let mut control = Control::new(Box::new(session), grid);
-        control.apply_scheme(terminal.scheme.as_ref());
+        control.apply_scheme(template.scheme.as_ref());
+        let tab = Tab {
+            id: 0,
+            control,
+            view: ViewState::new(),
+            title: template.title.clone(),
+        };
 
         let face = face_path();
         let fonts = font_setup(&face, font_size, 1.0, grid);
         let cell = fonts.settings.font.cell_size;
-        let (mut renderer, shared) = renderer_for(fonts, grid);
-        let (background, foreground) = default_colors(&control);
-        let _ = renderer.set_default_colors(background, foreground);
+        let (renderer, shared) = renderer_for(fonts, grid);
 
         let panel = ElementRef::<SwapChainPanel>::new();
         let surface = Rc::new(RefCell::new(None::<Surface>));
@@ -172,8 +192,9 @@ impl Component for Shell {
         let timer = Some(context.set_timeout(Duration::from_millis(16), Message::Tick));
 
         Self {
-            control,
-            view: ViewState::new(),
+            tabs: Tabs::new(tab),
+            next_tab: 1,
+            template,
             renderer,
             shared,
             panel,
@@ -182,10 +203,10 @@ impl Component for Shell {
             _observation: observation,
             timer,
             sides: input::ModifierSides::default(),
-            title: terminal.title.clone(),
             blink_on: true,
             blink_at: Instant::now(),
             focused: false,
+            focus_attempted: false,
             face,
             font_size,
             cell,
@@ -195,14 +216,49 @@ impl Component for Shell {
                 f64::from(cell.0) * f64::from(INITIAL_COLUMNS as u16),
                 f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
             ),
-            background,
-            foreground,
         }
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
         let keys = context.sender();
         let characters = keys.clone();
+        let add = keys.clone();
+        let select = keys.clone();
+        let close = keys.clone();
+        let reorder = keys.clone();
+        let got = keys.clone();
+        let lost = keys.clone();
+
+        let items: Vec<KeyedView> = (0..self.tabs.len())
+            .filter_map(|index| self.tabs.get(index))
+            .map(|tab| {
+                KeyedView::new(
+                    tab_key(tab.id),
+                    TabViewItem::new().header(tab.title.clone()).is_closable(true),
+                )
+            })
+            .collect();
+
+        let strip = TabView::new()
+            .is_add_tab_button_visible(true)
+            .can_reorder_tabs(true)
+            .selected_index(Some(self.tabs.index()))
+            .keyed_tab_items(items)
+            .on_add_tab_button_click(move || {
+                let _ = add.send(Message::NewTab);
+            })
+            .on_selection_changed(move |index| {
+                let _ = select.send(Message::Select(index));
+            })
+            .on_close_requested(move |key: windows_reactor::Key| {
+                if let Some(id) = key.as_str().and_then(tab_id) {
+                    let _ = close.send(Message::CloseTab(id));
+                }
+            })
+            .on_reordered(move |keys: Vec<windows_reactor::Key>| {
+                let ids = keys.iter().filter_map(|key| key.as_str().and_then(tab_id)).collect();
+                let _ = reorder.send(Message::Reorder(ids));
+            });
 
         let pane = Border::new()
             .is_tab_stop(true)
@@ -220,9 +276,15 @@ impl Component for Shell {
             .on_character_received(RoutedCallback::new(move |info| {
                 let _ = characters.send(Message::Char(info));
                 true
-            }));
+            }))
+            .on_got_focus(move |_| {
+                let _ = got.send(Message::Focused(true));
+            })
+            .on_lost_focus(move |_| {
+                let _ = lost.send(Message::Focused(false));
+            });
 
-        context.window_title(&self.title);
+        context.window_title(self.title());
         context.window_visuals(
             WindowVisuals::new()
                 .theme(WindowTheme::Dark)
@@ -230,7 +292,12 @@ impl Component for Shell {
                 .client_size(self.initial_client.0, self.initial_client.1),
         );
 
-        pane.into()
+        // The tab strip sizes to its own strip, and the pane takes the rest; the
+        // panel stays mounted, so switching tabs never rebuilds the surface.
+        Grid::new()
+            .rows([GridLength::Auto, GridLength::STAR])
+            .children((strip, pane.grid_row(1)))
+            .into()
     }
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
@@ -244,26 +311,50 @@ impl Component for Shell {
                 scale_x,
                 scale_y,
             } => self.resize(width, height, scale_x, scale_y),
+            Message::Select(index) => self.select(index),
+            Message::NewTab => self.open_tab(),
+            Message::CloseTab(id) => self.close_tab(id, context),
+            Message::Reorder(ids) => self.reorder(&ids),
+            Message::Focused(focused) => self.focused = focused,
         }
     }
 }
 
 impl Shell {
-    /// Pumps the pty, paints a frame and re-arms the timer.
+    /// Pumps every pty, paints the active tab and re-arms the timer.
     fn tick(&mut self, context: &ComponentContext<Self>) {
-        self.control.pump();
-
         let now = Instant::now();
-        for event in self.control.take_events(now) {
-            if event == TerminalEvent::Exited {
-                let _ = context.close_window();
+        let mut exited = Vec::new();
+        for index in 0..self.tabs.len() {
+            let Some(tab) = self.tabs.get_mut(index) else {
+                continue;
+            };
+            tab.control.pump();
+
+            let mut done = false;
+            for event in tab.control.take_events(now) {
+                if event == TerminalEvent::Exited {
+                    done = true;
+                }
+            }
+
+            if let Some(title) = tab.control.title().map(str::to_string)
+                && tab.title != title
+            {
+                tab.title = title;
+            }
+
+            if done {
+                exited.push(index);
             }
         }
 
-        if let Some(title) = self.control.title()
-            && self.title != title
-        {
-            self.title = title.to_string();
+        // Closing from the end keeps the earlier indices valid.
+        for index in exited.into_iter().rev() {
+            if !self.tabs.close(index) {
+                let _ = context.close_window();
+                return;
+            }
         }
 
         if now.duration_since(self.blink_at) >= Duration::from_millis(500) {
@@ -271,23 +362,37 @@ impl Shell {
             self.blink_at = now;
         }
 
-        if !self.focused {
+        // One attempt is enough: after that, the pane takes focus on a click and
+        // a tab selection asks for it back, so this cannot fight the strip.
+        if !self.focused && !self.focus_attempted {
             self.focused = self.focus.request_focus();
+            self.focus_attempted = self.focused;
         }
 
-        self.renderer
-            .data_mut()
-            .refresh(&mut self.control, &self.view, self.blink_on);
-        // The engine resolves a cell's colours through the renderer's table, not
-        // the data's copy, so the shell hands it the palette it painted with
-        // (`RenderSettings::set_color_table`).
-        sync_palette(&mut self.renderer, &self.control);
-        self.renderer.invalidate_all();
+        let blink_on = self.blink_on;
+        let (painted, background) = {
+            let Shell { renderer, tabs, .. } = self;
+            let Some(tab) = tabs.active_mut() else {
+                return;
+            };
 
-        if self.renderer.paint_frame().is_ok() {
+            renderer.data_mut().refresh(&mut tab.control, &tab.view, blink_on);
+
+            // The engine resolves a cell's colours through the renderer's table,
+            // not the data's copy, so the shell hands it the pane's palette
+            // (`RenderSettings::set_color_table`), and the pane's own colours
+            // become the engine's defaults.
+            let (background, foreground) = default_colors(&tab.control);
+            let _ = renderer.set_default_colors(background, foreground);
+            sync_palette(renderer, &tab.control);
+
+            renderer.invalidate_all();
+            (renderer.paint_frame().is_ok(), background)
+        };
+
+        if painted {
             let width = self.shared.width();
             let height = self.shared.height();
-            let background = self.background;
             let surface = Rc::clone(&self.surface);
             self.shared.with_pixels(|pixels| {
                 if let Some(surface) = surface.borrow_mut().as_mut() {
@@ -317,26 +422,93 @@ impl Shell {
     }
 
     /// Replaces the renderer with one whose face is `scale` times the DIP size.
+    ///
+    /// The pane's colours are re-applied on the next tick, from the active tab's
+    /// palette, so a reloaded face never falls back to the built-in table.
     fn rebuild_face(&mut self, scale: f32) {
         let fonts = font_setup(&self.face, self.font_size, scale, self.grid);
         self.cell = fonts.settings.font.cell_size;
-        let (mut renderer, shared) = renderer_for(fonts, self.grid);
-        let _ = renderer.set_default_colors(self.background, self.foreground);
+        let (renderer, shared) = renderer_for(fonts, self.grid);
         self.renderer = renderer;
         self.shared = shared;
     }
 
-    /// Tells the terminal and the renderer how large the grid and target are.
+    /// Tells every tab's terminal and the renderer how large the grid is.
     fn apply_grid(&mut self, (columns, rows): (i32, i32)) {
         self.grid = (columns, rows);
-        self.control.resize(columns, rows);
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.control.resize(columns, rows);
+            }
+        }
 
         let target = target_size(self.cell, self.grid);
         let viewport = InclusiveRect::new(0, 0, columns.max(1) - 1, rows.max(1) - 1);
         let _ = self.renderer.resize(target, viewport);
     }
 
-    /// Turns a key press into the terminal's encoding.
+    /// The title the window shows: the active tab's.
+    fn title(&self) -> &str {
+        self.tabs.active().map_or("winterm", |tab| tab.title.as_str())
+    }
+
+    /// Opens a tab on the same profile and activates it.
+    fn open_tab(&mut self) {
+        let size = pty_size(self.grid);
+        let Ok(session) = spawn_shell(&self.template.command, size) else {
+            return;
+        };
+
+        let mut control = Control::new(Box::new(session), self.grid);
+        control.apply_scheme(self.template.scheme.as_ref());
+
+        let id = self.next_tab;
+        self.next_tab += 1;
+        self.tabs.add(Tab {
+            id,
+            control,
+            view: ViewState::new(),
+            title: self.template.title.clone(),
+        });
+        let _ = self.focus.request_focus();
+    }
+
+    /// Activates the tab the strip selected.
+    fn select(&mut self, index: Option<usize>) {
+        let Some(index) = index else {
+            return;
+        };
+        if self.tabs.select(index) {
+            let _ = self.focus.request_focus();
+        }
+    }
+
+    /// Closes the tab `id`, or the window when it was the last one.
+    fn close_tab(&mut self, id: u64, context: &ComponentContext<Self>) {
+        let Some(index) = (0..self.tabs.len()).find(|&index| self.tabs.get(index).is_some_and(|tab| tab.id == id))
+        else {
+            return;
+        };
+
+        if !self.tabs.close(index) {
+            let _ = context.close_window();
+        } else {
+            let _ = self.focus.request_focus();
+        }
+    }
+
+    /// Applies the strip's new order, which names tabs by id.
+    fn reorder(&mut self, ids: &[u64]) {
+        let order: Vec<usize> = ids
+            .iter()
+            .filter_map(|id| (0..self.tabs.len()).find(|&index| self.tabs.get(index).is_some_and(|tab| tab.id == *id)))
+            .collect();
+        if order.len() == self.tabs.len() {
+            let _ = self.tabs.reorder(&order);
+        }
+    }
+
+    /// Turns a key press into the active terminal's encoding.
     fn key(&mut self, info: KeyEventInfo) {
         let Some(key) = key_of(info.key) else {
             return;
@@ -350,12 +522,15 @@ impl Shell {
         };
 
         let outcome = input::translate(&event, &mut self.sides);
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
         for key in outcome.keys {
-            self.control.send_key(&key);
+            tab.control.send_key(&key);
         }
     }
 
-    /// Hands composed text to the parser's text path.
+    /// Hands composed text to the active terminal's text path.
     fn character(&mut self, info: CharacterEventInfo) {
         let Some(character) = char::from_u32(u32::from(info.character)) else {
             return;
@@ -365,10 +540,36 @@ impl Shell {
         }
 
         let outcome = input::translate(&input::Event::Text(character.to_string()), &mut self.sides);
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
         for key in outcome.keys {
-            self.control.send_key(&key);
+            tab.control.send_key(&key);
         }
     }
+}
+
+/// Starts a shell, falling back to what every Windows install has.
+fn spawn_shell(command: &PtyCommand, size: PtySize) -> std::io::Result<Session> {
+    Session::spawn(command, size)
+        .or_else(|_| Session::spawn(&PtyCommand::new("powershell.exe"), size))
+        .or_else(|_| Session::spawn(&PtyCommand::new("cmd.exe"), size))
+}
+
+/// The pty size a `grid` asks for.
+fn pty_size(grid: (i32, i32)) -> PtySize {
+    let side = |cells: i32| u16::try_from(cells.max(1)).unwrap_or(u16::MAX);
+    PtySize::new(side(grid.0), side(grid.1))
+}
+
+/// The key a tab item is declared with.
+fn tab_key(id: u64) -> String {
+    format!("tab-{id}")
+}
+
+/// The tab id a key names, if it names one.
+fn tab_id(key: &str) -> Option<u64> {
+    key.strip_prefix("tab-")?.parse().ok()
 }
 
 /// The face the shell paints with and the settings its atlas needs.
@@ -659,6 +860,26 @@ mod tests {
         let table = renderer.settings().color_table();
         let index = table.alias_index(ColorAlias::DefaultBackground);
         assert_eq!(table.get(index).map(|color| color.get_colorref()), Some(0x0020_1020));
+    }
+
+    #[test]
+    fn a_tab_key_round_trips_its_id() {
+        assert_eq!(tab_id(&tab_key(7)), Some(7));
+        assert_eq!(tab_id("tab-0"), Some(0));
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_tab_id_is_ignored() {
+        assert_eq!(tab_id("tab-"), None);
+        assert_eq!(tab_id("tab-x"), None);
+        assert_eq!(tab_id("other-1"), None);
+        assert_eq!(tab_id(""), None);
+    }
+
+    #[test]
+    fn the_pty_size_follows_the_grid() {
+        assert_eq!(pty_size((120, 30)), PtySize::new(120, 30));
+        assert_eq!(pty_size((0, 0)), PtySize::new(1, 1));
     }
 
     #[test]
