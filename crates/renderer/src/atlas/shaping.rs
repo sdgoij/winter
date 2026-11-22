@@ -69,7 +69,7 @@ mod tests {
     #[test]
     fn shaped_glyphs_fill_a_row() {
         let mut row = ShapedRow::default();
-        row.push_glyphs(FontId(2), &CellShaping.shape("AB", FontId(2)));
+        row.push_glyphs(FontId(2), &CellShaping.shape("AB", FontId(2)), 0);
 
         assert_eq!(row.glyph_count(), 2);
         assert_eq!(row.mappings.len(), 1);

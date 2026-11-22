@@ -273,7 +273,7 @@ impl RenderEngine for AtlasEngine {
 
         for cluster in clusters {
             let glyphs = self.shaping.shape(cluster.text(), FontId(0));
-            self.payload.rows[row].push_glyphs(FontId(0), &glyphs);
+            self.payload.rows[row].push_glyphs(FontId(0), &glyphs, column);
             self.payload.rows[row].line_rendition = self.rendition;
 
             for _ in 0..cluster.columns().max(0) {

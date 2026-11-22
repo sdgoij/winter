@@ -205,6 +205,8 @@ pub struct ShapedRow {
     pub mappings: Vec<FontMapping>,
     /// Glyph indices; when a mapping's font is unused, these are code points.
     pub glyph_indices: Vec<u16>,
+    /// The starting column of each glyph, in cells.
+    pub glyph_columns: Vec<u16>,
     /// Advances in pixels, one per glyph.
     pub glyph_advances: Vec<f32>,
     /// Sub-cell offsets, one per glyph.
@@ -228,6 +230,7 @@ impl ShapedRow {
     pub fn clear(&mut self, y: i32, cell_height: i32) {
         self.mappings.clear();
         self.glyph_indices.clear();
+        self.glyph_columns.clear();
         self.glyph_advances.clear();
         self.glyph_offsets.clear();
         self.colors.clear();
@@ -238,8 +241,9 @@ impl ShapedRow {
         self.dirty_bottom = self.dirty_top + cell_height;
     }
 
-    /// Appends shaped glyphs for `font`, extending the last run when it matches.
-    pub fn push_glyphs(&mut self, font: FontId, glyphs: &[ShapedGlyph]) {
+    /// Appends shaped glyphs for `font` starting at `column`, extending the
+    /// last run when it matches.
+    pub fn push_glyphs(&mut self, font: FontId, glyphs: &[ShapedGlyph], column: u16) {
         if glyphs.is_empty() {
             return;
         }
@@ -247,6 +251,7 @@ impl ShapedRow {
         let from = self.glyph_indices.len();
         for glyph in glyphs {
             self.glyph_indices.push(glyph.glyph_index);
+            self.glyph_columns.push(column);
             self.glyph_advances.push(glyph.advance);
             self.glyph_offsets.push(GlyphOffset {
                 advance_offset: glyph.offset.0,
@@ -551,13 +556,14 @@ mod tests {
     #[test]
     fn clearing_a_shaped_row_resets_it_and_marks_the_band_dirty() {
         let mut row = ShapedRow::default();
-        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)]);
+        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)], 0);
         row.bitmap.active = true;
 
         row.clear(3, 16);
 
         assert_eq!(row.glyph_count(), 0);
         assert!(row.mappings.is_empty());
+        assert!(row.glyph_columns.is_empty());
         assert!(!row.bitmap.active);
         assert_eq!(row.dirty_top, 48);
         assert_eq!(row.dirty_bottom, 64);
@@ -567,8 +573,8 @@ mod tests {
     #[test]
     fn consecutive_glyphs_of_one_font_share_a_mapping() {
         let mut row = ShapedRow::default();
-        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)]);
-        row.push_glyphs(FontId(0), &[glyph(3)]);
+        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)], 0);
+        row.push_glyphs(FontId(0), &[glyph(3)], 2);
 
         assert_eq!(row.mappings.len(), 1);
         assert_eq!(row.mappings[0].font, FontId(0));
@@ -580,14 +586,23 @@ mod tests {
     #[test]
     fn a_font_change_starts_a_new_mapping() {
         let mut row = ShapedRow::default();
-        row.push_glyphs(FontId(0), &[glyph(1)]);
-        row.push_glyphs(FontId(1), &[glyph(2)]);
+        row.push_glyphs(FontId(0), &[glyph(1)], 0);
+        row.push_glyphs(FontId(1), &[glyph(2)], 1);
 
         assert_eq!(row.mappings.len(), 2);
         assert_eq!(row.mappings[0].glyphs_from, 0);
         assert_eq!(row.mappings[0].glyphs_to, 1);
         assert_eq!(row.mappings[1].glyphs_from, 1);
         assert_eq!(row.mappings[1].glyphs_to, 2);
+    }
+
+    #[test]
+    fn glyph_columns_are_recorded() {
+        let mut row = ShapedRow::default();
+        row.push_glyphs(FontId(0), &[glyph(1), glyph(2)], 3);
+        row.push_glyphs(FontId(0), &[glyph(3)], 5);
+
+        assert_eq!(row.glyph_columns, [3, 3, 5]);
     }
 
     #[test]

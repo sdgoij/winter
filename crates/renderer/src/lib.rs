@@ -46,6 +46,7 @@ pub use atlas::common::{
 };
 pub use atlas::engine::AtlasEngine;
 pub use atlas::shaping::{CellShaping, ShapingBackend};
+pub use atlas::software::{GlyphBitmap, GlyphRasterizer, SoftwareBackend};
 pub use cluster::Cluster;
 pub use composition::{Composition, CompositionRange};
 pub use css_length::{CSSLengthPercentage, ReferenceFrame};
