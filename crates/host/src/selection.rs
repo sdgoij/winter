@@ -16,8 +16,8 @@ use crate::scrolling::Scrolling;
 use crate::selection_input::{input_line_boundaries, is_within_boundaries};
 use crate::selection_state::{SelectionFlags, SelectionState};
 use crate::utils::{compare_coords, get_opposite_corner};
-use buffer::{CopyRequest, TextBuffer};
-use utils::{InclusiveRect, Point, PointSpan, Size};
+use buffer::{AttributeColorsFn, CopyRequest, TextBuffer};
+use utils::{Color, InclusiveRect, Point, PointSpan, Size};
 
 impl SelectionState {
     /// Starts a mark-mode selection at the cursor.
@@ -255,15 +255,80 @@ impl SelectionState {
     /// The request is the one `Clipboard::StoreSelectionToClipboard` builds;
     /// `single_line` is upstream's Shift-held collapse to one line.
     pub fn plain_text(&self, buffer: &TextBuffer, single_line: bool) -> String {
+        match self.clipboard_request(buffer, single_line) {
+            Some(request) => buffer.get_plain_text(&request),
+            None => String::new(),
+        }
+    }
+
+    /// Returns the selection as a CF_HTML clipboard fragment.
+    #[allow(clippy::too_many_arguments)]
+    pub fn html(
+        &self,
+        buffer: &TextBuffer,
+        single_line: bool,
+        font_height_points: f32,
+        font_face: &str,
+        background: Color,
+        is_intense_bold: bool,
+        attribute_colors: &AttributeColorsFn<'_>,
+    ) -> String {
+        match self.clipboard_request(buffer, single_line) {
+            Some(request) => buffer.gen_html(
+                &request,
+                font_height_points,
+                font_face,
+                background,
+                is_intense_bold,
+                attribute_colors,
+            ),
+            None => String::new(),
+        }
+    }
+
+    /// Returns the selection as an RTF document.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rtf(
+        &self,
+        buffer: &TextBuffer,
+        single_line: bool,
+        font_height_points: f32,
+        font_face: &str,
+        background: Color,
+        is_intense_bold: bool,
+        attribute_colors: &AttributeColorsFn<'_>,
+    ) -> String {
+        match self.clipboard_request(buffer, single_line) {
+            Some(request) => buffer.gen_rtf(
+                &request,
+                font_height_points,
+                font_face,
+                background,
+                is_intense_bold,
+                attribute_colors,
+            ),
+            None => String::new(),
+        }
+    }
+
+    /// Builds the copy request for the selection, or `None` when nothing is
+    /// selected.
+    fn clipboard_request(&self, buffer: &TextBuffer, single_line: bool) -> Option<CopyRequest> {
         if !self.is_area_selected() {
-            return String::new();
+            return None;
         }
 
         let buffer_size = Size::new(buffer.screen_width(), buffer.buffer_height());
         let (start, end) = self.selection_anchors(buffer_size);
-        let request =
-            CopyRequest::from_config(buffer, start, end, single_line, !self.is_line_selection(), false, false);
-        buffer.get_plain_text(&request)
+        Some(CopyRequest::from_config(
+            buffer,
+            start,
+            end,
+            single_line,
+            !self.is_line_selection(),
+            false,
+            false,
+        ))
     }
 }
 
@@ -591,5 +656,83 @@ mod tests {
                 PointSpan::new(Point { x: 0, y: 1 }, Point { x: 5, y: 1 }),
             ]
         );
+    }
+
+    fn fixed_colors(_: &TextAttribute) -> (Color, Color, Color) {
+        (
+            Color::rgb(0x11, 0x22, 0x33),
+            Color::rgb(0x44, 0x55, 0x66),
+            Color::rgb(0x77, 0x88, 0x99),
+        )
+    }
+
+    #[test]
+    fn formatted_copy_is_empty_without_a_selection() {
+        let screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let selection = SelectionState::new();
+        let colors: &AttributeColorsFn<'_> = &fixed_colors;
+
+        assert_eq!(
+            selection.html(
+                screen.text_buffer(),
+                false,
+                12.0,
+                "Cascadia Mono",
+                Color::default(),
+                false,
+                colors
+            ),
+            ""
+        );
+        assert_eq!(
+            selection.rtf(
+                screen.text_buffer(),
+                false,
+                12.0,
+                "Cascadia Mono",
+                Color::default(),
+                false,
+                colors
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn a_selection_has_formatted_copy() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+
+        let mut selection = SelectionState::new();
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 1, y: 0 }, &mut screen);
+
+        let colors: &AttributeColorsFn<'_> = &fixed_colors;
+        let html = selection.html(
+            screen.text_buffer(),
+            false,
+            12.0,
+            "Cascadia Mono",
+            Color::rgb(0xAA, 0xBB, 0xCC),
+            false,
+            colors,
+        );
+        assert!(html.contains("<SPAN STYLE=\"color:#112233;"));
+        assert!(html.contains(">hi</SPAN>"));
+
+        let rtf = selection.rtf(
+            screen.text_buffer(),
+            false,
+            12.0,
+            "Cascadia Mono",
+            Color::rgb(0xAA, 0xBB, 0xCC),
+            false,
+            colors,
+        );
+        assert!(rtf.starts_with("{\\rtf1"));
+        assert!(rtf.contains(" hi}"));
     }
 }

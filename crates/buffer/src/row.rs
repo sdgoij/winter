@@ -483,6 +483,29 @@ impl Row {
         text
     }
 
+    /// Returns runs of equal attributes across the columns `begin..end`.
+    ///
+    /// Upstream reads these from `RowAttributes`; this row stores an
+    /// attribute per cell, so they are grouped here. A wide glyph's trailing
+    /// half shares its lead's attribute, so a glyph never splits a run.
+    pub fn attribute_runs(&self, begin: i32, end: i32) -> Vec<(TextAttribute, i32)> {
+        let begin = begin.clamp(0, self.width);
+        let end = end.clamp(begin, self.width);
+        let mut runs: Vec<(TextAttribute, i32)> = Vec::new();
+
+        for column in begin..end {
+            let lead = self.adjust_to_glyph_start(column);
+            let attribute = *self.get_cell(lead).get_attributes();
+
+            match runs.last_mut() {
+                Some((last, length)) if *last == attribute => *length += 1,
+                _ => runs.push((attribute, 1)),
+            }
+        }
+
+        runs
+    }
+
     /// Returns whether the row is entirely whitespace.
     pub fn is_all_spaces(&self) -> bool {
         self.cells.iter().all(|c| c.is_whitespace())
@@ -864,6 +887,24 @@ mod tests {
         // leading column's text, then the character after it.
         assert_eq!(row.get_text_range(1, 3), "a");
         assert_eq!(row.get_text_range(3, 3), "");
+    }
+
+    #[test]
+    fn attribute_runs_group_equal_cells_and_cover_wide_glyphs() {
+        let mut row = Row::new(6);
+        let mut first = TextAttribute::new();
+        first.set_intense(true);
+
+        let mut cell = OutputCell::from_char('a');
+        cell.set_attributes(first);
+        row.write_cell(0, cell);
+        row.write_char(1, 'b', false);
+        row.write_char(2, 'c', false);
+        row.write_char(3, '中', false);
+
+        // The glyph at column 3 and its trailing half share the default
+        // attribute, so cells 1 through 5 form one run.
+        assert_eq!(row.attribute_runs(0, 6), vec![(first, 1), (TextAttribute::new(), 5)]);
     }
 }
 

@@ -222,6 +222,15 @@ impl TextAttribute {
         self.attrs.contains(CharacterAttributes::Intense)
     }
 
+    /// Returns whether the text is bold for rendering.
+    ///
+    /// Ported from `TextAttribute::IsBold`: intensity is only drawn as bold
+    /// when the caller asks for it, or when the foreground is an indexed colour
+    /// that cannot be brightened.
+    pub const fn is_bold(&self, intense_is_bold: bool) -> bool {
+        self.is_intense() && (intense_is_bold || !self.get_foreground().can_be_brightened())
+    }
+
     /// Returns whether the text is faint/dim.
     pub const fn is_faint(&self) -> bool {
         self.attrs.contains(CharacterAttributes::Faint)
@@ -368,6 +377,25 @@ mod tests {
         assert!(!attr.is_faint());
         assert!(!attr.is_italic());
         assert!(!attr.is_blinking());
+    }
+
+    #[test]
+    fn intensity_is_bold_when_asked_or_when_the_colour_cannot_brighten() {
+        let mut attr = TextAttribute::new();
+        assert!(!attr.is_bold(true));
+
+        attr.set_intense(true);
+        assert!(attr.is_bold(true));
+        // The default and RGB foregrounds cannot be brightened, so intensity
+        // alone already draws as bold.
+        assert!(attr.is_bold(false));
+        attr.set_foreground(TextColor::rgb(1, 2, 3));
+        assert!(attr.is_bold(false));
+
+        // An indexed-16 foreground can be brightened, so bold needs the mode.
+        attr.set_indexed_foreground(4);
+        assert!(!attr.is_bold(false));
+        assert!(attr.is_bold(true));
     }
 
     #[test]

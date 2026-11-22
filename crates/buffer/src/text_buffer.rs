@@ -14,9 +14,10 @@ use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
 use types::LineRendition;
+use types::UnderlineStyle;
 use types::Viewport;
 use types::line_rendition::{screen_to_buffer_line, screen_to_buffer_line_inclusive};
-use utils::{InclusiveRect, Point, PointSpan, Size};
+use utils::{Color, InclusiveRect, Point, PointSpan, Size};
 
 /// The default scrollback buffer height (number of rows).
 pub const DEFAULT_SCROLLBACK_HEIGHT: i32 = 300;
@@ -318,6 +319,13 @@ impl CopyRequest {
         )
     }
 }
+
+/// Resolves an attribute to the colours it is drawn with: foreground,
+/// background and underline.
+///
+/// Upstream passes this in as `GetAttributeColors`; the renderer's colour
+/// table supplies the values.
+pub type AttributeColorsFn<'a> = dyn Fn(&TextAttribute) -> (Color, Color, Color) + 'a;
 
 impl TextBuffer {
     /// Creates a new text buffer with default dimensions.
@@ -1137,6 +1145,291 @@ impl TextBuffer {
         text
     }
 
+    /// Returns the cells of `request` as a CF_HTML clipboard fragment.
+    ///
+    /// Ported from `TextBuffer::GenHTML`. `attribute_colors` resolves each
+    /// attribute to the colours it is drawn with, which is the renderer's
+    /// colour table.
+    pub fn gen_html(
+        &self,
+        request: &CopyRequest,
+        font_height_points: f32,
+        font_face: &str,
+        background: Color,
+        is_intense_bold: bool,
+        attribute_colors: &AttributeColorsFn<'_>,
+    ) -> String {
+        if request.begin > request.end {
+            return String::new();
+        }
+
+        // The CF_HTML header is a fixed size so its own offsets are stable.
+        const HTML_HEADER: &str = "<!DOCTYPE><HTML><HEAD></HEAD><BODY>";
+        const HTML_FOOTER: &str = "</BODY></HTML>";
+        const CLIPBOARD_HEADER_SIZE: usize = 157;
+
+        let mut html = String::new();
+        html.push_str(HTML_HEADER);
+        html.push_str("<!--StartFragment -->");
+
+        html.push_str("<DIV STYLE=\"");
+        html.push_str("display:inline-block;");
+        html.push_str("white-space:pre;");
+        html.push_str(&format!("background-color:{};", background.to_hex_short()));
+        // Even with a different face, keep a monospace fallback.
+        html.push_str(&format!("font-family:'{font_face}',monospace;"));
+        html.push_str(&format!("font-size:{}pt;", font_height_points.round() as i32));
+        html.push_str("padding:4px;");
+        html.push_str("\">");
+
+        for row_index in request.begin.y..=request.end.y {
+            let Some(row) = self.get_row_at_screen_line(row_index) else {
+                continue;
+            };
+
+            let (row_begin, row_end, add_line_break) = self.row_copy_helper(request, row_index, row);
+            let mut x = row_begin;
+
+            for (attribute, length) in row.attribute_runs(row_begin, row_end) {
+                let next_x = x + length;
+                let (foreground, row_background, underline) = attribute_colors(&attribute);
+                let foreground_hex = foreground.to_hex_short();
+                let background_hex = row_background.to_hex_short();
+                let underline_hex = underline.to_hex_short();
+                let underline_style = attribute.get_underline_style();
+                let is_underlined = underline_style != UnderlineStyle::NoUnderline;
+                let is_crossed_out = attribute.is_crossed_out();
+                let is_overlined = attribute.is_top_horizontal_displayed();
+
+                html.push_str("<SPAN STYLE=\"");
+                html.push_str(&format!("color:{foreground_hex};"));
+                html.push_str(&format!("background-color:{background_hex};"));
+
+                if attribute.is_bold(is_intense_bold) {
+                    html.push_str("font-weight:bold;");
+                }
+                if attribute.is_italic() {
+                    html.push_str("font-style:italic;");
+                }
+
+                if is_crossed_out || is_overlined {
+                    html.push_str(&format!(
+                        "text-decoration:{} {} {};",
+                        if is_crossed_out { "line-through" } else { "" },
+                        if is_overlined { "overline" } else { "" },
+                        foreground_hex
+                    ));
+                }
+
+                if is_underlined {
+                    // Underline, overline and strike share one CSS property,
+                    // so the underline gets its own nested span with its own
+                    // colour.
+                    html.push_str("\"><SPAN STYLE=\"");
+
+                    match underline_style {
+                        UnderlineStyle::NoUnderline => {}
+                        UnderlineStyle::DoublyUnderlined => {
+                            html.push_str(&format!("text-decoration:underline double {underline_hex};"));
+                        }
+                        UnderlineStyle::CurlyUnderlined => {
+                            html.push_str(&format!("text-decoration:underline wavy {underline_hex};"));
+                        }
+                        UnderlineStyle::DottedUnderlined => {
+                            html.push_str(&format!("text-decoration:underline dotted {underline_hex};"));
+                        }
+                        UnderlineStyle::DashedUnderlined => {
+                            html.push_str(&format!("text-decoration:underline dashed {underline_hex};"));
+                        }
+                        UnderlineStyle::SinglyUnderlined => {
+                            html.push_str(&format!("text-decoration:underline {underline_hex};"));
+                        }
+                    }
+                }
+
+                html.push_str("\">");
+
+                for character in row.get_text_range(x, next_x).chars() {
+                    match character {
+                        '<' => html.push_str("&lt;"),
+                        '>' => html.push_str("&gt;"),
+                        '&' => html.push_str("&amp;"),
+                        _ => html.push(character),
+                    }
+                }
+
+                if is_underlined {
+                    html.push_str("</SPAN>");
+                }
+                html.push_str("</SPAN>");
+
+                x = next_x;
+            }
+
+            if add_line_break && row_index < request.end.y {
+                html.push_str("<BR>");
+            }
+        }
+
+        html.push_str("</DIV>");
+        html.push_str("<!--EndFragment -->");
+        html.push_str(HTML_FOOTER);
+
+        let html_start = CLIPBOARD_HEADER_SIZE;
+        let html_end = CLIPBOARD_HEADER_SIZE + html.len();
+        let fragment_start = CLIPBOARD_HEADER_SIZE + HTML_HEADER.len();
+        let fragment_end = html_end - HTML_FOOTER.len();
+
+        let mut clipboard = String::new();
+        clipboard.push_str("Version:0.9\r\n");
+        clipboard.push_str(&format!("StartHTML:{html_start:0>10}\r\n"));
+        clipboard.push_str(&format!("EndHTML:{html_end:0>10}\r\n"));
+        clipboard.push_str(&format!("StartFragment:{fragment_start:0>10}\r\n"));
+        clipboard.push_str(&format!("EndFragment:{fragment_end:0>10}\r\n"));
+        clipboard.push_str(&format!("StartSelection:{fragment_start:0>10}\r\n"));
+        clipboard.push_str(&format!("EndSelection:{fragment_end:0>10}\r\n"));
+
+        clipboard + &html
+    }
+
+    /// Returns the cells of `request` as an RTF document.
+    ///
+    /// Ported from `TextBuffer::GenRTF`.
+    pub fn gen_rtf(
+        &self,
+        request: &CopyRequest,
+        font_height_points: f32,
+        font_face: &str,
+        background: Color,
+        is_intense_bold: bool,
+        attribute_colors: &AttributeColorsFn<'_>,
+    ) -> String {
+        if request.begin > request.end {
+            return String::new();
+        }
+
+        let mut content = String::new();
+        let mut color_table = String::from("{\\colortbl ;");
+
+        {
+            let mut color_map: HashMap<Color, usize> = HashMap::new();
+            let mut color_index = |color: Color| -> usize {
+                let next = color_map.len() + 1;
+                match color_map.entry(color) {
+                    std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(next);
+                        color_table.push_str(&format!("\\red{}\\green{}\\blue{};", color.r, color.g, color.b));
+                        next
+                    }
+                }
+            };
+
+            // Normal view, one unicode fallback per code point.
+            content.push_str("\\viewkind4\\uc1");
+            content.push_str("\\pard\\slmult1\\f0");
+            // RTF sizes are half-points.
+            content.push_str(&format!("\\fs{}", (2.0 * font_height_points).round() as i32));
+            content.push_str(&format!("\\chshdng0\\chcbpat{}", color_index(background)));
+
+            for row_index in request.begin.y..=request.end.y {
+                let Some(row) = self.get_row_at_screen_line(row_index) else {
+                    continue;
+                };
+
+                let (row_begin, row_end, add_line_break) = self.row_copy_helper(request, row_index, row);
+                let mut x = row_begin;
+
+                for (attribute, length) in row.attribute_runs(row_begin, row_end) {
+                    let next_x = x + length;
+                    let (foreground, row_background, underline) = attribute_colors(&attribute);
+                    let foreground_index = color_index(foreground);
+                    let background_index = color_index(row_background);
+
+                    // Each run is a group so the default attribute comes back
+                    // at its close.
+                    content.push('{');
+                    content.push_str(&format!("\\cf{foreground_index}"));
+                    content.push_str(&format!("\\chshdng0\\chcbpat{background_index}"));
+
+                    if attribute.is_bold(is_intense_bold) {
+                        content.push_str("\\b");
+                    }
+                    if attribute.is_italic() {
+                        content.push_str("\\i");
+                    }
+                    if attribute.is_crossed_out() {
+                        content.push_str("\\strike");
+                    }
+
+                    let underline_index = color_index(underline);
+                    match attribute.get_underline_style() {
+                        UnderlineStyle::NoUnderline => {}
+                        UnderlineStyle::DoublyUnderlined => {
+                            content.push_str(&format!("\\uldb\\ulc{underline_index}"));
+                        }
+                        UnderlineStyle::CurlyUnderlined => {
+                            content.push_str(&format!("\\ulwave\\ulc{underline_index}"));
+                        }
+                        UnderlineStyle::DottedUnderlined => {
+                            content.push_str(&format!("\\uld\\ulc{underline_index}"));
+                        }
+                        UnderlineStyle::DashedUnderlined => {
+                            content.push_str(&format!("\\uldash\\ulc{underline_index}"));
+                        }
+                        UnderlineStyle::SinglyUnderlined => {
+                            content.push_str(&format!("\\ul\\ulc{underline_index}"));
+                        }
+                    }
+
+                    // A command and text must be separated by a space, or a
+                    // leading space in the text is taken as part of the command.
+                    content.push(' ');
+                    Self::append_rtf_text(&mut content, &row.get_text_range(x, next_x));
+                    content.push('}');
+
+                    x = next_x;
+                }
+
+                if add_line_break && row_index < request.end.y {
+                    content.push_str("\\line");
+                }
+            }
+        }
+
+        let mut rtf = String::new();
+        rtf.push('{');
+        rtf.push_str("\\rtf1\\ansi\\ansicpg1252\\deff0\\nouicompat");
+        rtf.push_str(&format!("{{\\fonttbl{{\\f0\\fmodern\\fcharset0 {font_face};}}}}"));
+        rtf.push_str(&color_table);
+        rtf.push('}');
+        rtf.push_str(&content);
+        rtf.push('}');
+        rtf
+    }
+
+    /// Appends text escaped for an RTF stream.
+    ///
+    /// Ported from `TextBuffer::_AppendRTFText`: braces and backslashes are
+    /// escaped, and anything outside ASCII becomes a signed `\uN?` escape per
+    /// UTF-16 code unit.
+    fn append_rtf_text(builder: &mut String, text: &str) {
+        for unit in text.encode_utf16() {
+            if unit <= 127 {
+                let character = char::from(unit as u8);
+                match character {
+                    '\\' | '{' | '}' => {
+                        builder.push('\\');
+                        builder.push(character);
+                    }
+                    _ => builder.push(character),
+                }
+            } else {
+                builder.push_str(&format!("\\u{}?", unit as i16));
+            }
+        }
+    }
+
     /// Returns the buffer's extent as a viewport.
     fn buffer_viewport(&self) -> Viewport {
         Viewport::new(Size::new(self.screen_width, self.buffer_height))
@@ -1692,6 +1985,163 @@ mod tests {
             buffer.get_plain_text(&request(true, false, false)),
             concat!("12345", "67   ", "  345", "123  ", "     ", "     ")
         );
+    }
+
+    #[test]
+    fn rtf_text_is_escaped() {
+        // Ported from `TextBufferTests::TestAppendRTFText`.
+        let mut out = String::new();
+        TextBuffer::append_rtf_text(&mut out, "This is some Ascii \\ {}");
+        assert_eq!(out, "This is some Ascii \\\\ \\{\\}");
+
+        let mut out = String::new();
+        TextBuffer::append_rtf_text(
+            &mut out,
+            "Low code units: \u{00E1} \u{00E9} \u{00ED} \u{00F3} \u{00FA} \u{2B81} \u{2B82}",
+        );
+        assert_eq!(
+            out,
+            "Low code units: \\u225? \\u233? \\u237? \\u243? \\u250? \\u11137? \\u11138?"
+        );
+
+        let mut out = String::new();
+        TextBuffer::append_rtf_text(&mut out, "High code units: \u{A7B5} \u{A7B7}");
+        assert_eq!(out, "High code units: \\u-22603? \\u-22601?");
+
+        let mut out = String::new();
+        TextBuffer::append_rtf_text(&mut out, "Surrogates: \u{1F366} \u{1F47E} \u{1F440}");
+        assert_eq!(
+            out,
+            "Surrogates: \\u-10180?\\u-8346? \\u-10179?\\u-9090? \\u-10179?\\u-9152?"
+        );
+    }
+
+    fn painted_buffer() -> TextBuffer {
+        let mut buffer = TextBuffer::with_dimensions(10, 5, 0);
+        write_row(&mut buffer, 0, "hi<x", false);
+        buffer
+    }
+
+    fn fixed_colors(_: &TextAttribute) -> (Color, Color, Color) {
+        (
+            Color::rgb(0x11, 0x22, 0x33),
+            Color::rgb(0x44, 0x55, 0x66),
+            Color::rgb(0x77, 0x88, 0x99),
+        )
+    }
+
+    #[test]
+    fn html_wraps_the_text_in_a_cf_html_fragment() {
+        let buffer = painted_buffer();
+        let request = CopyRequest::from_config(&buffer, Point::new(0, 0), Point::new(4, 0), false, false, false, false);
+        let colors: &AttributeColorsFn<'_> = &fixed_colors;
+
+        let html = buffer.gen_html(
+            &request,
+            12.0,
+            "Courier New",
+            Color::rgb(0xAA, 0xBB, 0xCC),
+            false,
+            colors,
+        );
+
+        let body = concat!(
+            "<!DOCTYPE><HTML><HEAD></HEAD><BODY>",
+            "<!--StartFragment -->",
+            "<DIV STYLE=\"display:inline-block;white-space:pre;",
+            "background-color:#AABBCC;",
+            "font-family:'Courier New',monospace;",
+            "font-size:12pt;",
+            "padding:4px;\">",
+            "<SPAN STYLE=\"color:#112233;background-color:#445566;\">hi&lt;x</SPAN>",
+            "</DIV>",
+            "<!--EndFragment -->",
+            "</BODY></HTML>"
+        );
+
+        let start = 157;
+        let end = start + body.len();
+        let fragment_start = start + "<!DOCTYPE><HTML><HEAD></HEAD><BODY>".len();
+        let fragment_end = end - "</BODY></HTML>".len();
+        let header = format!(
+            "Version:0.9\r\nStartHTML:{start:0>10}\r\nEndHTML:{end:0>10}\r\n\
+             StartFragment:{fragment_start:0>10}\r\nEndFragment:{fragment_end:0>10}\r\n\
+             StartSelection:{fragment_start:0>10}\r\nEndSelection:{fragment_end:0>10}\r\n"
+        );
+
+        assert_eq!(html, format!("{header}{body}"));
+    }
+
+    #[test]
+    fn rtf_opens_a_group_per_run() {
+        let buffer = painted_buffer();
+        let request = CopyRequest::from_config(&buffer, Point::new(0, 0), Point::new(4, 0), false, false, false, false);
+        let colors: &AttributeColorsFn<'_> = &fixed_colors;
+
+        assert_eq!(
+            buffer.gen_rtf(
+                &request,
+                12.0,
+                "Courier New",
+                Color::rgb(0xAA, 0xBB, 0xCC),
+                false,
+                colors
+            ),
+            concat!(
+                "{\\rtf1\\ansi\\ansicpg1252\\deff0\\nouicompat",
+                "{\\fonttbl{\\f0\\fmodern\\fcharset0 Courier New;}}",
+                "{\\colortbl ;\\red170\\green187\\blue204;",
+                "\\red17\\green34\\blue51;",
+                "\\red68\\green85\\blue102;",
+                "\\red119\\green136\\blue153;}",
+                "\\viewkind4\\uc1\\pard\\slmult1\\f0\\fs24",
+                "\\chshdng0\\chcbpat1",
+                "{\\cf2\\chshdng0\\chcbpat3 hi<x}",
+                "}"
+            )
+        );
+    }
+
+    #[test]
+    fn html_and_rtf_render_decorations() {
+        let mut buffer = TextBuffer::with_dimensions(10, 5, 0);
+        let mut attribute = TextAttribute::new();
+        attribute.set_intense(true);
+        attribute.set_italic(true);
+        attribute.set_crossed_out(true);
+        attribute.set_underline_style(UnderlineStyle::CurlyUnderlined);
+
+        let mut cell = OutputCell::from_char('x');
+        cell.set_attributes(attribute);
+        buffer.get_row_at_screen_line_mut(0).expect("row").write_cell(0, cell);
+
+        let request = CopyRequest::from_config(&buffer, Point::new(0, 0), Point::new(1, 0), false, false, false, false);
+        let colors: &AttributeColorsFn<'_> = &fixed_colors;
+
+        let html = buffer.gen_html(
+            &request,
+            12.0,
+            "Cascadia Mono",
+            Color::rgb(0xAA, 0xBB, 0xCC),
+            false,
+            colors,
+        );
+        assert!(html.contains(concat!(
+            "<SPAN STYLE=\"color:#112233;background-color:#445566;",
+            "font-weight:bold;font-style:italic;",
+            "text-decoration:line-through  #112233;\">",
+            "<SPAN STYLE=\"text-decoration:underline wavy #778899;\">x</SPAN></SPAN>"
+        )));
+
+        let rtf = buffer.gen_rtf(
+            &request,
+            12.0,
+            "Cascadia Mono",
+            Color::rgb(0xAA, 0xBB, 0xCC),
+            false,
+            colors,
+        );
+        assert!(rtf.contains("{\\cf2\\chshdng0\\chcbpat3\\b\\i\\strike\\ulwave\\ulc4 x}"));
     }
 
     #[test]

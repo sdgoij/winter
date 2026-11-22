@@ -469,10 +469,10 @@ The Windows Terminal codebase maps to these Rust module groups:
 ### TextBuffer Core
 
 - [x] `crates/buffer/src/text_buffer.rs` — `TextBuffer` (circular scrollback)
-  - [x] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetTextRects()`, `GetTextSpans()`, `GetPlainText(CopyRequest)`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
+  - [x] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetTextRects()`, `GetTextSpans()`, `GetPlainText(CopyRequest)`, `GenHTML()`, `GenRTF()`, `_AppendRTFText()`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
   - [x] **Property tests:** writing then reading same cells returns original data; `GetPlainText()` for empty buffer is `""`; reflow preserves total character count
   - [ ] **Snapshot tests:** write known text pattern, compare rendered output
-  - Not ported: `GetWithControlSequences()`, `GenHTML()` and `GenRTF()`
+  - Not ported: `GetWithControlSequences()`
 - [ ] `crates/buffer/src/text_buffer_cell_iterator.rs` — Cell iterator
   - [ ] **Tests:** advance to column, line iteration, bounds, empty buffer
 - [x] `crates/buffer/src/text_buffer_text_iterator.rs` — Text iterator
@@ -502,7 +502,7 @@ The Windows Terminal codebase maps to these Rust module groups:
   - [x] The rectangle-to-text read it promised landed as
     `TextBuffer::get_text_rects`, `get_text_spans` and `get_plain_text`,
     with the `Row` glyph and readable-content rules they need.
-- [ ] `crates/buffer/src/clipboard.rs` — Clipboard formatting (`GenHTML`/`GenRTF`)
+- [ ] `crates/buffer/src/clipboard.rs` — Clipboard transport (the Win32 handle, `CF_HTML` registration); the HTML/RTF text itself is `TextBuffer::gen_html`/`gen_rtf`
 
 ### Row Memory Layout
 
@@ -924,17 +924,16 @@ porting skill requires.
     `InitializeMouseSelection`, `CheckAndSetAlternateSelection`,
     `AdjustSelection`, `ExtendSelection`, `ClearSelection`, `SelectNewRegion`,
     `SelectAll` (whose input-line half takes the no-input-line path, so
-    "all" ends at the saved cursor or the cursor), `GetSelectionSpans` and the
-    plain-text half of the clipboard copy.
+    "all" ends at the saved cursor or the cursor), `GetSelectionSpans`, and
+    the plain-text and formatted (`GenHTML`/`GenRTF`) clipboard data.
   - [x] **Tests:** mark and mouse start, the one-cell rectangle, the Alt flip,
     extending with clamping, adjust stopping the drag, cursor save and restore,
     both clear paths, the no-op clear, replacing a selection through
     `SelectNewRegion`, select-all in line and block form, its saved-cursor end,
-    the restored viewport origin, line and block copy text, and the spans of
-    both forms
+    the restored viewport origin, line and block copy text, the spans of both
+    forms, and the formatted copy's output
   - Not ported: painting and the accessibility notifications (renderer and
-    window), the formatted clipboard data (`GenHTML`/`GenRTF`) and colour
-    selection
+    window), and colour selection
 - [x] `winterm/crates/host/src/selection_input.rs` — Selection input
   - [x] Ported from `selectionInput.cpp`: `HandleKeySelectionEvent` (Escape,
     Enter and Ctrl+C/Ctrl+Insert copy, mark-mode navigation, mouse-selection
