@@ -9,6 +9,7 @@
 //!
 //! ## Modules
 //!
+//! - [`atlas`] — the atlas engine's portable data model from `common.h`
 //! - [`cluster`] — `Cluster`, a shaped glyph cluster and its column count
 //! - [`composition`] — `Composition` and `CompositionRange` for IME previews
 //! - [`css_length`] — `CSSLengthPercentage` parsing and resolution
@@ -23,6 +24,7 @@
 //! - [`render_settings`] — `RenderSettings`, the colour table and modes
 //! - [`renderer`] — the renderer helpers (`get_gridlines`, soft-font test)
 
+pub mod atlas;
 pub mod cluster;
 pub mod composition;
 pub mod css_length;
@@ -37,6 +39,9 @@ pub mod render_frame_info;
 pub mod render_settings;
 pub mod renderer;
 
+pub use atlas::common::{
+    Bitmap, CursorSettings, FontDecorationPosition, FontRelevantAttributes, GridLineRange, MiscellaneousSettings,
+};
 pub use cluster::Cluster;
 pub use composition::{Composition, CompositionRange};
 pub use css_length::{CSSLengthPercentage, ReferenceFrame};
