@@ -112,6 +112,9 @@ struct Shell {
     focus_attempted: bool,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
+    /// The cell and block flag a left press started on, so a drag begins a
+    /// selection: a click alone selects nothing (ADR 053).
+    press: Option<((i32, i32), bool)>,
     /// The cell the pointer is over, so a wheel can be aimed at a program.
     pointer_cell: Option<(i32, i32)>,
     /// The message hook the wheel arrives through; kept alive for the session.
@@ -314,6 +317,7 @@ impl Component for Shell {
             focused: false,
             focus_attempted: false,
             last_mouse_cell: None,
+            press: None,
             pointer_cell: None,
             _wheel: None,
             face,
@@ -1007,9 +1011,12 @@ impl Shell {
         let pressed = !info.status.is_released;
 
         // A bound chord is the window's: the shell consumes it before the tab
-        // sees the event (ADR 023).
-        if pressed && let Some(action) = chord_action(&self.bindings, key, info.modifiers) {
-            self.perform(action, context);
+        // sees the event (ADR 023). Copy is the exception: with no selection
+        // it declines the key so ctrl+c still interrupts a program (ADR 053).
+        if pressed
+            && let Some(action) = chord_action(&self.bindings, key, info.modifiers)
+            && self.perform(action, context)
+        {
             return;
         }
 
@@ -1065,8 +1072,12 @@ impl Shell {
         }
     }
 
-    /// Runs the window action a chord asked for.
-    fn perform(&mut self, action: settings::Action, context: &ComponentContext<Self>) {
+    /// Runs the window action a chord asked for, reporting whether it consumed
+    /// the key.
+    ///
+    /// Every action consumes its chord except copy, which declines when there
+    /// is nothing selected so the key reaches the program (ADR 053).
+    fn perform(&mut self, action: settings::Action, context: &ComponentContext<Self>) -> bool {
         match action {
             settings::Action::NewTab => self.open_tab(),
             settings::Action::CloseTab => {
@@ -1082,9 +1093,7 @@ impl Shell {
                 self.tabs.step(-1);
                 let _ = self.focus.request_focus();
             }
-            settings::Action::Copy => {
-                let _ = self.copy_selection();
-            }
+            settings::Action::Copy => return self.copy_selection(),
             settings::Action::Paste => self.paste_clipboard(),
             settings::Action::ScrollUp => self.scroll_active(1),
             settings::Action::ScrollDown => self.scroll_active(-1),
@@ -1098,6 +1107,7 @@ impl Shell {
             // fall through.
             _ => {}
         }
+        true
     }
 
     /// Puts the selection on the clipboard.
@@ -1241,11 +1251,18 @@ impl Shell {
         if count >= 3 {
             let width = tab.control.screen_width();
             tab.view.select_line(position.1, width);
+            self.press = None;
         } else if count == 2 {
             let text = tab.control.row_text(position.1);
             tab.view.select_word(&text, position);
+            self.press = None;
         } else {
-            tab.view.select(position, modifiers(info.modifiers).alt);
+            // A single click selects nothing: it clears what was selected and
+            // leaves the anchor a drag starts from, as upstream's
+            // `LeftClickOnTerminal` does. A one-cell selection would otherwise
+            // make ctrl+c copy a blank instead of interrupting (ADR 053).
+            tab.view.clear_selection();
+            self.press = Some((position, modifiers(info.modifiers).alt));
         }
     }
 
@@ -1304,23 +1321,36 @@ impl Shell {
             return;
         }
 
-        if !info.is_left_button_pressed || tab.view.selection().is_none() {
+        if !info.is_left_button_pressed {
             return;
         }
 
-        if outside != 0 {
+        let position = if outside != 0 {
             // A drag that leaves the pane claims the edge row and scrolls one
             // row towards the pointer, so the selection reaches into history.
             let max = tab.control.max_scroll();
             tab.view.drag_scroll(outside, max, Instant::now());
             let row = if outside < 0 { 0 } else { rows.max(1) - 1 };
             let column = column.clamp(0, columns.max(1) - 1);
-            let document = input::screen_to_document(max, tab.view.scroll(), row);
-            tab.view.extend((column, document));
-        } else if let Some((column, row)) = cell {
-            let history = tab.control.max_scroll();
-            let document = input::screen_to_document(history, tab.view.scroll(), row);
-            tab.view.extend((column, document));
+            Some((column, input::screen_to_document(max, tab.view.scroll(), row)))
+        } else {
+            cell.map(|(column, row)| {
+                let history = tab.control.max_scroll();
+                (column, input::screen_to_document(history, tab.view.scroll(), row))
+            })
+        };
+
+        let Some(position) = position else {
+            return;
+        };
+        match self.press.take() {
+            // The first move away from the press cell starts the selection.
+            Some((anchor, block)) if position != anchor => {
+                tab.view.select(anchor, block);
+                tab.view.extend(position);
+            }
+            Some(press) => self.press = Some(press),
+            None => tab.view.extend(position),
         }
     }
 
@@ -1329,6 +1359,7 @@ impl Shell {
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         if !input::forwards_to_application(self.active_tracking(), shift) {
             self.last_mouse_cell = None;
+            self.press = None;
             return;
         }
 
@@ -1953,7 +1984,7 @@ mod tests {
                 version = 1
 
                 [[keybindings]]
-                keys = "ctrl+shift+c"
+                keys = "ctrl+shift+q"
                 action = "copy"
             "##,
         )
@@ -1963,13 +1994,27 @@ mod tests {
         ctrl_shift |= InputModifiers::SHIFT;
 
         assert_eq!(
-            chord_action(&file.keybindings, Key::Char('c'), ctrl_shift),
+            chord_action(&file.keybindings, Key::Char('q'), ctrl_shift),
             Some(settings::Action::Copy)
         );
         // The same key without Shift is not this chord.
         assert_eq!(
-            chord_action(&file.keybindings, Key::Char('c'), InputModifiers::CONTROL),
+            chord_action(&file.keybindings, Key::Char('q'), InputModifiers::CONTROL),
             None
+        );
+    }
+
+    #[test]
+    fn the_defaults_bind_ctrl_c_to_copy() {
+        let bindings = settings::Settings::default().keybindings;
+
+        assert_eq!(
+            chord_action(&bindings, Key::Char('c'), InputModifiers::CONTROL),
+            Some(settings::Action::Copy)
+        );
+        assert_eq!(
+            chord_action(&bindings, Key::Char('v'), InputModifiers::CONTROL),
+            Some(settings::Action::Paste)
         );
     }
 

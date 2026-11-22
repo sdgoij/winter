@@ -243,7 +243,8 @@ settings file's profile and paints its font size and scheme, a poll that
 reloads a saved settings file within a second (ADR 025), a settings dialog
 (ADR 049), a find bar (ADR 050), a profile menu beside the new-tab button
 (ADR 052), the file's chords
-matched before the terminal sees them, a pointer selection that copies through
+matched before the terminal sees them (copy declines when nothing is selected,
+so Ctrl+C still interrupts; ADR 053), a pointer selection that copies through
 the clipboard, and scrollback reached by chord and by a low-level wheel hook
 that a mouse-tracking program receives unless Shift is held (ADRs 047, 048);
 egui remains the shell on Linux and macOS. The shell has wheel

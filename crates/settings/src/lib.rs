@@ -606,7 +606,7 @@ mod tests {
             action = "newTab"
 
             [[keybindings]]
-            keys = "ctrl+shift+c"
+            keys = "ctrl+c"
             action = "unbound"
         "#;
         let settings = parse(toml).expect("parse");
@@ -622,7 +622,7 @@ mod tests {
 
         assert_eq!(action("ctrl+shift+t"), Some(Action::Paste));
         assert_eq!(action("ctrl+alt+t"), Some(Action::NewTab));
-        assert_eq!(action("ctrl+shift+c"), None);
+        assert_eq!(action("ctrl+c"), None);
         // A default the file does not name is untouched.
         assert_eq!(action("ctrl+shift+d"), Some(Action::SplitHorizontal));
         // One default replaced, one chord added, one removed.

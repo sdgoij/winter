@@ -437,6 +437,11 @@ impl Tab {
         self.focused_pane_mut().and_then(Pane::selection_text)
     }
 
+    /// Whether the focused pane has a selection to copy.
+    fn has_selection(&self) -> bool {
+        self.focused_pane().is_some_and(Pane::has_selection)
+    }
+
     /// Scrolls the focused pane by `rows`; positive is towards the history.
     fn scroll(&mut self, rows: i32) {
         if let Some(pane) = self.focused_pane_mut() {
@@ -1005,7 +1010,13 @@ impl eframe::App for App {
         let mut forwarded = Vec::with_capacity(events.len());
         for event in events {
             if let Some(action) = command_for(&self.settings.keybindings, &event) {
-                self.apply(action, &ctx);
+                // Copy declines when nothing is selected, so ctrl+c still
+                // reaches the shell as the interrupt (ADR 053).
+                if action == TabAction::Copy && !self.tabs.active().is_some_and(Tab::has_selection) {
+                    forwarded.push(event);
+                } else {
+                    self.apply(action, &ctx);
+                }
             } else {
                 forwarded.push(event);
             }
@@ -1585,7 +1596,7 @@ mod tests {
             .iter()
             .find(|entry| entry.action == TabAction::Copy)
             .expect("a copy entry");
-        assert_eq!(copy.chord.as_deref(), Some("ctrl+shift+c"));
+        assert_eq!(copy.chord.as_deref(), Some("ctrl+c"));
 
         let find = entries
             .iter()
@@ -1664,11 +1675,11 @@ mod tests {
             Some(TabAction::Previous)
         );
         assert_eq!(
-            command_for(bindings, &key(egui::Key::C, true, true)),
+            command_for(bindings, &key(egui::Key::C, true, false)),
             Some(TabAction::Copy)
         );
         assert_eq!(
-            command_for(bindings, &key(egui::Key::V, true, true)),
+            command_for(bindings, &key(egui::Key::V, true, false)),
             Some(TabAction::Paste)
         );
         assert_eq!(

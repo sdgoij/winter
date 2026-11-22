@@ -64,11 +64,16 @@ scroll.
 
 - Chords before the terminal. `on_preview_key_down` matches the settings file; a
   bound chord runs its action and returns handled so the toolkit does not also
-  type the letter. AltGr arrives as Control+Alt; do not suppress it.
+  type the letter. AltGr arrives as Control+Alt; do not suppress it. Copy is the
+  exception: with nothing selected `perform` returns false, so the key falls
+  through and `ctrl+c` still interrupts the program (ADR 053).
 - One mouse rule. `input::forwards_to_application(tracking, shift)` decides who
   owns a press, move, release and wheel. Shift means the user, not the program.
 - The pane captures the pointer on press (`.capture_pointer_on_press(true)`), or
-  the swap chain swallows moves and a drag never starts.
+  the swap chain swallows moves and a drag never starts. A press itself selects
+  nothing: it clears the selection and stores the anchor, and the first move
+  away from that cell starts the drag (ADR 053). Double- and triple-click select
+  the word and the line.
 - `client_size` is the constant `initial_client` (120x30 cells at 16 pt).
   Declaring it from a value that changes snaps the window back on every
   re-render.

@@ -346,6 +346,11 @@ impl Pane {
         self.control.selection_text(selection)
     }
 
+    /// Whether the pane has a selection, without extracting its text.
+    pub(crate) fn has_selection(&self) -> bool {
+        self.view.selection().is_some()
+    }
+
     /// Pastes text as the terminal would, through the bracketed-paste filter.
     pub(crate) fn paste_text(&mut self, text: &str) {
         self.control.paste(text);

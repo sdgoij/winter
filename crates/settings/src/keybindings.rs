@@ -201,11 +201,11 @@ pub const DEFAULT_KEYBINDINGS: &[Keybinding] = &[
         action: Action::PrevTab,
     },
     Keybinding {
-        keys: chord(Key::Char('c'), true, true, false),
+        keys: chord(Key::Char('c'), true, false, false),
         action: Action::Copy,
     },
     Keybinding {
-        keys: chord(Key::Char('v'), true, true, false),
+        keys: chord(Key::Char('v'), true, false, false),
         action: Action::Paste,
     },
     Keybinding {
@@ -522,7 +522,7 @@ mod tests {
 
         // Unbinding a chord that is bound is not a warning.
         let (unbound, quiet) = resolve_with_warnings(&[Keybinding {
-            keys: Chord::parse("ctrl+shift+c").expect("chord"),
+            keys: Chord::parse("ctrl+c").expect("chord"),
             action: Action::Unbound,
         }]);
         assert!(quiet.is_empty(), "{quiet:?}");
@@ -558,18 +558,31 @@ mod tests {
 
     #[test]
     fn unbound_removes_a_chord_and_is_not_kept() {
+        let copy = Chord::parse("ctrl+c").expect("chord");
         let resolved = resolve(&[Keybinding {
-            keys: Chord::parse("ctrl+shift+c").expect("chord"),
+            keys: copy,
             action: Action::Unbound,
         }]);
 
         assert_eq!(resolved.len(), DEFAULT_KEYBINDINGS.len() - 1);
-        assert!(
-            !resolved
-                .iter()
-                .any(|binding| binding.keys == Chord::parse("ctrl+shift+c").expect("chord"))
-        );
+        assert!(!resolved.iter().any(|binding| binding.keys == copy));
         assert!(!resolved.iter().any(|binding| binding.action == Action::Unbound));
+    }
+
+    #[test]
+    fn the_defaults_copy_with_ctrl_c_and_paste_with_ctrl_v() {
+        let action = |text: &str| {
+            let chord = Chord::parse(text).expect("chord");
+            DEFAULT_KEYBINDINGS
+                .iter()
+                .find(|binding| binding.keys == chord)
+                .map(|binding| binding.action)
+        };
+
+        // Windows Terminal's defaults; ctrl+c declines to copy when there is
+        // no selection, so the program still receives the interrupt (ADR 053).
+        assert_eq!(action("ctrl+c"), Some(Action::Copy));
+        assert_eq!(action("ctrl+v"), Some(Action::Paste));
     }
 
     #[test]
