@@ -45,6 +45,7 @@ pub use atlas::common::{
     ShapedRow, TargetSettings,
 };
 pub use atlas::engine::AtlasEngine;
+pub use atlas::font::FontDueRasterizer;
 pub use atlas::shaping::{CellShaping, ShapingBackend};
 pub use atlas::software::{GlyphBitmap, GlyphRasterizer, SoftwareBackend};
 pub use cluster::Cluster;

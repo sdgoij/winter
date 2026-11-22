@@ -18,6 +18,12 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
+# fontdue 0.9 pulls ttf-parser, which its author has marked unmaintained. It is
+# not a vulnerability, and this rasteriser only parses fonts the user chose.
+# Revisit when fontdue moves to skrifa or this rasteriser is replaced.
+ignore = [
+    "RUSTSEC-2026-0192",
+]
 
 [licenses]
 version = 2

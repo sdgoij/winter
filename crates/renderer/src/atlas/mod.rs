@@ -7,5 +7,6 @@
 
 pub mod common;
 pub mod engine;
+pub mod font;
 pub mod shaping;
 pub mod software;

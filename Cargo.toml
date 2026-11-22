@@ -35,6 +35,7 @@ term = { path = "crates/term" }
 renderer = { path = "crates/renderer" }
 
 bitflags = "2"
+fontdue = "0.9"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"

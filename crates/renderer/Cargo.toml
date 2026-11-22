@@ -11,6 +11,7 @@ description = "Renderer foundation — font descriptions, cell metrics and glyph
 utils.workspace = true
 types.workspace = true
 buffer.workspace = true
+fontdue.workspace = true
 
 [lints]
 workspace = true

@@ -17,7 +17,7 @@ pub struct GlyphBitmap {
     pub height: u32,
     /// Left bearing relative to the pen position.
     pub left: i32,
-    /// Top bearing relative to the pen position.
+    /// Top offset relative to the baseline; negative means above it.
     pub top: i32,
     /// Row-major coverage in `0..=255`.
     pub coverage: Vec<u8>,
@@ -184,6 +184,12 @@ impl SoftwareBackend {
             return;
         };
 
+        let baseline = if payload.settings.font.baseline == 0 {
+            (cell_height * 3 / 4) as i32
+        } else {
+            i32::from(payload.settings.font.baseline)
+        };
+
         for (row_index, row) in payload.rows.iter().enumerate() {
             for (glyph, &column) in row.glyph_indices.iter().zip(&row.glyph_columns) {
                 let (_, foreground) = Self::cell_colors(payload, column, row_index as u16);
@@ -192,7 +198,7 @@ impl SoftwareBackend {
                 };
 
                 let origin_x = i32::from(column) * cell_width as i32 + bitmap.left;
-                let origin_y = row_index as i32 * cell_height as i32 + bitmap.top;
+                let origin_y = row_index as i32 * cell_height as i32 + baseline + bitmap.top;
 
                 for y in 0..bitmap.height {
                     for x in 0..bitmap.width {
@@ -443,8 +449,10 @@ mod tests {
 
         backend.render(&mut payload);
 
-        assert_eq!(backend.pixel(0, 0), Some(0xFFFF_FFFF));
-        assert_eq!(backend.pixel(8, 0), Some(0xFF00_0000));
+        // The 16px cell puts the baseline at y = 12.
+        assert_eq!(backend.pixel(0, 12), Some(0xFFFF_FFFF));
+        assert_eq!(backend.pixel(0, 0), Some(0xFF00_0000));
+        assert_eq!(backend.pixel(8, 12), Some(0xFF00_0000));
     }
 
     #[test]
