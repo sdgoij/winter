@@ -6,4 +6,5 @@
 //! once a backend exists.
 
 pub mod common;
+pub mod engine;
 pub mod shaping;

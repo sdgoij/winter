@@ -44,6 +44,7 @@ pub use atlas::common::{
     FontSettings, GlyphOffset, GridLineRange, IBackend, MiscellaneousSettings, RenderingPayload, Settings, ShapedGlyph,
     ShapedRow, TargetSettings,
 };
+pub use atlas::engine::AtlasEngine;
 pub use atlas::shaping::{CellShaping, ShapingBackend};
 pub use cluster::Cluster;
 pub use composition::{Composition, CompositionRange};
