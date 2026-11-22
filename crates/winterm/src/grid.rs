@@ -75,12 +75,15 @@ pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
         .collect();
 
     let cursor = buffer.cursor();
+    // `Cursor::position` is `(row, column)`; the snapshot is `(column, row)`,
+    // the order a painter indexes a cell by.
+    let (row, column) = cursor.position();
     Screen {
         width,
         height,
         top: first,
         rows,
-        cursor: cursor.position(),
+        cursor: (column, row),
         cursor_visible: cursor.is_visible() && scroll == 0,
         cursor_shape: cursor.shape(),
         cursor_blinking: cursor.is_blinking(),
@@ -131,8 +134,17 @@ mod tests {
         // Empty rows still produce a row of runs, so painting indexes by row.
         assert_eq!(screen.rows[2].runs.iter().map(|run| run.cells).sum::<i32>(), 6);
 
-        assert_eq!(screen.cursor, (0, 2));
+        assert_eq!(screen.cursor, (2, 0));
         assert!(screen.cursor_visible);
+    }
+
+    #[test]
+    fn the_cursor_pair_is_column_then_row() {
+        let mut buffer = TextBuffer::with_dimensions(10, 5, 0);
+        buffer.cursor_mut().set_position(3, 7);
+
+        // The buffer stores `(row, column)`; a painter needs `(column, row)`.
+        assert_eq!(snapshot(&buffer).cursor, (7, 3));
     }
 
     #[test]
