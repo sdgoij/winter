@@ -87,3 +87,4 @@ Rules:
 | [056](056-win32-input-records.md) | The WinUI shell sends Win32 input records so a key-down and its key-up are separate events; Space is handled and carries its own character | Accepted |
 | [057](057-batched-kitty-images.md) | A completed kitty image is deferred and painted at the end of the batch; a retransmission of the same id replaces it | Accepted |
 | [058](058-drawn-icon.md) | The icon drawing is the single source: the egui window wraps it, the Windows build embeds it, and the WinUI window is given it from the resource | Accepted |
+| [059](059-auto-mark-prompts-on-enter.md) | Enter marks the submitted command line as a prompt when the shell sends no shell-integration mark; ticks paint over the thumb | Accepted |

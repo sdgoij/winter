@@ -81,6 +81,23 @@ impl Marks {
         self.start_mark(MarkKind::Prompt, current_row, current_row + 1);
     }
 
+    /// Marks `row` as a prompt unless a prompt mark already covers it.
+    ///
+    /// This is upstream's `ManuallyMarkRowAsPrompt`, which the terminal calls
+    /// when Enter submits a command and the shell sent no shell-integration
+    /// mark of its own. Unlike [`start_prompt`](Self::start_prompt), adjacent
+    /// rows stay separate marks, because one command line is one tick.
+    pub fn mark_prompt_row(&mut self, row: i32) {
+        if self
+            .marks
+            .iter()
+            .any(|mark| mark.kind() == MarkKind::Prompt && mark.start_row() <= row && row < mark.end_row())
+        {
+            return;
+        }
+        self.insert_sorted(BufferMark::new(MarkKind::Prompt, row, row + 1));
+    }
+
     /// Starts a command mark at the current row.
     pub fn start_command(&mut self, current_row: i32) {
         self.start_mark(MarkKind::Command, current_row, current_row + 1);
@@ -248,6 +265,24 @@ mod tests {
         assert!(marks.is_empty());
         assert_eq!(marks.count(), 0);
         assert_eq!(marks.get_error_category(), MarkKind::None);
+    }
+
+    #[test]
+    fn auto_marked_prompts_stay_one_tick_each() {
+        let mut marks = Marks::new();
+        marks.mark_prompt_row(0);
+        marks.mark_prompt_row(1);
+
+        let rows: Vec<i32> = marks
+            .iter()
+            .filter(|mark| mark.kind() == MarkKind::Prompt)
+            .map(|mark| mark.start_row())
+            .collect();
+        assert_eq!(rows, vec![0, 1], "adjacent command lines are separate ticks");
+
+        // A row a shell-integration prompt already covers is left alone.
+        marks.mark_prompt_row(1);
+        assert_eq!(marks.iter().filter(|mark| mark.kind() == MarkKind::Prompt).count(), 2);
     }
 
     #[test]

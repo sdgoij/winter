@@ -206,6 +206,16 @@ mod tests {
     }
 
     #[test]
+    fn an_auto_marked_prompt_sends_no_error_without_a_command() {
+        // Enter's automatic mark (ADR 059) has no command or exit code behind
+        // it, so it must still reach the scrollbar, unflagging no error.
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 0);
+        buffer.marks_mut().mark_prompt_row(0);
+
+        assert_eq!(snapshot(&buffer).marks, vec![MarkTick { row: 0, error: false }]);
+    }
+
+    #[test]
     fn a_successful_command_marks_no_error() {
         let mut buffer = TextBuffer::with_dimensions(5, 2, 0);
         buffer.marks_mut().start_prompt(0);

@@ -9,7 +9,7 @@ use adapter::{AdaptDispatch, ITermDispatch, PageManager};
 use types::VTInt;
 use vt::{ParserMode, StateMachine, VtState};
 
-use crate::input::{KeyEvent, MouseEvent, TerminalInput};
+use crate::input::{Key, KeyEvent, MouseEvent, TerminalInput};
 use crate::output_engine::OutputStateMachineEngine;
 
 /// A terminal: the VT parser driving an `ITermDispatch`.
@@ -45,6 +45,14 @@ impl Terminal {
     /// handle it itself.
     pub fn handle_key(&mut self, event: &KeyEvent) -> Option<String> {
         let modes = self.dispatch().input_modes();
+
+        // Upstream's `autoMarkPrompts`: Enter submits a command line, so the
+        // line becomes a prompt tick even when the shell sends no
+        // shell-integration mark of its own (ADR 059). A full-screen program
+        // owns the alternate buffer and marks nothing.
+        if event.pressed && matches!(event.key, Key::Enter | Key::NumpadEnter) && !modes.in_alternate_buffer {
+            self.dispatch_mut().mark_prompt();
+        }
 
         // Upstream's `_altGrAliasing` (GH#5525, GH#6211): with the setting
         // off, Ctrl+Alt is a chord and not an AltGr layer, so the translated
@@ -474,6 +482,86 @@ mod tests {
         if let Some(image) = buffer.get_row_at_screen_line(0).and_then(|row| row.image_slice()) {
             assert!(image.pixels().iter().all(|&pixel| pixel == 0));
         }
+    }
+
+    #[test]
+    fn an_enter_marks_the_command_line_as_a_prompt() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("PS> ");
+        terminal.handle_key(&KeyEvent::down(Key::Enter));
+        terminal.process_str("\r\nPS> ");
+        terminal.handle_key(&KeyEvent::down(Key::Enter));
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let rows: Vec<i32> = buffer
+            .marks()
+            .iter()
+            .filter(|mark| mark.kind() == types::MarkKind::Prompt)
+            .map(|mark| mark.start_row())
+            .collect();
+        assert_eq!(rows, vec![0, 1], "one tick per submitted command line");
+    }
+
+    #[test]
+    fn an_enter_marks_the_document_row_not_the_screen_row() {
+        let mut terminal = Terminal::new();
+
+        // Enough output to push the first rows into the scrollback, which is
+        // what separates a document row from a screen row.
+        for row in 0..40 {
+            terminal.process_str(&format!("line {row}\r\n"));
+        }
+        terminal.process_str("PS> ");
+
+        terminal.handle_key(&KeyEvent::down(Key::Enter));
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let scrollback = buffer.scrollback_len() as i32;
+        assert!(scrollback > 0, "the pane must have scrolled for the offset to matter");
+
+        let marked = buffer
+            .marks()
+            .iter()
+            .filter(|mark| mark.kind() == types::MarkKind::Prompt)
+            .map(|mark| mark.start_row())
+            .max();
+        assert_eq!(
+            marked,
+            Some(scrollback + buffer.cursor().position().0),
+            "the tick belongs to the document row the command was typed on"
+        );
+    }
+
+    #[test]
+    fn a_shell_integration_prompt_is_not_marked_twice() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b]133;A\x1b\\PS> ");
+        terminal.handle_key(&KeyEvent::down(Key::Enter));
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let prompts = buffer
+            .marks()
+            .iter()
+            .filter(|mark| mark.kind() == types::MarkKind::Prompt)
+            .count();
+        assert_eq!(prompts, 1, "the shell's own mark is kept, not duplicated");
+    }
+
+    #[test]
+    fn an_enter_in_the_alternate_buffer_marks_nothing() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b[?1049h");
+        terminal.handle_key(&KeyEvent::down(Key::Enter));
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert!(
+            buffer.marks().iter().all(|mark| mark.kind() != types::MarkKind::Prompt),
+            "a full-screen program's Enter is not a prompt"
+        );
     }
 
     #[test]

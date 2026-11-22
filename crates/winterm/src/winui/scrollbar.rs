@@ -1,9 +1,11 @@
 //! The pane's scrollbar, drawn over the swap chain.
 //!
 //! The fractions and prompt marks come from `scrollbar` and the snapshot, so
-//! this module only turns them into rectangles: a dark track, a tick per
-//! prompt, and the thumb. The overlay takes no pointer events of its own; the
-//! pane's handlers own the strip (ADR 018).
+//! this module only turns them into rectangles: a dark track, the thumb and a
+//! tick per prompt. The ticks are added last so they paint over the thumb, the
+//! way upstream's `ScrollBarCanvas` image sits above its `ScrollBar` (ADR 059).
+//! The overlay takes no pointer events of its own; the pane's handlers own the
+//! strip (ADR 018).
 
 use windows_reactor::{Canvas, Color, HorizontalAlignment, Rectangle, VerticalAlignment, View};
 
@@ -54,18 +56,6 @@ pub(super) fn overlay(scroll: i32, data: &TerminalData, visible: i32, track: f64
             .into(),
     );
 
-    for mark in data.marks() {
-        children.push(
-            Rectangle::new()
-                .fill(if mark.error { ERROR } else { MARK })
-                .width(WIDTH)
-                .height(MARK_HEIGHT)
-                .canvas_left(0.0)
-                .canvas_top(mark_top(scrollbar::position(mark.row, document), track))
-                .into(),
-        );
-    }
-
     let (top, height) = scrollbar::thumb_pixels(scroll, document, visible, track);
     children.push(
         Rectangle::new()
@@ -78,6 +68,18 @@ pub(super) fn overlay(scroll: i32, data: &TerminalData, visible: i32, track: f64
             .canvas_top(top)
             .into(),
     );
+
+    for mark in data.marks() {
+        children.push(
+            Rectangle::new()
+                .fill(if mark.error { ERROR } else { MARK })
+                .width(WIDTH)
+                .height(MARK_HEIGHT)
+                .canvas_left(0.0)
+                .canvas_top(mark_top(scrollbar::position(mark.row, document), track))
+                .into(),
+        );
+    }
 
     Some(
         Canvas::new()

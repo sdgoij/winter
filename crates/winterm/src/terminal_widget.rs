@@ -513,6 +513,20 @@ impl Pane {
 
         painter.rect_filled(track, 0, scrollbar_track_color());
 
+        let (top, height) = scrollbar::thumb_pixels(
+            self.view.scroll(),
+            screen.document_height,
+            screen.height,
+            f64::from(track.height()),
+        );
+        let thumb = egui::Rect::from_min_size(
+            egui::pos2(track.min.x + 1.0, track.min.y + top as f32),
+            egui::vec2(track.width() - 2.0, height as f32),
+        );
+        painter.rect_filled(thumb, 2, scrollbar_thumb_color());
+
+        // Ticks paint last so they stay visible over the thumb, the way
+        // upstream's mark image sits above its scrollbar (ADR 059).
         for mark in &screen.marks {
             let y = track.min.y + scrollbar::position(mark.row, screen.document_height) * track.height();
             let color = if mark.error {
@@ -525,18 +539,6 @@ impl Pane {
                 egui::Stroke::new(1.5, color),
             );
         }
-
-        let (top, height) = scrollbar::thumb_pixels(
-            self.view.scroll(),
-            screen.document_height,
-            screen.height,
-            f64::from(track.height()),
-        );
-        let thumb = egui::Rect::from_min_size(
-            egui::pos2(track.min.x + 1.0, track.min.y + top as f32),
-            egui::vec2(track.width() - 2.0, height as f32),
-        );
-        painter.rect_filled(thumb, 2, scrollbar_thumb_color());
     }
 
     /// Adds the pane's grid size to the pane's own rect.

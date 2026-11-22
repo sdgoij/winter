@@ -369,6 +369,15 @@ impl CursorInformationParser {
 }
 
 impl AdaptDispatch {
+    /// The cursor's row in document coordinates (history first).
+    ///
+    /// Marks are stored against document rows while the cursor reports a
+    /// screen row, so every mark needs this offset; keeping it in one place
+    /// stops a caller from marking the wrong row.
+    fn cursor_document_row(buffer: &buffer::TextBuffer) -> i32 {
+        buffer.scrollback_len() as i32 + buffer.cursor().position().0
+    }
+
     /// Creates a new AdaptDispatch.
     pub fn new() -> Self {
         // DECAWM is set at power-on: a terminal that does not wrap by default
@@ -886,9 +895,7 @@ impl AdaptDispatch {
     fn start_shell_integration_mark(&mut self, kind: MarkKind) {
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
-        // Marks live in document coordinates (history first); the cursor
-        // reports a screen row.
-        let row = buffer.scrollback_len() as i32 + buffer.cursor().position().0;
+        let row = Self::cursor_document_row(&buffer);
         match kind {
             MarkKind::Prompt => buffer.marks_mut().start_prompt(row),
             MarkKind::Command => buffer.marks_mut().start_command(row),
@@ -903,7 +910,7 @@ impl AdaptDispatch {
     fn end_shell_integration_command(&mut self, error: Option<u32>) {
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
-        let row = buffer.scrollback_len() as i32 + buffer.cursor().position().0;
+        let row = Self::cursor_document_row(&buffer);
         buffer.marks_mut().end_current_command(row, error);
         drop(buffer);
         self.pending_shell_integration_marks += 1;
@@ -1104,6 +1111,18 @@ impl AdaptDispatch {
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|error| error.into_inner());
         self.kitty.flush(&mut buffer);
+    }
+
+    /// Marks the cursor's row as a prompt.
+    ///
+    /// Upstream's `autoMarkPrompts`: Enter submits a command line, and a shell
+    /// that does not send its own shell-integration mark still gets a tick
+    /// there (ADR 059). A row a shell already marked is left alone.
+    pub fn mark_prompt(&mut self) {
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|error| error.into_inner());
+        let row = Self::cursor_document_row(&buffer);
+        buffer.marks_mut().mark_prompt_row(row);
     }
 
     /// Returns the sixel parser.

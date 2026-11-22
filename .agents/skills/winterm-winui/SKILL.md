@@ -150,6 +150,16 @@ marks.
   the release when the pane never saw one.
 - `scrollbar::thumb_pixels` is shared with egui, so the two bars cannot drift.
   `bar::mark_top` centres a tick on its row and keeps it inside the track.
+- Ticks come after the thumb in the overlay's children, because a later child
+  paints on top (ADR 059). Upstream's mark image is declared after its
+  `ScrollBar` for the same reason; painting ticks first hides the newest ones,
+  which sit under the thumb while the view is at the bottom.
+- Ticks come from shell-integration marks, and Windows' default PowerShell
+  emits none. A pressed Enter in the main buffer therefore marks the line it
+  submitted (`Marks::mark_prompt_row`, ADR 059), so a plain profile shows ticks
+  with no shell integration installed. Marks are stored in **document** rows
+  (`scrollback_len + cursor row`); a screen row puts the tick near the top of
+  the document. The automatic mark has no exit code, so it is never red.
 
 ## Find bar
 
