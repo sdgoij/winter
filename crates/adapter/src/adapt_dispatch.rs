@@ -8,6 +8,8 @@
 //! cleanup"; everything else falls through to the trait default, which
 //! `AdaptDispatch::unhandled` records.
 
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use crate::dispatch_types::*;
 use crate::sixel_parser::{DecodedImage, SIXEL_DEFAULT_CONFORMANCE};
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
@@ -127,7 +129,7 @@ pub struct AdaptDispatch {
     /// Page manager for buffer switching.
     page_manager: PageManager,
     /// Terminal output state.
-    term_output: TerminalOutput,
+    term_output: Arc<Mutex<TerminalOutput>>,
     /// Sixel parser.
     sixel_parser: std::sync::Arc<std::sync::Mutex<SixelParser>>,
     /// Font buffer.
@@ -180,6 +182,32 @@ pub struct AdaptDispatch {
     pending_window_resize: Option<(VTInt, VTInt)>,
     /// Whether CSI 7 t asked for a full redraw.
     redraw_requested: bool,
+    /// MIDI notes requested by DECPS, waiting for the host to play them.
+    pending_sounds: Vec<MidiNote>,
+    /// Bells requested by BEL.
+    pending_bells: usize,
+    /// Whether ANSWERBACK was requested.
+    answerback_requested: bool,
+    /// The ANSI/VT52 parser mode last requested by DECANM.
+    ansi_mode: bool,
+    /// A pending DECANM change for the parser to apply.
+    pending_ansi_mode: Option<bool>,
+    /// A pending C1-controls change for the parser to apply.
+    pending_c1_controls: Option<bool>,
+    /// Kitty keyboard protocol flags and their push stack (input state).
+    kitty_flags: u8,
+    kitty_stack: Vec<u8>,
+}
+
+/// A MIDI note requested by DECPS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidiNote {
+    /// MIDI note number; 72 is C5.
+    pub note: u8,
+    /// MIDI velocity; 0 is silent.
+    pub velocity: u8,
+    /// Duration in microseconds.
+    pub duration_micros: u32,
 }
 
 impl AdaptDispatch {
@@ -192,7 +220,7 @@ impl AdaptDispatch {
 
         Self {
             page_manager: PageManager::new(),
-            term_output: TerminalOutput::new(false),
+            term_output: Arc::new(Mutex::new(TerminalOutput::new(false))),
             sixel_parser: std::sync::Arc::new(std::sync::Mutex::new(SixelParser::new(SIXEL_DEFAULT_CONFORMANCE))),
             font_buffer: FontBuffer::new(),
             macro_buffer: std::sync::Arc::new(std::sync::Mutex::new(MacroBuffer::new())),
@@ -218,6 +246,14 @@ impl AdaptDispatch {
             pending_window_visibility: None,
             pending_window_resize: None,
             redraw_requested: false,
+            pending_sounds: Vec::new(),
+            pending_bells: 0,
+            answerback_requested: false,
+            ansi_mode: true,
+            pending_ansi_mode: None,
+            pending_c1_controls: None,
+            kitty_flags: 0,
+            kitty_stack: Vec::new(),
         }
     }
 
@@ -318,6 +354,41 @@ impl AdaptDispatch {
     /// Takes the full-redraw request made by CSI 7 t.
     pub fn take_redraw_request(&mut self) -> bool {
         std::mem::take(&mut self.redraw_requested)
+    }
+
+    /// Takes the notes requested by DECPS.
+    pub fn take_sound_requests(&mut self) -> Vec<MidiNote> {
+        std::mem::take(&mut self.pending_sounds)
+    }
+
+    /// Takes the number of bells requested since the last call.
+    pub fn take_bell_requests(&mut self) -> usize {
+        std::mem::take(&mut self.pending_bells)
+    }
+
+    /// Takes a pending ANSWERBACK request.
+    pub fn take_answerback_request(&mut self) -> bool {
+        std::mem::take(&mut self.answerback_requested)
+    }
+
+    /// Takes a pending DECANM change for the parser.
+    pub fn take_ansi_mode_change(&mut self) -> Option<bool> {
+        self.pending_ansi_mode.take()
+    }
+
+    /// Takes a pending C1-controls change for the parser.
+    pub fn take_c1_controls_change(&mut self) -> Option<bool> {
+        self.pending_c1_controls.take()
+    }
+
+    /// Returns the kitty keyboard flags in effect.
+    pub const fn kitty_keyboard_flags(&self) -> u8 {
+        self.kitty_flags
+    }
+
+    /// Returns the ANSI/VT52 parser mode last requested by DECANM.
+    pub const fn is_ansi_mode(&self) -> bool {
+        self.ansi_mode
     }
 
     /// The size of the visible page, which is what the window reports describe.
@@ -437,13 +508,17 @@ impl AdaptDispatch {
     }
 
     /// Returns the terminal output state.
-    pub fn term_output(&self) -> &TerminalOutput {
-        &self.term_output
+    /// Returns the terminal output state.
+    pub fn term_output(&self) -> MutexGuard<'_, TerminalOutput> {
+        self.term_output.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Returns the terminal output state mutably.
-    pub fn term_output_mut(&mut self) -> &mut TerminalOutput {
-        &mut self.term_output
+    ///
+    /// The shared lock is what lets the DECAUPSS handler own the assignment
+    /// after the DCS introducer has already been dispatched.
+    pub fn term_output_mut(&self) -> MutexGuard<'_, TerminalOutput> {
+        self.term_output.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Returns the page manager.
@@ -529,13 +604,16 @@ impl AdaptDispatch {
         self.scroll_bottom_margin = 0;
         self.scroll_left_margin = 0;
         self.scroll_right_margin = 0;
-        self.term_output.soft_reset();
+        self.term_output.lock().unwrap_or_else(|e| e.into_inner()).soft_reset();
         self.sixel_parser.lock().unwrap_or_else(|e| e.into_inner()).soft_reset();
     }
 
     /// Hard resets the adapter.
     pub fn hard_reset(&mut self, erase: bool) {
         self.soft_reset();
+        // RIS returns the parser to ANSI mode.
+        self.ansi_mode = true;
+        self.pending_ansi_mode = Some(true);
         self.using_alt_buffer = false;
         self.cursor_style = CursorStyle::UserDefault;
         self.modes = ModeSet::default();
@@ -673,9 +751,10 @@ impl AdaptDispatch {
                     self.page_manager.deactivate_alternate();
                 }
             }
-            // DECANM switches the parser between ANSI and VT52, which this parser
-            // does not model; GCM is deliberately inert upstream too.
-            DecAnm | GraphemeClusterMode => {}
+            // DECANM switches the parser between ANSI and VT52.
+            DecAnm => self.set_ansi_mode(enable),
+            // GCM is deliberately inert upstream too.
+            GraphemeClusterMode => {}
         }
     }
 
@@ -720,7 +799,8 @@ impl AdaptDispatch {
                 return u8::from(!buffer.cursor().is_visible()) + 1;
             }
             AlternateScreenBuffer => return u8::from(!self.using_alt_buffer) + 1,
-            DecAnm | GraphemeClusterMode => return 0,
+            DecAnm => return u8::from(!self.ansi_mode) + 1,
+            GraphemeClusterMode => return 0,
         };
 
         u8::from(!self.modes.contains(flag)) + 1
@@ -793,6 +873,97 @@ impl AdaptDispatch {
         let left = if set { self.scroll_left_margin } else { 0 };
         let right = if set { self.scroll_right_margin } else { rightmost };
         (left, right.min(rightmost))
+    }
+
+    fn blank_cell(&mut self) -> buffer::OutputCell {
+        let mut cell = buffer::OutputCell::from_char(' ');
+        cell.set_attributes(self.erase_attributes());
+        cell
+    }
+
+    /// Scrolls a page rectangle vertically by `delta` rows (positive down).
+    fn scroll_rect_vertical(&mut self, top: VTInt, bottom: VTInt, left: VTInt, right: VTInt, delta: VTInt) {
+        let blank = self.blank_cell();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        buffer.scroll_rect_vertically(top, bottom, left, right, delta, &blank);
+    }
+
+    /// Scrolls a page rectangle horizontally by `delta` columns (positive right).
+    fn scroll_rect_horizontal(&mut self, top: VTInt, bottom: VTInt, left: VTInt, right: VTInt, delta: VTInt) {
+        let blank = self.blank_cell();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        buffer.scroll_rect_horizontally(top, bottom, left, right, delta, &blank);
+    }
+
+    /// Ported from `_InsertDeleteCharacterHelper`.
+    fn insert_delete_character(&mut self, delta: VTInt) {
+        if delta == 0 {
+            return;
+        }
+        let (page_width, page_height) = self.page_size();
+        let (row, column) = self.active_cursor_position();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = if row >= top && row <= bottom {
+            self.effective_horizontal_margins(page_width)
+        } else {
+            (0, page_width - 1)
+        };
+
+        if column < left || column > right {
+            return;
+        }
+
+        self.scroll_rect_horizontal(row, row, column, right, delta);
+        // ICH and DCH reset the delayed-wrap flag, as upstream does.
+        let buffer = self.page_manager.active_page().buffer();
+        buffer
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .cursor_mut()
+            .reset_delayed_eol_wrap();
+    }
+
+    /// Ported from `_InsertDeleteLineHelper`.
+    fn insert_delete_line(&mut self, delta: VTInt) {
+        if delta == 0 {
+            return;
+        }
+        let (page_width, page_height) = self.page_size();
+        let (row, column) = self.active_cursor_position();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        if row < top || row > bottom || column < left || column > right {
+            return;
+        }
+
+        self.scroll_rect_vertical(row, bottom, left, right, delta);
+        // IL and DL move the cursor to the left margin.
+        let buffer = self.page_manager.active_page().buffer();
+        buffer
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .cursor_mut()
+            .set_position(row, left);
+    }
+
+    /// Ported from `_InsertDeleteColumnHelper`.
+    fn insert_delete_column(&mut self, delta: VTInt) {
+        if delta == 0 {
+            return;
+        }
+        let (page_width, page_height) = self.page_size();
+        let (row, column) = self.active_cursor_position();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        if row < top || row > bottom || column < left || column > right {
+            return;
+        }
+
+        self.scroll_rect_horizontal(top, bottom, column, right, delta);
     }
 
     /// Ported from `_CalculateRectArea`: converts VT's 1-based, optionally
@@ -1316,8 +1487,221 @@ impl ITermDispatch for AdaptDispatch {
     // An unknown sequence is ignored by design, not a missing handler.
     fn unknown_sequence(&mut self) {}
 
+    fn soft_reset(&mut self) {
+        AdaptDispatch::soft_reset(self);
+    }
+
+    fn hard_reset(&mut self, erase: bool) {
+        AdaptDispatch::hard_reset(self, erase);
+    }
+
+    fn set_cursor_style(&mut self, cursor_style: CursorStyle) {
+        AdaptDispatch::set_cursor_style(self, cursor_style);
+    }
+
+    fn warning_bell(&mut self) {
+        self.pending_bells += 1;
+    }
+
+    fn enquire_answerback(&mut self) {
+        self.answerback_requested = true;
+    }
+
+    fn insert_character(&mut self, count: VTInt) {
+        self.insert_delete_character(count);
+    }
+
+    fn delete_character(&mut self, count: VTInt) {
+        self.insert_delete_character(-count);
+    }
+
+    fn insert_line(&mut self, distance: VTInt) {
+        self.insert_delete_line(distance);
+    }
+
+    fn delete_line(&mut self, distance: VTInt) {
+        self.insert_delete_line(-distance);
+    }
+
+    fn insert_column(&mut self, distance: VTInt) {
+        self.insert_delete_column(distance);
+    }
+
+    fn delete_column(&mut self, distance: VTInt) {
+        self.insert_delete_column(-distance);
+    }
+
+    fn scroll_up(&mut self, distance: VTInt) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+        self.scroll_rect_vertical(top, bottom, left, right, -distance);
+    }
+
+    fn scroll_down(&mut self, distance: VTInt) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+        self.scroll_rect_vertical(top, bottom, left, right, distance);
+    }
+
+    fn page_position_absolute(&mut self, page: VTInt) {
+        let coupled = self.modes.contains(ModeFlags::PAGE_CURSOR_COUPLING);
+        self.page_manager.move_to(page, coupled);
+    }
+
+    fn page_position_relative(&mut self, page_count: VTInt) {
+        let coupled = self.modes.contains(ModeFlags::PAGE_CURSOR_COUPLING);
+        self.page_manager.move_relative(page_count, coupled);
+    }
+
+    fn page_position_back(&mut self, page_count: VTInt) {
+        let coupled = self.modes.contains(ModeFlags::PAGE_CURSOR_COUPLING);
+        self.page_manager.move_relative(-page_count, coupled);
+    }
+
+    fn next_page(&mut self, page_count: VTInt) {
+        self.page_position_relative(page_count);
+        self.cursor_position(1, 1);
+    }
+
+    fn preceding_page(&mut self, page_count: VTInt) {
+        self.page_position_back(page_count);
+        self.cursor_position(1, 1);
+    }
+
+    fn request_displayed_extent(&mut self) {
+        let (width, height, number) = {
+            let page = self.page_manager.visible_page();
+            (page.width(), page.height(), page.number())
+        };
+        // Pan offsets are always zero until the viewport can pan.
+        self.push_csi(&format!("{};{};1;1;{}\"w", height, width, number));
+    }
+
+    fn set_ansi_mode(&mut self, ansi_mode: bool) {
+        // DECANM resets the designated character sets even if the mode does not
+        // change, as upstream's `SetAnsiMode` does.
+        self.term_output.lock().unwrap_or_else(|e| e.into_inner()).soft_reset();
+        self.ansi_mode = ansi_mode;
+        self.pending_ansi_mode = Some(ansi_mode);
+    }
+
+    fn accept_c1_controls(&mut self, enabled: bool) {
+        self.pending_c1_controls = Some(enabled);
+    }
+
+    fn set_kitty_keyboard_protocol(&mut self, flags: VTParameter, mode: VTParameter) {
+        let flags = flags.value_or(0).clamp(0, 255) as u8;
+        match mode.value_or(1) {
+            1 => self.kitty_flags = flags,
+            2 => self.kitty_flags |= flags,
+            3 => self.kitty_flags &= !flags,
+            _ => {}
+        }
+    }
+
+    fn query_kitty_keyboard_protocol(&mut self) {
+        self.push_csi(&format!("?{}u", self.kitty_flags));
+    }
+
+    fn push_kitty_keyboard_protocol(&mut self, flags: VTParameter) {
+        self.kitty_stack.push(self.kitty_flags);
+        self.kitty_flags = flags.value_or(0).clamp(0, 255) as u8;
+    }
+
+    fn pop_kitty_keyboard_protocol(&mut self, count: VTParameter) {
+        let count = count.value_or(1).max(1) as usize;
+        for _ in 0..count {
+            let Some(flags) = self.kitty_stack.pop() else {
+                break;
+            };
+            self.kitty_flags = flags;
+        }
+    }
+
+    fn screen_alignment_pattern(&mut self) {
+        let (page_width, page_height) = self.page_size();
+        {
+            let page = self.page_manager.active_page();
+            let mut attributes = page.attributes();
+            attributes.set_standard_erase();
+            page.set_attributes(attributes);
+        }
+
+        {
+            let buffer = self.page_manager.active_page().buffer();
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            let cell = buffer::OutputCell::from_char('E');
+            buffer.fill_rect(0, 0, page_height - 1, page_width - 1, &cell);
+            buffer.cursor_mut().set_position(0, 0);
+        }
+
+        self.modes.remove(ModeFlags::DECOM);
+        self.modes.remove(ModeFlags::DECLRMM);
+        self.scroll_top_margin = 0;
+        self.scroll_bottom_margin = 0;
+        self.scroll_left_margin = 0;
+        self.scroll_right_margin = 0;
+    }
+
+    fn request_user_preference_charset(&mut self) {
+        let (size, id) = {
+            let output = self.term_output.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                output.get_user_preference_charset_size(),
+                output.get_user_preference_charset_id(),
+            )
+        };
+        self.push_dcs(&format!("{}!u{}", if size == 96 { 1 } else { 0 }, id));
+    }
+
+    fn assign_user_preference_charset(
+        &mut self,
+        charset_size: CharsetSize,
+    ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        let output = Arc::clone(&self.term_output);
+        let size_96 = matches!(charset_size, CharsetSize::Size96);
+        let mut builder = VTID::new();
+
+        Some(Box::new(move |ch| {
+            let value = ch as u32;
+            if (0x20..=0x2F).contains(&value) {
+                builder = builder.with_intermediate(value as u8);
+            } else if (0x30..=0x7E).contains(&value) {
+                let id = builder.finalize_with(value as u8);
+                output
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .assign_user_preference_charset(id, size_96);
+            }
+            true
+        }))
+    }
+
+    fn play_sounds(&mut self, parameters: &VTParameters) {
+        // Volume 0..7 maps to MIDI velocity 0..127; duration is in 1/32 s.
+        let volume = parameters.at(0).value_or(0).clamp(0, 7) as u32;
+        let velocity = (volume * 127 / 7) as u8;
+        let duration_micros = parameters.at(1).value_or(0).clamp(0, 255) as u32 * 1_000_000 / 32;
+
+        for parameter in parameters.iter().skip(2) {
+            let value = parameter.value_or(0).clamp(0, 25);
+            let note = (value + 71) as u8;
+            self.pending_sounds.push(MidiNote {
+                note,
+                velocity: if note == 71 { 0 } else { velocity },
+                duration_micros,
+            });
+        }
+    }
+
     fn print(&mut self, ch: char) {
-        let translated = self.term_output.translate_key(ch);
+        let translated = self
+            .term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .translate_key(ch);
         // A DEL that stays DEL is ignored, as it is when a 94-character set has
         // no mapping for it (upstream `AdaptDispatch::Print`).
         if translated as u32 != 0x7F {
@@ -1326,11 +1710,18 @@ impl ITermDispatch for AdaptDispatch {
     }
 
     fn print_string(&mut self, string: &str) {
-        if self.term_output.needs_translation() {
-            let translated: String = string.chars().map(|ch| self.term_output.translate_key(ch)).collect();
-            self.write_to_buffer(&translated);
-        } else {
-            self.write_to_buffer(string);
+        let translated = {
+            let output = self.term_output.lock().unwrap_or_else(|e| e.into_inner());
+            if output.needs_translation() {
+                Some(string.chars().map(|ch| output.translate_key(ch)).collect::<String>())
+            } else {
+                None
+            }
+        };
+
+        match translated {
+            Some(translated) => self.write_to_buffer(&translated),
+            None => self.write_to_buffer(string),
         }
     }
 
@@ -1706,7 +2097,11 @@ impl ITermDispatch for AdaptDispatch {
             return;
         };
 
-        let fill_char = self.term_output.translate_key(fill_ch);
+        let fill_char = self
+            .term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .translate_key(fill_ch);
         let attributes = self.page_manager.active_page().attributes();
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
@@ -2171,7 +2566,7 @@ impl ITermDispatch for AdaptDispatch {
             is_delayed_eol_wrap: false,
             is_origin_mode_relative: self.modes.contains(ModeFlags::DECOM),
             attributes,
-            term_output: self.term_output.clone(),
+            term_output: self.term_output.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         };
     }
 
@@ -2188,7 +2583,10 @@ impl ITermDispatch for AdaptDispatch {
         drop(buffer);
 
         self.page_manager.active_page().set_attributes(saved.attributes);
-        self.term_output.restore_from(&saved.term_output);
+        self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .restore_from(&saved.term_output);
         self.set_mode_flag(ModeFlags::DECOM, saved.is_origin_mode_relative);
     }
 
@@ -2268,24 +2666,37 @@ impl ITermDispatch for AdaptDispatch {
 
     fn designate_94_charset(&mut self, gset_number: VTInt, charset: VTID) {
         self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .designate_94_charset(gset_number.max(0) as usize, charset);
     }
 
     fn designate_96_charset(&mut self, gset_number: VTInt, charset: VTID) {
         self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .designate_96_charset(gset_number.max(0) as usize, charset);
     }
 
     fn locking_shift(&mut self, gset_number: VTInt) {
-        self.term_output.locking_shift(gset_number.max(0) as usize);
+        self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .locking_shift(gset_number.max(0) as usize);
     }
 
     fn locking_shift_right(&mut self, gset_number: VTInt) {
-        self.term_output.locking_shift_right(gset_number.max(0) as usize);
+        self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .locking_shift_right(gset_number.max(0) as usize);
     }
 
     fn single_shift(&mut self, gset_number: VTInt) {
-        self.term_output.single_shift(gset_number.max(0) as usize);
+        self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .single_shift(gset_number.max(0) as usize);
     }
 
     fn designate_coding_system(&mut self, coding_system: VTID) {
@@ -2293,8 +2704,6 @@ impl ITermDispatch for AdaptDispatch {
         // alone rather than silently reinterpreting the byte stream.
         let _ = coding_system;
     }
-
-    fn accept_c1_controls(&mut self, _enabled: bool) {}
 
     fn send_c1_controls(&mut self, _enabled: bool) {}
 
@@ -2692,6 +3101,32 @@ mod tests {
         dispatch.accept_c1_controls(true);
         dispatch.send_c1_controls(true);
         dispatch.announce_code_structure(2);
+        dispatch.insert_character(1);
+        dispatch.delete_character(1);
+        dispatch.insert_line(1);
+        dispatch.delete_line(1);
+        dispatch.scroll_up(1);
+        dispatch.scroll_down(1);
+        dispatch.insert_column(1);
+        dispatch.delete_column(1);
+        dispatch.page_position_absolute(1);
+        dispatch.page_position_relative(1);
+        dispatch.page_position_back(1);
+        dispatch.next_page(1);
+        dispatch.preceding_page(1);
+        dispatch.request_displayed_extent();
+        dispatch.set_ansi_mode(true);
+        dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
+        dispatch.enquire_answerback();
+        dispatch.warning_bell();
+        dispatch.screen_alignment_pattern();
+        dispatch.set_kitty_keyboard_protocol(VTParameter::from(1), VTParameter::from(1));
+        dispatch.query_kitty_keyboard_protocol();
+        dispatch.push_kitty_keyboard_protocol(VTParameter::from(2));
+        dispatch.pop_kitty_keyboard_protocol(VTParameter::from(1));
+        dispatch.play_sounds(&VTParameters::default());
+        drop(dispatch.assign_user_preference_charset(CharsetSize::Size94));
+        dispatch.request_user_preference_charset();
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
@@ -2703,6 +3138,152 @@ mod tests {
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
         dispatch.page_manager_mut().active_page().attributes()
+    }
+
+    fn write_row(dispatch: &mut AdaptDispatch, row: i32, text: &str) {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let mut buffer = buffer.write().unwrap();
+        buffer.cursor_mut().set_position(row, 0);
+        buffer.write_string(text);
+    }
+
+    #[test]
+    fn decrqde_reports_the_visible_extent() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.request_displayed_extent();
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[24;80;1;1;1\"w".to_string()]);
+    }
+
+    #[test]
+    fn ich_and_dch_shift_the_current_line() {
+        let mut dispatch = AdaptDispatch::new();
+        write_row(&mut dispatch, 0, "abcd");
+        dispatch.cursor_position(1, 1);
+        dispatch.insert_character(1);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "a");
+        assert_eq!(cell_text(&mut dispatch, 0, 3), "c");
+
+        dispatch.delete_character(1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "a");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), "c");
+        assert_eq!(cell_text(&mut dispatch, 0, 3), "d");
+        assert_eq!(cell_text(&mut dispatch, 0, 4), "");
+    }
+
+    #[test]
+    fn il_and_dl_shift_the_scrolling_region() {
+        let mut dispatch = AdaptDispatch::new();
+        write_row(&mut dispatch, 0, "aaa");
+        write_row(&mut dispatch, 1, "bbb");
+
+        dispatch.cursor_position(1, 1);
+        dispatch.insert_line(1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "a");
+        assert_eq!(cell_text(&mut dispatch, 2, 0), "b");
+
+        dispatch.delete_line(1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "a");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "b");
+    }
+
+    #[test]
+    fn decic_and_decdc_shift_the_current_row() {
+        let mut dispatch = AdaptDispatch::new();
+        write_row(&mut dispatch, 0, "abcd");
+        dispatch.cursor_position(1, 1);
+        dispatch.insert_column(1);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "a");
+        assert_eq!(cell_text(&mut dispatch, 0, 4), "d");
+
+        dispatch.delete_column(1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "a");
+        assert_eq!(cell_text(&mut dispatch, 0, 3), "d");
+        assert_eq!(cell_text(&mut dispatch, 0, 4), "");
+    }
+
+    #[test]
+    fn su_and_sd_move_the_margin_region() {
+        let mut dispatch = AdaptDispatch::new();
+        write_row(&mut dispatch, 0, "aaa");
+        write_row(&mut dispatch, 1, "bbb");
+        write_row(&mut dispatch, 2, "ccc");
+
+        dispatch.scroll_up(1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "b");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "c");
+        assert_eq!(cell_text(&mut dispatch, 2, 0), "");
+        assert_eq!(cell_text(&mut dispatch, 23, 0), " ");
+
+        dispatch.scroll_down(2);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 2, 0), "b");
+    }
+
+    #[test]
+    fn decanm_queues_a_parser_mode_change() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.reset_mode(&ModeParams::DecAnm);
+        assert_eq!(dispatch.take_ansi_mode_change(), Some(false));
+
+        dispatch.set_mode(&ModeParams::DecAnm);
+        assert_eq!(dispatch.take_ansi_mode_change(), Some(true));
+    }
+
+    #[test]
+    fn decrqupss_reports_the_assigned_charset() {
+        let mut dispatch = AdaptDispatch::new();
+        if let Some(mut handler) = dispatch.assign_user_preference_charset(CharsetSize::Size96) {
+            handler('B');
+        }
+        dispatch.request_user_preference_charset();
+        assert_eq!(dispatch.take_responses(), vec!["\x1bP1!uB\x1b\\".to_string()]);
+    }
+
+    #[test]
+    fn decps_queues_midi_notes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.play_sounds(&VTParameters::from_values(vec![7, 32, 1, 0]));
+
+        let notes = dispatch.take_sound_requests();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].note, 72);
+        assert_eq!(notes[0].velocity, 127);
+        assert_eq!(notes[0].duration_micros, 1_000_000);
+        assert_eq!(notes[1].note, 71);
+        assert_eq!(notes[1].velocity, 0);
+    }
+
+    #[test]
+    fn kitty_flags_set_push_pop_and_report() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_kitty_keyboard_protocol(VTParameter::from(5), VTParameter::from(1));
+        assert_eq!(dispatch.kitty_keyboard_flags(), 5);
+
+        dispatch.push_kitty_keyboard_protocol(VTParameter::from(3));
+        assert_eq!(dispatch.kitty_keyboard_flags(), 3);
+
+        dispatch.pop_kitty_keyboard_protocol(VTParameter::from(1));
+        assert_eq!(dispatch.kitty_keyboard_flags(), 5);
+
+        dispatch.query_kitty_keyboard_protocol();
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[?5u".to_string()]);
+    }
+
+    #[test]
+    fn decaln_fills_the_page_and_homes_the_cursor() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(5, 5);
+        dispatch.screen_alignment_pattern();
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "E");
+        assert_eq!(cell_text(&mut dispatch, 23, 79), "E");
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
     }
 
     #[test]
@@ -3689,8 +4270,8 @@ mod tests {
     #[test]
     fn decrqm_reports_unsupported_for_unmodelled_modes() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.request_mode(&ModeParams::DecAnm);
-        assert_eq!(dispatch.take_responses(), vec!["\x1b[?2;0$y".to_string()]);
+        dispatch.request_mode(&ModeParams::GraphemeClusterMode);
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[?2027;0$y".to_string()]);
     }
 
     #[test]

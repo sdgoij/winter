@@ -430,7 +430,6 @@ impl<D: ITermDispatch> IStateMachineEngine for OutputStateMachineEngine<D> {
                 parameters.at(2).value_or(0),
                 parameters.at(3).value_or(0),
             ),
-            b"$|" => self.dispatch.cursor_character_absolute(param_or_one(parameters.at(0))),
             b"&u" => self.dispatch.request_user_preference_charset(),
             b"'}" => self.dispatch.insert_column(param_or_one(parameters.at(0))),
             b"'~" => self.dispatch.delete_column(param_or_one(parameters.at(0))),

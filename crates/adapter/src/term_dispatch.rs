@@ -69,14 +69,9 @@ pub trait ITermDispatch: std::fmt::Debug {
         self.unhandled("cursor_prev_line");
     }
 
-    /// HPA — Cursor Horizontal Position Absolute.
+    /// HPA — Horizontal Position Absolute.
     fn cursor_horizontal_position_absolute(&mut self, column: VTInt) {
         self.unhandled("cursor_horizontal_position_absolute");
-    }
-
-    /// CHA — Cursor Character Absolute (same as HPA).
-    fn cursor_character_absolute(&mut self, column: VTInt) {
-        self.cursor_horizontal_position_absolute(column);
     }
 
     /// VPA — Vertical Line Position Absolute.

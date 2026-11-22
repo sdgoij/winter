@@ -639,39 +639,121 @@ impl TextBuffer {
     /// Shifts the cells in `left..=right` one column left on every row of the
     /// region, blanking the rightmost column (DECFI).
     pub fn scroll_region_left(&mut self, top: i32, bottom: i32, left: i32, right: i32) {
-        if right <= left {
-            return;
-        }
-        for row_index in top..=bottom {
-            let Some(source) = self.get_row_at_screen_line(row_index).cloned() else {
-                continue;
-            };
-            let Some(destination) = self.get_row_at_screen_line_mut(row_index) else {
-                continue;
-            };
-            destination.copy_text_from(left, &source, left + 1, right - left);
-            destination.write_cell_raw(right, OutputCell::from_char(' '));
-        }
-        self.mutation_id += 1;
+        let blank = OutputCell::from_char(' ');
+        self.scroll_rect_horizontally(top, bottom, left, right, -1, &blank);
     }
 
     /// Shifts the cells in `left..=right` one column right on every row of the
     /// region, blanking the leftmost column (DECBI).
     pub fn scroll_region_right(&mut self, top: i32, bottom: i32, left: i32, right: i32) {
-        if right <= left {
+        let blank = OutputCell::from_char(' ');
+        self.scroll_rect_horizontally(top, bottom, left, right, 1, &blank);
+    }
+
+    /// Scrolls a rectangle vertically by `delta` rows.
+    ///
+    /// Positive `delta` moves content down (insert lines); negative moves it up
+    /// (delete lines). The rows revealed at the edge are filled with `blank`,
+    /// and image pixels inside the rectangle travel with the cells.
+    pub fn scroll_rect_vertically(
+        &mut self,
+        top: i32,
+        bottom: i32,
+        left: i32,
+        right: i32,
+        delta: i32,
+        blank: &OutputCell,
+    ) {
+        if bottom < top || right < left {
             return;
         }
-        for row_index in top..=bottom {
-            let Some(source) = self.get_row_at_screen_line(row_index).cloned() else {
-                continue;
-            };
-            let Some(destination) = self.get_row_at_screen_line_mut(row_index) else {
-                continue;
-            };
-            destination.copy_text_from(left + 1, &source, left, right - left);
-            destination.write_cell_raw(left, OutputCell::from_char(' '));
+
+        let height = bottom - top + 1;
+        let amount = delta.unsigned_abs().min(height as u32) as i32;
+        if amount == 0 {
+            return;
         }
+
+        if amount < height {
+            if delta > 0 {
+                // Content moves down: start at the bottom so a destination row
+                // is never a later source.
+                for dest in (top + amount..=bottom).rev() {
+                    self.copy_rect_row(dest, dest - amount, left, right);
+                }
+            } else {
+                // Content moves up: sources are below their destinations.
+                for dest in top..=bottom - amount {
+                    self.copy_rect_row(dest, dest + amount, left, right);
+                }
+            }
+        }
+
+        let erase_top = if delta > 0 { top } else { bottom - amount + 1 };
+        self.fill_rect(erase_top, left, erase_top + amount - 1, right, blank);
         self.mutation_id += 1;
+    }
+
+    /// Scrolls a rectangle horizontally by `delta` columns.
+    ///
+    /// Positive `delta` moves content right (insert columns); negative moves it
+    /// left (delete columns). The columns revealed at the edge are filled with
+    /// `blank`.
+    pub fn scroll_rect_horizontally(
+        &mut self,
+        top: i32,
+        bottom: i32,
+        left: i32,
+        right: i32,
+        delta: i32,
+        blank: &OutputCell,
+    ) {
+        if bottom < top || right < left {
+            return;
+        }
+
+        let width = right - left + 1;
+        let amount = delta.unsigned_abs().min(width as u32) as i32;
+        if amount == 0 {
+            return;
+        }
+
+        if amount < width {
+            let copy_width = width - amount;
+            let (source_left, dest_left) = if delta > 0 {
+                (left, left + amount)
+            } else {
+                (left + amount, left)
+            };
+
+            for row in top..=bottom {
+                let Some(source) = self.get_row_at_screen_line(row).cloned() else {
+                    continue;
+                };
+                let Some(destination) = self.get_row_at_screen_line_mut(row) else {
+                    continue;
+                };
+                destination.copy_text_from(dest_left, &source, source_left, copy_width);
+                destination.copy_image_cells_from(&source, source_left, dest_left, dest_left + copy_width);
+            }
+        }
+
+        let erase_left = if delta > 0 { left } else { right - amount + 1 };
+        self.fill_rect(top, erase_left, bottom, erase_left + amount - 1, blank);
+        self.mutation_id += 1;
+    }
+
+    /// Copies one rectangle-wide slice of a row into another row.
+    fn copy_rect_row(&mut self, dest_row: i32, source_row: i32, left: i32, right: i32) {
+        let Some(source) = self.get_row_at_screen_line(source_row).cloned() else {
+            return;
+        };
+        let Some(destination) = self.get_row_at_screen_line_mut(dest_row) else {
+            return;
+        };
+        let width = right - left + 1;
+        destination.copy_text_from(left, &source, left, width);
+        destination.copy_image_cells_from(&source, left, left, right + 1);
     }
 
     /// Scrolls rows up by the given count.
@@ -1001,6 +1083,57 @@ mod tests {
         assert_eq!(text_at(&buffer, 0, 0), " ");
         assert_eq!(text_at(&buffer, 0, 1), "a");
         assert_eq!(text_at(&buffer, 0, 3), "c");
+    }
+
+    #[test]
+    fn scroll_rect_vertically_respects_columns() {
+        let mut buffer = TextBuffer::with_dimensions(4, 3, 0);
+        write_text_at(&mut buffer, 0, 0, "abXX");
+        write_text_at(&mut buffer, 1, 0, "cdXX");
+        write_text_at(&mut buffer, 2, 0, "efXX");
+
+        let blank = OutputCell::from_char(' ');
+        buffer.scroll_rect_vertically(0, 2, 0, 1, -1, &blank);
+
+        assert_eq!(text_at(&buffer, 0, 0), "c");
+        assert_eq!(text_at(&buffer, 1, 0), "e");
+        assert_eq!(text_at(&buffer, 2, 0), " ");
+        // Columns outside the rectangle keep their content.
+        assert_eq!(text_at(&buffer, 0, 2), "X");
+        assert_eq!(text_at(&buffer, 2, 2), "X");
+    }
+
+    #[test]
+    fn scroll_rect_vertically_moves_by_a_whole_count() {
+        let mut buffer = TextBuffer::with_dimensions(1, 4, 0);
+        for (row, text) in ["a", "b", "c", "d"].iter().enumerate() {
+            write_text_at(&mut buffer, row as i32, 0, text);
+        }
+
+        let blank = OutputCell::from_char(' ');
+        buffer.scroll_rect_vertically(0, 3, 0, 0, 2, &blank);
+
+        assert_eq!(text_at(&buffer, 0, 0), " ");
+        assert_eq!(text_at(&buffer, 1, 0), " ");
+        assert_eq!(text_at(&buffer, 2, 0), "a");
+        assert_eq!(text_at(&buffer, 3, 0), "b");
+    }
+
+    #[test]
+    fn scroll_rect_horizontally_respects_rows() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 0);
+        write_text_at(&mut buffer, 0, 0, "abcd");
+        write_text_at(&mut buffer, 1, 0, "efgh");
+
+        let blank = OutputCell::from_char(' ');
+        buffer.scroll_rect_horizontally(0, 0, 0, 3, -1, &blank);
+
+        assert_eq!(text_at(&buffer, 0, 0), "b");
+        assert_eq!(text_at(&buffer, 0, 2), "d");
+        assert_eq!(text_at(&buffer, 0, 3), " ");
+        // The other row is outside the rectangle.
+        assert_eq!(text_at(&buffer, 1, 0), "e");
+        assert_eq!(text_at(&buffer, 1, 3), "h");
     }
 
     #[test]

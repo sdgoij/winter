@@ -323,6 +323,15 @@ impl VTID {
     }
 }
 
+impl std::fmt::Display for VTID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for &byte in self.as_bytes() {
+            write!(f, "{}", byte as char)?;
+        }
+        Ok(())
+    }
+}
+
 /// Erase type for ED/EL commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EraseType {

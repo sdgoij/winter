@@ -6,7 +6,7 @@
 
 use adapter::{AdaptDispatch, PageManager};
 use types::VTInt;
-use vt::{StateMachine, VtState};
+use vt::{ParserMode, StateMachine, VtState};
 
 use crate::output_engine::OutputStateMachineEngine;
 
@@ -29,8 +29,20 @@ impl Terminal {
     }
 
     /// Processes a chunk of terminal output.
+    ///
+    /// Bytes are fed one at a time so a DECANM or C1-controls change takes
+    /// effect on the byte after the sequence that requested it.
     pub fn process_bytes(&mut self, bytes: &[u8]) {
-        self.state.process_string(bytes);
+        for &byte in bytes {
+            self.state.process_char(byte);
+
+            if let Some(enabled) = self.dispatch_mut().take_ansi_mode_change() {
+                self.state.set_parser_mode(ParserMode::Ansi, enabled);
+            }
+            if let Some(enabled) = self.dispatch_mut().take_c1_controls_change() {
+                self.state.set_parser_mode(ParserMode::AcceptC1, enabled);
+            }
+        }
     }
 
     /// Processes a chunk of UTF-8 text, which is the same as its bytes.
@@ -101,6 +113,21 @@ impl Terminal {
     /// Takes the full-redraw request made by CSI 7 t.
     pub fn take_redraw_request(&mut self) -> bool {
         self.dispatch_mut().take_redraw_request()
+    }
+
+    /// Takes the notes requested by DECPS.
+    pub fn take_sound_requests(&mut self) -> Vec<adapter::adapt_dispatch::MidiNote> {
+        self.dispatch_mut().take_sound_requests()
+    }
+
+    /// Takes the number of bells requested since the last call.
+    pub fn take_bell_requests(&mut self) -> usize {
+        self.dispatch_mut().take_bell_requests()
+    }
+
+    /// Takes a pending ANSWERBACK request.
+    pub fn take_answerback_request(&mut self) -> bool {
+        self.dispatch_mut().take_answerback_request()
     }
 
     /// Returns the title set by OSC 0/2.
@@ -180,5 +207,44 @@ mod tests {
         terminal.process_str("\x1b[?1h");
         terminal.process_str("\x1b[?1$p");
         assert_eq!(terminal.take_responses(), vec!["\x1b[?1;1$y".to_string()]);
+    }
+
+    #[test]
+    fn decanm_switches_the_parser_to_vt52() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b[6;6H");
+        terminal.process_str("\x1b[?2l");
+        assert!(!terminal.dispatch().is_ansi_mode());
+
+        terminal.process_str("\x1bA");
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert_eq!(buffer.cursor().position(), (4, 5));
+    }
+
+    #[test]
+    fn accepting_c1_controls_makes_a_single_byte_csi_parse() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b 7");
+        terminal.process_bytes(b"\x9b31m");
+        terminal.process_str("A");
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let cell = buffer.get_cell_data_at(0, 0).unwrap();
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+    }
+
+    #[test]
+    fn bell_and_sound_requests_reach_the_host_queues() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x07");
+        assert_eq!(terminal.take_bell_requests(), 1);
+
+        terminal.process_str("\x1b[7;32;1,~");
+        let notes = terminal.take_sound_requests();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].note, 72);
+        assert_eq!(notes[0].velocity, 127);
     }
 }
