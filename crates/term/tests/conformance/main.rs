@@ -16,4 +16,5 @@ mod mouse;
 mod osc;
 mod private_modes;
 mod support;
+mod vt52;
 mod win32_input_mode;

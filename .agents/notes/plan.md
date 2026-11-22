@@ -18,7 +18,7 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1012 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+1020 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1136,7 +1136,9 @@ lives in the crate that owns the parser-to-dispatch loop:
   and the kitty protocol's precedence
 - [x] `crates/term/tests/conformance/escape.rs` — DECSC/DECRC, IND/NEL/RI,
   line rendition, tab stops and character-set designation
-- [ ] `crates/term/tests/conformance/vt52.rs` — All VT52 commands
+- [x] `crates/term/tests/conformance/vt52.rs` — DECANM, the cursor moves,
+  `ESC Y` addressing, erase, reverse index, identify, the graphics set and
+  the return to ANSI
 - [x] `crates/term/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
 - [ ] `crates/term/tests/conformance/generate.rs` — Fuzz-generated sequences against reference
 

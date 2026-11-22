@@ -182,7 +182,7 @@ impl<D: ITermDispatch> IStateMachineEngine for OutputStateMachineEngine<D> {
             b"B" => self.dispatch.cursor_down(1),
             b"C" => self.dispatch.cursor_forward(1),
             b"D" => self.dispatch.cursor_backward(1),
-            b"F" => self.dispatch.designate_94_charset(0, VTID::from_byte(b'C')),
+            b"F" => self.dispatch.designate_94_charset(0, VTID::from_byte(b'0')),
             b"G" => self.dispatch.designate_94_charset(0, VTID::from_byte(b'B')),
             b"H" => self.dispatch.cursor_position(1, 1),
             b"I" => self.dispatch.reverse_line_feed(),
