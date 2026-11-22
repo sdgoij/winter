@@ -10,15 +10,15 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~3.3k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, XParseColor and the X11 colour-name tables |
+| `types` | ~3.4k | 95 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.5k | 194 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~2.1k | 28 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
-| `renderer` | ~1.4k | 26 | Phase 5 foundation — the portable font, cell-metric, cluster, cursor and CSS-length vocabulary from `src/renderer/base` and `src/renderer/inc`; the atlas and Windows back ends are not ported |
+| `renderer` | ~2.4k | 39 | Phase 5 foundation — the portable font, cell-metric, cluster, cursor, CSS-length and render-settings vocabulary from `src/renderer/base` and `src/renderer/inc`; the atlas and Windows back ends are not ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-759 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+780 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -694,7 +694,7 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [ ] `winterm/crates/renderer/src/render_engine.rs` — `IRenderEngine` trait
   - [ ] **Tests:** all virtual methods called correctly, trait object safety
 - [ ] `winterm/crates/renderer/src/render_data.rs` — `IRenderData`
-- [ ] `winterm/crates/renderer/src/render_settings.rs` — `RenderSettings`
+- [x] `winterm/crates/renderer/src/render_settings.rs` — `RenderSettings`
 - [ ] `winterm/crates/renderer/src/render_frame_info.rs` — `RenderFrameInfo`
 - [ ] `winterm/crates/renderer/src/render_engine_base.rs` — `RenderEngineBase`
 - [x] `winterm/crates/renderer/src/cluster.rs` — `Cluster` (per-glyph shaping result)

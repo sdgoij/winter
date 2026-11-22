@@ -17,12 +17,14 @@
 //! - [`viewport`] — `Viewport` screen dimension type
 //! - [`line_rendition`] — `LineRendition` for DECDHL/DECSWL/DECDWL
 //! - [`codepoint_width`] — Unicode width detection
+//! - [`color_fix`] — Oklab perceptual colour nudging
 //! - [`theme_utils`] — Light/dark theme detection
 //! - [`color_table`] — 16-color palette management
 
 pub mod character_attrs;
 pub mod charsets;
 pub mod codepoint_width;
+pub mod color_fix;
 pub mod color_table;
 pub mod cursor_type;
 pub mod dispatch_types;

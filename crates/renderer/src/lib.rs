@@ -22,6 +22,7 @@ pub mod cursor_options;
 pub mod font_info;
 pub mod font_info_base;
 pub mod font_info_desired;
+pub mod render_settings;
 
 pub use cluster::Cluster;
 pub use css_length::{CSSLengthPercentage, ReferenceFrame};
@@ -29,3 +30,4 @@ pub use cursor_options::CursorOptions;
 pub use font_info::{CellSizeInDIP, FontInfo};
 pub use font_info_base::{DEFAULT_RASTER_FONT_FACENAME, DEFAULT_TT_FONT_FACENAME, FontInfoBase, LF_FACESIZE};
 pub use font_info_desired::FontInfoDesired;
+pub use render_settings::{INVALID_COLOR, Mode, RenderSettings};

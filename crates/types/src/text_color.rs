@@ -2,6 +2,8 @@
 //!
 //! Ported from `TextColor` in the Windows Terminal C++ buffer module.
 
+use crate::color_table::ColorTable;
+
 /// Represents the type of a color in a TextColor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorType {
@@ -175,6 +177,46 @@ impl TextColor {
         }
     }
 
+    /// Returns the RGB color in upstream's `COLORREF` packing (`0x00BBGGRR`).
+    pub const fn get_colorref(&self) -> u32 {
+        match self.color_type {
+            ColorType::Rgb { r, g, b } => (r as u32) | ((g as u32) << 8) | ((b as u32) << 16),
+            _ => 0,
+        }
+    }
+
+    /// Builds an RGB color from a `COLORREF` (`0x00BBGGRR`).
+    pub const fn from_colorref(color: u32) -> Self {
+        Self::rgb(color as u8, (color >> 8) as u8, (color >> 16) as u8)
+    }
+
+    /// Resolves this color against `table`, returning a `COLORREF`.
+    ///
+    /// Ported from `TextColor::GetColor`. A default color reads the entry its
+    /// alias points at; when `brighten` is set and that entry matches one of the
+    /// eight dark entries, its bright counterpart is used instead.
+    pub fn get_color(&self, table: &ColorTable, default_index: usize, brighten: bool) -> u32 {
+        let entry = |index: usize| table.get(index).map_or(0, |color| color.get_colorref());
+
+        if self.is_default() {
+            let default_color = entry(default_index);
+            if brighten {
+                for index in 0..8 {
+                    if entry(index) == default_color {
+                        return entry(index + 8);
+                    }
+                }
+            }
+            default_color
+        } else if self.is_rgb() {
+            self.get_colorref()
+        } else if self.is_index16() && brighten {
+            entry(usize::from(self.get_index() | 8))
+        } else {
+            entry(usize::from(self.get_index()))
+        }
+    }
+
     /// Transposes a legacy index from Windows order to ANSI order.
     /// Swaps bits 0 and 2 for compatibility.
     pub const fn transpose_legacy_index(index: u8) -> u8 {
@@ -233,6 +275,40 @@ mod tests {
         assert_eq!(c.get_g(), 128);
         assert_eq!(c.get_b(), 64);
         assert_eq!(c.get_rgb(), 0xFF8040);
+    }
+
+    #[test]
+    fn test_colorref_packing_round_trips() {
+        let color = TextColor::rgb(0x12, 0x34, 0x56);
+        assert_eq!(color.get_colorref(), 0x0056_3412);
+        assert_eq!(TextColor::from_colorref(0x0056_3412), color);
+    }
+
+    #[test]
+    fn test_get_color_resolves_each_kind() {
+        let table = ColorTable::new();
+
+        let rgb = TextColor::rgb(1, 2, 3);
+        assert_eq!(rgb.get_color(&table, 0, false), 0x0003_0201);
+
+        let dark_red = table.get(1).unwrap().get_colorref();
+        assert_eq!(TextColor::index16(1).get_color(&table, 0, false), dark_red);
+
+        let bright_red = table.get(9).unwrap().get_colorref();
+        assert_eq!(TextColor::index16(1).get_color(&table, 0, true), bright_red);
+
+        let dark_white = table.get(7).unwrap().get_colorref();
+        assert_eq!(TextColor::new().get_color(&table, 7, false), dark_white);
+    }
+
+    #[test]
+    fn test_get_color_brightens_an_alias_that_matches_a_dark_entry() {
+        let mut table = ColorTable::new();
+        let dark = table.get(0).unwrap();
+        table.set(261, dark);
+
+        let bright = table.get(8).unwrap().get_colorref();
+        assert_eq!(TextColor::new().get_color(&table, 261, true), bright);
     }
 
     #[test]
