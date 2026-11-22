@@ -88,6 +88,11 @@ pub struct PageManager {
 }
 
 impl PageManager {
+    /// Returns whether `page_number` names a page this manager can create.
+    pub const fn is_valid_page(page_number: i32) -> bool {
+        page_number >= 1 && page_number <= MAX_PAGES as i32
+    }
+
     /// Creates a new PageManager.
     pub fn new() -> Self {
         Self {

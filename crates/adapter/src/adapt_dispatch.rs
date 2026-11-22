@@ -12,7 +12,7 @@ use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
-use types::TextAttribute;
+use types::{CharacterAttributes, TextAttribute, UnderlineStyle};
 use utils::inclusive_rect::InclusiveRect;
 
 /// Cursor state for save/restore operations.
@@ -51,7 +51,7 @@ impl Default for CursorState {
 /// Operations that can be performed on text.
 #[derive(Debug, Clone)]
 pub struct ChangeOps {
-    /// Character attributes OR mask.
+    /// Character attributes AND mask.
     pub and_attr_mask: types::CharacterAttributes,
     /// Character attributes XOR mask.
     pub xor_attr_mask: types::CharacterAttributes,
@@ -61,6 +61,20 @@ pub struct ChangeOps {
     pub background: Option<types::TextColor>,
     /// Optional underline color.
     pub underline_color: Option<types::TextColor>,
+}
+
+impl Default for ChangeOps {
+    /// Matches upstream's member initialisers: an identity AND mask, no XOR
+    /// changes and no colours.
+    fn default() -> Self {
+        Self {
+            and_attr_mask: CharacterAttributes::All,
+            xor_attr_mask: CharacterAttributes::Normal,
+            foreground: None,
+            background: None,
+            underline_color: None,
+        }
+    }
 }
 
 /// A cursor offset, absolute (1-based VT coordinates) or relative.
@@ -202,6 +216,14 @@ impl AdaptDispatch {
     /// Appends a CSI response to the queue the host drains.
     fn push_csi(&mut self, body: &str) {
         self.pending_responses.push(format!("\x1b[{}", body));
+    }
+
+    /// Appends a DCS response to the queue the host drains.
+    ///
+    /// Upstream wraps in C1 when the SendC1 input mode is on; this adapter does
+    /// not model that mode, so the 7-bit form is always used.
+    fn push_dcs(&mut self, body: &str) {
+        self.pending_responses.push(format!("\x1bP{}\x1b\\", body));
     }
 
     /// Ported from `_CursorPositionReport`: 1-based, page-relative, and
@@ -621,6 +643,71 @@ impl AdaptDispatch {
         (left, right.min(rightmost))
     }
 
+    /// Ported from `_CalculateRectArea`: converts VT's 1-based, optionally
+    /// margin-relative coordinates into a half-open page rectangle.
+    ///
+    /// `bottom`/`right` of zero mean "to the page (or margin) extent". The
+    /// result is clamped to the page, so a malformed sequence cannot index a
+    /// row; upstream's `ROW` accessors clamp in the same way.
+    fn calculate_rect_area(
+        &mut self,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+    ) -> (VTInt, VTInt, VTInt, VTInt) {
+        let (page_width, page_height) = self.page_size();
+        let (top_margin, bottom_margin) = self.effective_vertical_margins(page_height);
+        let (left_margin, right_margin) = self.effective_horizontal_margins(page_width);
+
+        let origin_mode = self.modes.contains(ModeFlags::DECOM);
+        let y_offset = if origin_mode { top_margin } else { 0 };
+        let y_maximum = if origin_mode { bottom_margin + 1 } else { page_height };
+        let x_offset = if origin_mode { left_margin } else { 0 };
+        let x_maximum = if origin_mode { right_margin + 1 } else { page_width };
+
+        let left = (left + x_offset).min(x_maximum) - 1;
+        let top = (top + y_offset).min(y_maximum) - 1;
+        let right = (if right != 0 { right + x_offset } else { x_maximum }).min(x_maximum) - 1;
+        let bottom = (if bottom != 0 { bottom + y_offset } else { y_maximum }).min(y_maximum) - 1;
+
+        (
+            top.clamp(0, page_height),
+            left.clamp(0, page_width),
+            (bottom + 1).clamp(0, page_height),
+            (right + 1).clamp(0, page_width),
+        )
+    }
+
+    /// Ported from `_ChangeRectOrStreamAttributes`: applies attribute changes to
+    /// a rectangle, or to the same endpoints in reading order when DECSACE has
+    /// selected the stream extent.
+    fn change_rect_or_stream_attributes(
+        &mut self,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+        ops: &ChangeOps,
+    ) {
+        let (top, left, bottom, right) = self.calculate_rect_area(top, left, bottom, right);
+        let (page_width, _) = self.page_size();
+        let line_count = bottom - top;
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+
+        if self.modes.contains(ModeFlags::RECTANGULAR_CHANGE_EXTENT) || line_count == 1 {
+            change_rect_attributes(&mut buffer, top, left, bottom, right, ops);
+        } else if line_count > 1 && right > left {
+            // Stream extent: the top line runs to the end, the middle lines are
+            // changed in full, and the bottom line runs from the start.
+            change_rect_attributes(&mut buffer, top, left, top + 1, page_width, ops);
+            change_rect_attributes(&mut buffer, top + 1, 0, bottom - 1, page_width, ops);
+            change_rect_attributes(&mut buffer, bottom - 1, 0, bottom, right, ops);
+        }
+    }
+
     /// Ported from `_CursorMovePosition`: relative or absolute movement, clamped
     /// to the page and, when asked, to the scrolling margins.
     fn move_cursor(&mut self, row_offset: Offset, col_offset: Offset, clamp_in_margins: bool) {
@@ -830,6 +917,25 @@ fn do_line_feed(
     }
 }
 
+/// Fills a half-open rectangle (`bottom`/`right` exclusive) with `ch` and
+/// `attributes`.
+fn fill_rect_with(
+    buffer: &mut buffer::TextBuffer,
+    top: VTInt,
+    left: VTInt,
+    bottom: VTInt,
+    right: VTInt,
+    ch: char,
+    attributes: TextAttribute,
+) {
+    if bottom <= top || right <= left {
+        return;
+    }
+    let mut cell = buffer::OutputCell::from_char(ch);
+    cell.set_attributes(attributes);
+    buffer.fill_rect(top, left, bottom - 1, right - 1, &cell);
+}
+
 /// Fills a half-open rectangle (`bottom`/`right` exclusive) with erased cells.
 fn fill_region(
     buffer: &mut buffer::TextBuffer,
@@ -839,12 +945,53 @@ fn fill_region(
     right: VTInt,
     attributes: TextAttribute,
 ) {
+    fill_rect_with(buffer, top, left, bottom, right, ' ', attributes);
+}
+
+/// Ported from `_ChangeRectAttributes`: applies the attribute masks and the
+/// optional colours to every cell in a half-open rectangle, leaving the text
+/// untouched.
+fn change_rect_attributes(
+    buffer: &mut buffer::TextBuffer,
+    top: VTInt,
+    left: VTInt,
+    bottom: VTInt,
+    right: VTInt,
+    ops: &ChangeOps,
+) {
     if bottom <= top || right <= left {
         return;
     }
-    let mut cell = buffer::OutputCell::from_char(' ');
-    cell.set_attributes(attributes);
-    buffer.fill_rect(top, left, bottom - 1, right - 1, &cell);
+    for row in top..bottom {
+        let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) else {
+            continue;
+        };
+        for column in left..right {
+            let mut attributes = *buffer_row.get_cell(column).get_attributes();
+            let mut character_attributes = attributes.get_attrs();
+            character_attributes &= ops.and_attr_mask;
+            character_attributes ^= ops.xor_attr_mask;
+            attributes.set_attrs(character_attributes);
+            if let Some(foreground) = ops.foreground {
+                attributes.set_foreground(foreground);
+            }
+            if let Some(background) = ops.background {
+                attributes.set_background(background);
+            }
+            if let Some(underline_color) = ops.underline_color {
+                attributes.set_underline_color(underline_color);
+            }
+            buffer_row.get_cell_mut(column).set_attributes(attributes);
+        }
+    }
+}
+
+/// The colour index the DEC checksum uses: only the first 16 palette entries
+/// count; every other colour falls back to the default alias index.
+fn legacy_color_index(color: types::TextColor, default_index: u8) -> u8 {
+    let index = color.get_index();
+    let legacy = (color.is_index16() || color.is_index256()) && index < 16;
+    if legacy { index } else { default_index }
 }
 
 /// Ported from `_SelectiveEraseRect`: clears the text of unprotected cells and
@@ -1100,6 +1247,255 @@ impl ITermDispatch for AdaptDispatch {
             EraseType::All => selective_erase_region(&mut buffer, row, 0, row + 1, page_width),
             EraseType::Scrollback => {}
         }
+    }
+
+    fn change_attributes_rectangular_area(
+        &mut self,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+        attrs: &VTParameters,
+    ) {
+        // Applying the options to an empty attribute and to one with every bit
+        // set yields the OR and AND masks; combining them into AND/XOR keeps
+        // the per-cell work to two operations (DECRARA shares the same path).
+        let mut all_off = TextAttribute::new();
+        let mut all_on = TextAttribute::from_rgb(0, 0, Some(0));
+        all_on.set_attrs(CharacterAttributes::All);
+        Self::apply_graphics_options(attrs, &mut all_off);
+        Self::apply_graphics_options(attrs, &mut all_on);
+
+        let or_mask = all_off.get_attrs();
+        let and_mask = all_on.get_attrs();
+
+        // `all_on` starts black, so a colour that it still holds was not changed
+        // by the options; one that it lost was reset to the default.
+        let colour_changed =
+            |applied: types::TextColor, patched: types::TextColor| !applied.is_default() || patched.is_default();
+        let foreground =
+            colour_changed(all_off.get_foreground(), all_on.get_foreground()).then_some(all_off.get_foreground());
+        let background =
+            colour_changed(all_off.get_background(), all_on.get_background()).then_some(all_off.get_background());
+        let underline_color = colour_changed(all_off.get_underline_color(), all_on.get_underline_color())
+            .then_some(all_off.get_underline_color());
+
+        let ops = ChangeOps {
+            and_attr_mask: and_mask & !or_mask,
+            xor_attr_mask: or_mask,
+            foreground,
+            background,
+            underline_color,
+        };
+        self.change_rect_or_stream_attributes(top, left, bottom, right, &ops);
+    }
+
+    fn reverse_attributes_rectangular_area(
+        &mut self,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+        attrs: &VTParameters,
+    ) {
+        let mut reverse_mask = CharacterAttributes::Normal;
+
+        if !attrs.is_empty() {
+            let mut index = 0;
+            while index < attrs.len() {
+                if attrs.at(index).value_or(0) == 0 {
+                    // Option 0 reverses every rendition bit except the underline
+                    // style, which is replaced with a single underline.
+                    let singly_underlined = CharacterAttributes::from_bits_retain(
+                        (UnderlineStyle::SinglyUnderlined as u16) << CharacterAttributes::UNDERLINE_STYLE_SHIFT,
+                    );
+                    reverse_mask ^=
+                        (CharacterAttributes::Rendition & !CharacterAttributes::UnderlineStyleMask) | singly_underlined;
+                    index += 1;
+                } else {
+                    let mut all_off = TextAttribute::new();
+                    index += Self::apply_graphics_option(attrs, index, &mut all_off);
+                    reverse_mask ^= all_off.get_attrs();
+                }
+            }
+        }
+
+        if reverse_mask != CharacterAttributes::Normal {
+            let ops = ChangeOps {
+                xor_attr_mask: reverse_mask,
+                ..ChangeOps::default()
+            };
+            self.change_rect_or_stream_attributes(top, left, bottom, right, &ops);
+        }
+    }
+
+    fn copy_rectangular_area(
+        &mut self,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+        page: VTInt,
+        dst_top: VTInt,
+        dst_left: VTInt,
+        dst_page: VTInt,
+    ) {
+        if !PageManager::is_valid_page(page) || !PageManager::is_valid_page(dst_page) {
+            return;
+        }
+
+        // Both rectangles are measured against the active page's extent. Every
+        // page this manager creates is the same size, so the source page's own
+        // extent does not need to be consulted.
+        let (src_top, src_left, src_bottom, src_right) = self.calculate_rect_area(top, left, bottom, right);
+        let src_width = src_right - src_left;
+        let src_height = src_bottom - src_top;
+        if src_width <= 0 || src_height <= 0 {
+            return;
+        }
+
+        let dest_bottom = dst_top + src_height - 1;
+        let dest_right = dst_left + src_width - 1;
+        let (dst_top, dst_left, dst_bottom, dst_right) =
+            self.calculate_rect_area(dst_top, dst_left, dest_bottom, dest_right);
+        if dst_bottom <= dst_top || dst_right <= dst_left {
+            return;
+        }
+        if dst_top == src_top && dst_left == src_left && page == dst_page {
+            return;
+        }
+
+        // Source cells beyond the destination's space are clipped, so only the
+        // destination size matters.
+        let width = (dst_right - dst_left).min(src_width);
+        let height = (dst_bottom - dst_top).min(src_height);
+
+        let src_buffer = self.page_manager.get(page).buffer();
+        let dst_buffer = self.page_manager.get(dst_page).buffer();
+
+        // Snapshot first: the source and destination may be the same buffer and
+        // the rectangles may overlap, so every source cell must be read before
+        // any destination cell is overwritten.
+        let mut cells = Vec::with_capacity((width * height) as usize);
+        {
+            let src = src_buffer.read().unwrap_or_else(|e| e.into_inner());
+            for row in 0..height {
+                for column in 0..width {
+                    cells.push(src.get_cell_data_at(src_top + row, src_left + column).cloned());
+                }
+            }
+        }
+
+        let mut dst = dst_buffer.write().unwrap_or_else(|e| e.into_inner());
+        for row in 0..height {
+            let Some(buffer_row) = dst.get_row_at_screen_line_mut(dst_top + row) else {
+                continue;
+            };
+            for column in 0..width {
+                let index = (row * width + column) as usize;
+                let Some(Some(cell)) = cells.get(index) else {
+                    continue;
+                };
+                buffer_row.write_cell(dst_left + column, cell.clone());
+            }
+        }
+    }
+
+    fn fill_rectangular_area(&mut self, ch: VTParameter, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt) {
+        let (top, left, bottom, right) = self.calculate_rect_area(top, left, bottom, right);
+
+        // The standard allows the GL and GR ranges; the output code page here is
+        // always UTF-8, so the BMP is accepted as well. Default and 0 mean space.
+        let char_value = if ch.value_or(0) == 0 { 32 } else { ch.value() };
+        let printable = (32..=126).contains(&char_value)
+            || (160..=255).contains(&char_value)
+            || ((256..=65535).contains(&char_value) && char::from_u32(char_value as u32).is_some());
+        if !printable {
+            return;
+        }
+        let Some(fill_ch) = char::from_u32(char_value as u32) else {
+            return;
+        };
+
+        let fill_char = self.term_output.translate_key(fill_ch);
+        let attributes = self.page_manager.active_page().attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        fill_rect_with(&mut buffer, top, left, bottom, right, fill_char, attributes);
+    }
+
+    fn erase_rectangular_area(&mut self, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt) {
+        let (top, left, bottom, right) = self.calculate_rect_area(top, left, bottom, right);
+        let attributes = self.erase_attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        fill_region(&mut buffer, top, left, bottom, right, attributes);
+    }
+
+    fn selective_erase_rectangular_area(&mut self, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt) {
+        let (top, left, bottom, right) = self.calculate_rect_area(top, left, bottom, right);
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        selective_erase_region(&mut buffer, top, left, bottom, right);
+    }
+
+    fn select_attribute_change_extent(&mut self, change_extent: ChangeExtent) {
+        match change_extent {
+            ChangeExtent::Rectangle => self.set_mode_flag(ModeFlags::RECTANGULAR_CHANGE_EXTENT, true),
+            ChangeExtent::Default | ChangeExtent::Stream => {
+                self.set_mode_flag(ModeFlags::RECTANGULAR_CHANGE_EXTENT, false);
+            }
+        }
+    }
+
+    fn request_checksum_rectangular_area(
+        &mut self,
+        id: VTInt,
+        page: VTInt,
+        top: VTInt,
+        left: VTInt,
+        bottom: VTInt,
+        right: VTInt,
+    ) {
+        let mut checksum: u16 = 0;
+
+        if self.optional_features.contains(&OptionalFeature::ChecksumReport)
+            && page != 0
+            && PageManager::is_valid_page(page)
+        {
+            let (top, left, bottom, right) = self.calculate_rect_area(top, left, bottom, right);
+            let buffer = self.page_manager.get(page).buffer();
+            let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+
+            for row in top..bottom {
+                for column in left..right {
+                    let Some(cell) = buffer.get_cell_data_at(row, column) else {
+                        continue;
+                    };
+                    for unit in cell.chars().encode_utf16() {
+                        // U+2426 is widely used for the DEC replacement glyph, so
+                        // it keeps the DEC checksum value.
+                        checksum = checksum.wrapping_sub(if unit == 0x2426 { 0x1B } else { unit });
+                    }
+
+                    let attributes = cell.get_attributes();
+                    let rendition = attributes.is_protected() as u16 * 0x04
+                        + attributes.is_invisible() as u16 * 0x08
+                        + (attributes.get_underline_style() != UnderlineStyle::NoUnderline) as u16 * 0x10
+                        + attributes.is_reverse_video() as u16 * 0x20
+                        + attributes.is_blinking() as u16 * 0x40
+                        + attributes.is_intense() as u16 * 0x80;
+                    checksum = checksum.wrapping_sub(rendition);
+
+                    let foreground = legacy_color_index(attributes.get_foreground(), 7);
+                    let background = legacy_color_index(attributes.get_background(), 0);
+                    checksum = checksum.wrapping_sub(u16::from(foreground) << 4);
+                    checksum = checksum.wrapping_sub(u16::from(background));
+                }
+            }
+        }
+
+        self.push_dcs(&format!("{}!~{:04X}", id, checksum));
     }
 
     fn set_mode(&mut self, param: &ModeParams) {
@@ -1449,6 +1845,8 @@ bitflags::bitflags! {
         const ALLOW_DECCOLM = 1 << 21;
         /// Reverse the screen (DECSCNM); the renderer reads this.
         const SCREEN_REVERSED = 1 << 22;
+        /// Rectangular rather than stream attribute-change extent (DECSACE).
+        const RECTANGULAR_CHANGE_EXTENT = 1 << 23;
         /// Hold the frame until the program ends the block (mode 2026).
         const SYNCHRONIZED_OUTPUT = 1 << 23;
         /// Sixel image display mode (DECSDM).
@@ -1643,6 +2041,14 @@ mod tests {
         dispatch.erase_characters(1);
         dispatch.selective_erase_in_display(EraseType::All);
         dispatch.selective_erase_in_line(EraseType::All);
+        dispatch.change_attributes_rectangular_area(1, 1, 2, 2, &VTParameters::default());
+        dispatch.reverse_attributes_rectangular_area(1, 1, 2, 2, &VTParameters::default());
+        dispatch.copy_rectangular_area(1, 1, 1, 1, 1, 1, 1, 1);
+        dispatch.fill_rectangular_area(VTParameter::from(32), 1, 1, 1, 1);
+        dispatch.erase_rectangular_area(1, 1, 1, 1);
+        dispatch.selective_erase_rectangular_area(1, 1, 1, 1);
+        dispatch.select_attribute_change_extent(ChangeExtent::Rectangle);
+        dispatch.request_checksum_rectangular_area(0, 1, 1, 1, 1, 1);
         dispatch.set_mode(&ModeParams::DecAwm);
         dispatch.reset_mode(&ModeParams::DecAwm);
         dispatch.request_mode(&ModeParams::DecOm);
@@ -1905,6 +2311,253 @@ mod tests {
         assert_eq!(cell_text(&mut dispatch, 0, 2), "C");
     }
 
+    // Ported from `ScreenBufferTests::RectangularAreaOperations`: DECFRA fills
+    // a rectangle with a character and the page's active attributes.
+    #[test]
+    fn decfra_fills_the_rectangle_with_the_requested_character() {
+        let mut dispatch = AdaptDispatch::new();
+        let buffer_attr = indexed_attribute();
+        filled_page(&mut dispatch, 'Z', buffer_attr);
+
+        let mut active = TextAttribute::new();
+        active.set_indexed_foreground(4);
+        active.set_intense(true);
+        dispatch.page_manager_mut().active_page().set_attributes(active);
+
+        // 1-based 3;27 to 6;54 is 0-based rows 2..=5 and columns 26..=53.
+        dispatch.fill_rectangular_area(VTParameter::from(42), 3, 27, 6, 54);
+
+        assert_eq!(cell_text(&mut dispatch, 2, 26), "*");
+        assert_eq!(cell_text(&mut dispatch, 5, 53), "*");
+        assert_eq!(cell_attribute(&mut dispatch, 2, 26), active);
+
+        // Everything outside the rectangle is untouched.
+        assert_eq!(cell_text(&mut dispatch, 1, 26), "Z");
+        assert_eq!(cell_text(&mut dispatch, 2, 25), "Z");
+        assert_eq!(cell_attribute(&mut dispatch, 2, 25), buffer_attr);
+    }
+
+    #[test]
+    fn decfra_defaults_to_a_space_and_ignores_unprintable_values() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+
+        dispatch.fill_rectangular_area(VTParameter::default(), 1, 1, 1, 1);
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+
+        dispatch.fill_rectangular_area(VTParameter::from(1), 1, 2, 1, 2);
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "Z");
+    }
+
+    // DECERA uses `_GetEraseAttributes`: the active colours survive, the
+    // rendition attributes do not.
+    #[test]
+    fn decera_erases_with_the_active_colours_and_no_rendition() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![31, 1]));
+
+        dispatch.erase_rectangular_area(3, 27, 6, 54);
+
+        assert_eq!(cell_text(&mut dispatch, 2, 26), " ");
+        let erased = cell_attribute(&mut dispatch, 2, 26);
+        assert!(!erased.is_intense());
+        assert_eq!(erased.get_foreground(), types::TextColor::index16(4));
+        assert_eq!(cell_text(&mut dispatch, 1, 26), "Z");
+    }
+
+    #[test]
+    fn decsera_erases_unprotected_text_and_keeps_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        let attributes = indexed_attribute();
+        filled_page(&mut dispatch, 'Z', attributes);
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let mut buffer = buffer.write().unwrap();
+            let mut protected = attributes;
+            protected.set_protected(true);
+            buffer
+                .get_row_at_screen_line_mut(2)
+                .unwrap()
+                .get_cell_mut(26)
+                .set_attributes(protected);
+        }
+
+        dispatch.selective_erase_rectangular_area(3, 27, 6, 54);
+
+        assert_eq!(cell_text(&mut dispatch, 2, 26), "Z");
+        assert_eq!(cell_text(&mut dispatch, 3, 27), " ");
+        assert_eq!(cell_attribute(&mut dispatch, 3, 27), attributes);
+    }
+
+    // DECCARA changes attributes without touching the text, and combines the
+    // options into AND/XOR masks so an unset attribute is cleared.
+    #[test]
+    fn deccara_changes_attributes_and_leaves_the_text() {
+        let mut dispatch = AdaptDispatch::new();
+        let attributes = indexed_attribute();
+        filled_page(&mut dispatch, 'Z', attributes);
+
+        dispatch.change_attributes_rectangular_area(3, 27, 6, 54, &VTParameters::from_values(vec![7]));
+
+        let changed = cell_attribute(&mut dispatch, 2, 26);
+        assert!(changed.is_reverse_video());
+        assert_eq!(changed.get_foreground(), attributes.get_foreground());
+        assert_eq!(changed.get_background(), attributes.get_background());
+        assert_eq!(cell_text(&mut dispatch, 2, 26), "Z");
+        assert!(!cell_attribute(&mut dispatch, 1, 26).is_reverse_video());
+    }
+
+    #[test]
+    fn deccara_clears_the_named_attributes_too() {
+        let mut dispatch = AdaptDispatch::new();
+        let mut attributes = indexed_attribute();
+        attributes.set_intense(true);
+        attributes.set_faint(true);
+        filled_page(&mut dispatch, 'Z', attributes);
+
+        dispatch.change_attributes_rectangular_area(1, 1, 2, 2, &VTParameters::from_values(vec![22]));
+
+        let changed = cell_attribute(&mut dispatch, 0, 0);
+        assert!(!changed.is_intense());
+        assert!(!changed.is_faint());
+    }
+
+    #[test]
+    fn decrara_toggles_the_named_attribute() {
+        let mut dispatch = AdaptDispatch::new();
+        let mut attributes = indexed_attribute();
+        attributes.set_intense(true);
+        filled_page(&mut dispatch, 'Z', attributes);
+
+        dispatch.reverse_attributes_rectangular_area(3, 27, 6, 54, &VTParameters::from_values(vec![1]));
+
+        assert!(!cell_attribute(&mut dispatch, 2, 26).is_intense());
+        assert_eq!(cell_text(&mut dispatch, 2, 26), "Z");
+        assert!(cell_attribute(&mut dispatch, 1, 26).is_intense());
+    }
+
+    #[test]
+    fn decsace_switches_deccara_between_stream_and_rectangle() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+
+        // The default stream extent runs 3;10 to 5;20 in reading order: the top
+        // row to the end, the middle rows in full, the bottom row from the left.
+        dispatch.change_attributes_rectangular_area(3, 10, 5, 20, &VTParameters::from_values(vec![7]));
+        assert!(cell_attribute(&mut dispatch, 2, 9).is_reverse_video());
+        assert!(!cell_attribute(&mut dispatch, 2, 8).is_reverse_video());
+        assert!(cell_attribute(&mut dispatch, 2, 79).is_reverse_video());
+        assert!(cell_attribute(&mut dispatch, 3, 0).is_reverse_video());
+        assert!(cell_attribute(&mut dispatch, 4, 19).is_reverse_video());
+        assert!(!cell_attribute(&mut dispatch, 4, 20).is_reverse_video());
+
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+        dispatch.select_attribute_change_extent(ChangeExtent::Rectangle);
+        dispatch.change_attributes_rectangular_area(3, 10, 5, 20, &VTParameters::from_values(vec![7]));
+        assert!(cell_attribute(&mut dispatch, 2, 9).is_reverse_video());
+        assert!(cell_attribute(&mut dispatch, 4, 19).is_reverse_video());
+        assert!(!cell_attribute(&mut dispatch, 2, 20).is_reverse_video());
+        assert!(!cell_attribute(&mut dispatch, 3, 0).is_reverse_video());
+    }
+
+    // DECCRA copies a rectangle from one place to another, text and attributes.
+    #[test]
+    fn deccra_copies_a_rectangle_within_the_page() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+
+        let copy_attr = TextAttribute::from_rgb(0, 0xFF0000, Some(0));
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let mut buffer = buffer.write().unwrap();
+            let mut cell = buffer::OutputCell::from_char('*');
+            cell.set_attributes(copy_attr);
+            buffer.fill_rect(10, 26, 12, 53, &cell);
+        }
+
+        // 1-based 11;27 to 13;54 copied to 3;27.
+        dispatch.copy_rectangular_area(11, 27, 13, 54, 1, 3, 27, 1);
+
+        assert_eq!(cell_text(&mut dispatch, 2, 26), "*");
+        assert_eq!(cell_text(&mut dispatch, 4, 53), "*");
+        assert_eq!(cell_attribute(&mut dispatch, 2, 26), copy_attr);
+        assert_eq!(cell_text(&mut dispatch, 1, 26), "Z");
+        assert_eq!(cell_text(&mut dispatch, 5, 26), "Z");
+    }
+
+    #[test]
+    fn deccra_reads_overlapping_source_cells_before_overwriting_them() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+        for (row, ch) in [(0, 'A'), (1, 'B'), (2, 'C')] {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let mut buffer = buffer.write().unwrap();
+            buffer.get_row_at_screen_line_mut(row).unwrap().write_char(0, ch, false);
+        }
+
+        // Move rows 0..=2 down one row, so the destination overlaps the source.
+        dispatch.copy_rectangular_area(1, 1, 3, 1, 1, 2, 1, 1);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "A");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "A");
+        assert_eq!(cell_text(&mut dispatch, 2, 0), "B");
+        assert_eq!(cell_text(&mut dispatch, 3, 0), "C");
+        assert_eq!(cell_text(&mut dispatch, 4, 0), "Z");
+    }
+
+    #[test]
+    fn deccra_copies_between_pages() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+
+        dispatch.set_mode(&ModeParams::AlternateScreenBuffer);
+        dispatch.cursor_position(1, 1);
+        dispatch.print_string("ALT");
+        dispatch.reset_mode(&ModeParams::AlternateScreenBuffer);
+
+        dispatch.copy_rectangular_area(1, 1, 1, 3, 2, 5, 10, 1);
+
+        assert_eq!(cell_text(&mut dispatch, 4, 9), "A");
+        assert_eq!(cell_text(&mut dispatch, 4, 10), "L");
+        assert_eq!(cell_text(&mut dispatch, 4, 11), "T");
+    }
+
+    #[test]
+    fn rect_area_zero_extends_to_the_page() {
+        let mut dispatch = AdaptDispatch::new();
+        filled_page(&mut dispatch, 'Z', indexed_attribute());
+
+        dispatch.erase_rectangular_area(1, 1, 0, 0);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 23, 79), " ");
+    }
+
+    #[test]
+    fn decrqcra_reports_zero_until_the_feature_is_enabled() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('A');
+
+        dispatch.request_checksum_rectangular_area(7, 1, 1, 1, 1, 1);
+
+        assert_eq!(dispatch.take_responses(), vec!["\x1bP7!~0000\x1b\\".to_string()]);
+    }
+
+    #[test]
+    fn decrqcra_checksums_the_requested_cells() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('A');
+        dispatch.set_optional_features(std::collections::HashSet::from([OptionalFeature::ChecksumReport]));
+
+        dispatch.request_checksum_rectangular_area(1, 1, 1, 1, 1, 1);
+
+        // 'A' (0x41) and the default colour indices 7 and 0, subtracted from zero.
+        let expected = 0u16.wrapping_sub(0x41).wrapping_sub(0x70);
+        assert_eq!(dispatch.take_responses(), vec![format!("\x1bP1!~{expected:04X}\x1b\\")]);
+    }
+
     #[test]
     fn decset_changes_state_and_decrqm_reports_it() {
         let mut dispatch = AdaptDispatch::new();
@@ -2097,6 +2750,28 @@ mod tests {
         let buffer = dispatch.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
         (buffer.screen_width(), buffer.screen_height())
+    }
+
+    fn filled_page(dispatch: &mut AdaptDispatch, ch: char, attributes: TextAttribute) {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let mut buffer = buffer.write().unwrap();
+        let (height, width) = (buffer.screen_height(), buffer.screen_width());
+        let mut cell = buffer::OutputCell::from_char(ch);
+        cell.set_attributes(attributes);
+        buffer.fill_rect(0, 0, height - 1, width - 1, &cell);
+    }
+
+    fn cell_attribute(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> TextAttribute {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        *buffer.get_cell_data_at(row, column).unwrap().get_attributes()
+    }
+
+    fn indexed_attribute() -> TextAttribute {
+        let mut attributes = TextAttribute::new();
+        attributes.set_indexed_foreground(1);
+        attributes.set_indexed_background(2);
+        attributes
     }
 
     #[test]

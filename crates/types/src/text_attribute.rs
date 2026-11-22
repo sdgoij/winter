@@ -191,10 +191,13 @@ impl TextAttribute {
         self.underline_color = TextColor::new();
     }
 
-    /// Sets default rendition attributes.
+    /// Clears the rendition attributes, leaving colours and protection alone.
+    ///
+    /// Ported from `TextAttribute::SetDefaultRenditionAttributes`, which masks
+    /// out `Rendition` — everything except `Protected` — and leaves the
+    /// hyperlink and mark fields untouched.
     pub fn set_default_rendition_attributes(&mut self) {
-        self.attrs = CharacterAttributes::Normal;
-        self.hyperlink_id = 0;
+        self.attrs &= !CharacterAttributes::Rendition;
     }
 
     /// Sets standard erase attributes.
@@ -352,6 +355,22 @@ mod tests {
     }
 
     #[test]
+    fn default_rendition_keeps_protection_and_hyperlink() {
+        let mut attr = TextAttribute::new();
+        attr.set_attrs(CharacterAttributes::All);
+        attr.set_hyperlink_id(7);
+
+        attr.set_default_rendition_attributes();
+
+        assert!(attr.is_protected());
+        assert_eq!(
+            attr.get_attrs() & !CharacterAttributes::Protected,
+            CharacterAttributes::Normal
+        );
+        assert_eq!(attr.get_hyperlink_id(), 7);
+    }
+
+    #[test]
     fn test_set_attrs() {
         let mut attr = TextAttribute::new();
         attr.set_attrs(CharacterAttributes::Intense);
@@ -416,8 +435,12 @@ mod proptests {
             attr.set_default_background();
             attr.set_default_underline_color();
 
-            // Should be back to default
-            prop_assert_eq!(attr.attrs, CharacterAttributes::Normal);
+            // Protection is not a rendition attribute and survives the reset.
+            prop_assert_eq!(
+                attr.attrs & !CharacterAttributes::Protected,
+                CharacterAttributes::Normal
+            );
+            prop_assert!(attr.attrs.contains(CharacterAttributes::Protected));
         }
 
         #[test]

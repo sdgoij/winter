@@ -40,7 +40,7 @@ impl AdaptDispatch {
 
     /// Ported from `_ApplyGraphicsOption`: returns how many options were consumed,
     /// which is more than one for the `38`/`48` extended-colour forms.
-    fn apply_graphics_option(options: &VTParameters, index: usize, attributes: &mut TextAttribute) -> usize {
+    pub(crate) fn apply_graphics_option(options: &VTParameters, index: usize, attributes: &mut TextAttribute) -> usize {
         if options.has_sub_params_for(index) {
             if let Some(sub_params) = options.sub_params_for(index) {
                 let collected = collect_sub_params(sub_params);

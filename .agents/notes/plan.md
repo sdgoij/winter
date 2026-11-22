@@ -10,13 +10,13 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~2.0k | 79 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
+| `types` | ~2.0k | 80 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
 | `buffer` | ~5.5k | 190 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~7.5k | 102 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, mode (incl. DECCOLM), report, save-restore and tab handlers ported |
+| `adapter` | ~8.2k | 116 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-631 tests, doc tests. Phases 5–14 are not started.
+646 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -41,9 +41,11 @@ settled.
    DECSEL, with `_GetEraseAttributes` and DECECM), modes (DECSET, DECRST,
    DECRQM through a decoded ModeParams table, with DECCOLM resizing the page),
    device reports (DSR/CPR/DECXCPR/DA1/DA2/DA3/VT52/DECREQTPARM), cursor
-   save/restore (DECSC/DECRC), tab stops, and charset designation and shifts.
-   Still ported nowhere: rectangular operations, hyperlinks and OSC strings,
-   sixel/DCS, DRCS, macros, presentation state, and window manipulation.
+   save/restore (DECSC/DECRC), tab stops, charset designation and shifts, and
+   rectangular operations (DECCARA, DECRARA with DECSACE extent, DECCRA,
+   DECFRA, DECERA, DECSERA, DECRQCRA).
+   Still ported nowhere: hyperlinks and OSC strings, sixel/DCS, DRCS, macros,
+   presentation state, and window manipulation.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -53,6 +55,16 @@ settled.
    real conformance runner.
 
 **Settled.**
+
+- **Rectangular operations are ported.** `_CalculateRectArea` is shared by all
+  seven handlers, so origin-mode offsets, zero-as-extent and clamping are
+  defined once. DECCARA/DECRARA apply AND/XOR masks (DECSACE picks rectangle or
+  stream extent), DECCRA snapshots the source before writing so overlapping
+  moves and cross-page copies are safe, and DECRQCRA computes the DEC checksum
+  only when `OptionalFeature::ChecksumReport` is enabled (upstream's
+  `Feature_VtChecksumReport` is always on, the optional bit is what gates the
+  report). DECCRA's double-width clipping is not replicated: rows are uniform
+  width here and cells carry no DBCS lead/trail marking.
 
 - **`buffer` has `resize`/`reflow`.** `TextBuffer::logical_lines` joins rows the
   wrap flag says belong together (across the scrollback boundary) and
