@@ -20,7 +20,8 @@ use types::UnderlineStyle;
 use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGROUND as SELECTION_SLOT};
 use types::text_color::{ColorType, TextColor};
 
-use crate::app::{Faces, next_match};
+use crate::app::Faces;
+use crate::find::FindBar;
 use crate::input::{self, ModifierSides};
 use crate::layout::PaneId;
 use crate::term_control::Control;
@@ -37,42 +38,6 @@ pub(crate) const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12
 pub(crate) const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
 /// The fill behind selected cells when the table names no selection colour.
 pub(crate) const FALLBACK_SELECTION: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
-
-/// The find bar's state.
-#[derive(Debug, Default)]
-pub(crate) struct FindBar {
-    /// Whether the bar is showing.
-    pub(crate) open: bool,
-    /// What the user is looking for.
-    pub(crate) query: String,
-    /// The query `matches` were computed for.
-    pub(crate) searched: String,
-    /// Every match in the document, in reading order.
-    pub(crate) matches: Vec<buffer::TextMatch>,
-    /// The match Enter moved to, if any.
-    pub(crate) current: Option<usize>,
-    /// The document height when the matches were computed.
-    pub(crate) document_height: i32,
-    /// Whether the field still needs the keyboard focus.
-    pub(crate) focus: bool,
-}
-
-impl FindBar {
-    pub(crate) fn show(&mut self) {
-        self.open = true;
-        self.focus = true;
-    }
-
-    pub(crate) fn hide(&mut self) {
-        self.open = false;
-        self.focus = false;
-        self.current = None;
-    }
-
-    pub(crate) fn toggle(&mut self) {
-        if self.open { self.hide() } else { self.show() }
-    }
-}
 
 /// What every pane paints with: the cell, the faces, and the moment.
 ///
@@ -397,28 +362,19 @@ impl Pane {
 
     /// Recomputes the matches after the query changed and scrolls to the first.
     pub(crate) fn refresh_find(&mut self) {
-        let (matches, document_height) = self.control.find_matches(&self.find.query);
-
-        self.find.matches = matches;
-        self.find.document_height = document_height;
-        self.find.searched = self.find.query.clone();
-        self.find.current = (!self.find.matches.is_empty()).then_some(0);
+        self.find.refresh(&mut self.control);
         self.scroll_to_find();
     }
 
     /// Moves to the next (or previous) match, wrapping at both ends.
     pub(crate) fn step_find(&mut self, forward: bool) {
-        self.find.current = next_match(self.find.current, self.find.matches.len(), forward);
+        self.find.step(forward);
         self.scroll_to_find();
     }
 
     /// Brings the current match into the middle of the view.
     pub(crate) fn scroll_to_find(&mut self) {
-        let Some(found) = self.find.current.and_then(|index| self.find.matches.get(index)) else {
-            return;
-        };
-        let (row, height, total) = (found.start_row, self.control.size().1, self.find.document_height);
-        self.view.scroll_to_row(row, height, total);
+        self.find.scroll_to(&self.control, &mut self.view);
     }
 
     /// Draws the find bar and takes its keys.

@@ -1217,20 +1217,6 @@ fn matches_filter(label: &str, filter: &str) -> bool {
     filter.is_empty() || label.to_lowercase().contains(&filter.to_lowercase())
 }
 
-/// The match Enter moves to, wrapping at both ends.
-pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-
-    Some(match current {
-        Some(index) if forward => (index + 1) % len,
-        Some(index) => (index + len - 1) % len,
-        None if forward => 0,
-        None => len - 1,
-    })
-}
-
 /// Whether this frame's key events belong to the shell.
 ///
 /// A window's text field owns the keyboard, and so does an open palette;
@@ -1357,7 +1343,8 @@ mod tests {
     use types::text_color::TextColor;
 
     use crate::config::{BindingDraft, Draft, ProfileDraft, SchemeDraft, ThemeDraft, settings_rows};
-    use crate::terminal_widget::{FindBar, attribute_colors, keymap, resolve, scrollbar_track};
+    use crate::find::FindBar;
+    use crate::terminal_widget::{attribute_colors, keymap, resolve, scrollbar_track};
 
     #[test]
     fn a_face_is_chosen_by_style_and_falls_back_to_the_embedded_one() {
@@ -1555,16 +1542,6 @@ mod tests {
             command_for(settings::DEFAULT_KEYBINDINGS, &key(egui::Key::F, true, true)),
             Some(TabAction::Find)
         );
-    }
-
-    #[test]
-    fn the_next_match_wraps_at_both_ends() {
-        assert_eq!(next_match(None, 0, true), None);
-        assert_eq!(next_match(None, 3, true), Some(0));
-        assert_eq!(next_match(None, 3, false), Some(2));
-        assert_eq!(next_match(Some(1), 3, true), Some(2));
-        assert_eq!(next_match(Some(2), 3, true), Some(0));
-        assert_eq!(next_match(Some(0), 3, false), Some(2));
     }
 
     #[test]

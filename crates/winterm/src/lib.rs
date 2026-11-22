@@ -27,6 +27,7 @@
 pub mod app;
 pub mod blink;
 pub mod config;
+pub(crate) mod find;
 pub mod grid;
 pub mod icon;
 pub mod input;

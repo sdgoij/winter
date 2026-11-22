@@ -13,9 +13,10 @@ shared by all three.
 Early but coherent. The terminal core — parsing, the buffer, dispatch, the
 renderer, the input encoders, the console host, a working pty layer — is
 written and tested. On Windows the shell is native WinUI 3, with tabs, chords,
-pointer selection, scrollback, the wheel, live settings reload and a settings
-dialog (ADRs 040–049, 025); Linux and macOS run the egui shell (ADR 018). The
-native shells for those two platforms come after the behaviour is right.
+pointer selection, scrollback, the wheel, live settings reload, a settings
+dialog and a find bar (ADRs 040–050, 025); Linux and macOS run the egui shell
+(ADR 018). The native shells for those two platforms come after the behaviour is
+right.
 
 | Crate | What it is | State |
 |---|---|---|
@@ -30,9 +31,9 @@ native shells for those two platforms come after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–049), including a saved settings file picked up within a second (ADR 025) and a settings dialog |
+| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–050), including a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
 
-1620 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1624 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -97,7 +98,8 @@ The plus button starts any profile by name; Ctrl+Shift+P opens the command
 palette, which lists a tab per profile followed by the window's actions with the
 chord each is bound to (type to filter, arrows move, Enter runs, Escape closes).
 Ctrl+Shift+F opens the find bar: every match in the history and on screen is
-highlighted, Enter and Shift+Enter step through them, and Escape closes it. A
+highlighted, Enter and Shift+Enter step through them, and Escape closes it. On
+Windows the bar is an overlay in the pane (ADR 050). A
 scrollbar on the right edge shows where the view sits in the history; its thumb
 drags, the track jumps, and the prompts a shell reports with OSC 133 are ticks,
 red when the command failed, that jump to the prompt when clicked. A program's

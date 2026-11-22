@@ -78,3 +78,4 @@ Rules:
 | [047](047-scrolling-and-the-wheel.md) | Scrolling is six actions; the WinUI wheel is read by a low-level mouse hook | Amended by 048 |
 | [048](048-wheel-reaches-a-tracking-program.md) | The wheel is forwarded to a mouse-tracking program; Shift keeps it for the viewport | Accepted |
 | [049](049-winui-settings-dialog.md) | The WinUI settings window is a modal dialog over the shared `config::Draft` | Accepted |
+| [050](050-winui-find-bar.md) | The WinUI find bar is an overlay over the shared `find::FindBar`; the renderer paints the matches | Accepted |

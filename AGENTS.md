@@ -240,7 +240,7 @@ Direct2D onto a `SwapChainPanel`, with the pane's grid fitted to the panel's
 cells and the face rasterised at its composition scale, a start that runs the
 settings file's profile and paints its font size and scheme, a poll that
 reloads a saved settings file within a second (ADR 025), a settings dialog
-(ADR 049), the file's chords
+(ADR 049), a find bar (ADR 050), the file's chords
 matched before the terminal sees them, a pointer selection that copies through
 the clipboard, and scrollback reached by chord and by a low-level wheel hook
 that a mouse-tracking program receives unless Shift is held (ADRs 047, 048);

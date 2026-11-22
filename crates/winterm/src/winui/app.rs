@@ -24,6 +24,7 @@ use types::color_table::ColorAlias;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
+use crate::find::FindBar;
 use crate::input;
 use crate::session::Session;
 use crate::tabs::Tabs;
@@ -56,6 +57,8 @@ struct Tab {
     control: Control,
     view: ViewState,
     title: String,
+    /// The find bar's query, matches and current match.
+    find: FindBar,
 }
 
 /// The application's state and its messages.
@@ -81,6 +84,7 @@ struct Shell {
     shared: SharedBackend,
     panel: ElementRef<SwapChainPanel>,
     focus: ElementRef<Border>,
+    find_field: ElementRef<TextBox>,
     surface: Rc<RefCell<Option<Surface>>>,
     _observation: ElementObservation,
     timer: Option<ComponentTimer>,
@@ -144,6 +148,12 @@ pub(super) enum Message {
     Window(isize),
     /// One edit in the settings dialog.
     Settings(SettingsMessage),
+    /// The find bar's query changed.
+    FindQuery(String),
+    /// Moves to the next (true) or previous match.
+    FindStep(bool),
+    /// Closes the find bar.
+    FindClose,
 }
 
 impl Component for Shell {
@@ -172,6 +182,7 @@ impl Component for Shell {
             control,
             view: ViewState::new(),
             title: template.title.clone(),
+            find: FindBar::default(),
         };
 
         let face = face_path();
@@ -245,6 +256,7 @@ impl Component for Shell {
             shared,
             panel,
             focus: ElementRef::<Border>::new(),
+            find_field: ElementRef::<TextBox>::new(),
             surface,
             _observation: observation,
             timer,
@@ -313,25 +325,64 @@ impl Component for Shell {
                 let _ = reorder.send(Message::Reorder(ids));
             });
 
+        let find_open = self.tabs.active().is_some_and(|tab| tab.find.open);
+
+        let mut pane_children: Vec<View> = vec![SwapChainPanel::new().element_ref(&self.panel).into()];
+        if let Some(tab) = self.tabs.active()
+            && tab.find.open
+        {
+            pane_children.push(find_bar(tab, &dialog, &self.find_field));
+        }
+        let pane_content = Grid::new().children(pane_children);
+
         let pane = Border::new()
             .is_tab_stop(true)
             .capture_pointer_on_press(true)
             .focus_on_pointer_release(true)
             .element_ref(&self.focus)
             .background(Color::rgb(12, 12, 12))
-            .content(SwapChainPanel::new().element_ref(&self.panel))
-            .on_preview_key_down(RoutedCallback::new(move |info| {
-                let _ = keys.send(Message::Key(info));
+            .content(pane_content)
+            .on_preview_key_down(RoutedCallback::new(move |info: KeyEventInfo| {
+                let pressed = !info.status.is_released;
+                let bound = key_of(info.key)
+                    .and_then(|key| chord_action(&bindings, key, info.modifiers))
+                    .is_some();
+
+                if find_open {
+                    // A bound chord still reaches the window; Enter and Escape
+                    // move the bar; every other key belongs to its text field.
+                    if pressed && bound {
+                        let _ = keys.send(Message::Key(info));
+                        return true;
+                    }
+                    if pressed {
+                        match key_of(info.key) {
+                            Some(Key::Escape) => {
+                                let _ = keys.send(Message::FindClose);
+                                return true;
+                            }
+                            Some(Key::Enter) => {
+                                let forward = !info.modifiers.contains(InputModifiers::SHIFT);
+                                let _ = keys.send(Message::FindStep(forward));
+                                return true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    return false;
+                }
+
                 // A bound chord is the window's, so the toolkit must not also
                 // type it. A printable key with no binding still has to raise
                 // `CharacterReceived`, which is the text path; the keys the
                 // terminal encodes itself are marked handled.
-                let bound = key_of(info.key)
-                    .and_then(|key| chord_action(&bindings, key, info.modifiers))
-                    .is_some();
+                let _ = keys.send(Message::Key(info));
                 bound || !matches!(key_of(info.key), Some(Key::Char(_) | Key::Space))
             }))
-            .on_character_received(RoutedCallback::new(move |info| {
+            .on_character_received(RoutedCallback::new(move |info: CharacterEventInfo| {
+                if find_open {
+                    return false;
+                }
                 let _ = characters.send(Message::Char(info));
                 true
             }))
@@ -397,6 +448,9 @@ impl Component for Shell {
             Message::Released(info) => self.pointer_released(info),
             Message::Window(handle) => self._wheel = wheel::install(handle),
             Message::Settings(message) => self.settings_message(message),
+            Message::FindQuery(text) => self.find_query(text),
+            Message::FindStep(forward) => self.find_step(forward),
+            Message::FindClose => self.close_find(),
         }
     }
 }
@@ -450,6 +504,16 @@ impl Shell {
             self.focus_attempted = self.focused;
         }
 
+        // The find field mounts a frame after the bar opens, so the request is
+        // retried until the element exists.
+        let find_focus = self.tabs.active().is_some_and(|tab| tab.find.open && tab.find.focus);
+        if find_focus
+            && self.find_field.request_focus()
+            && let Some(tab) = self.tabs.active_mut()
+        {
+            tab.find.focus = false;
+        }
+
         // The binding has no wheel event, so the message hook collected it.
         // A modal dialog owns the wheel while it is open; our copy is dropped so
         // the dialog's own scroller moves and the terminal behind it stays put.
@@ -472,7 +536,9 @@ impl Shell {
                 return;
             };
 
-            renderer.data_mut().refresh(&mut tab.control, &tab.view, blink_on);
+            renderer
+                .data_mut()
+                .refresh(&mut tab.control, &tab.view, blink_on, Some(&tab.find));
 
             // The engine resolves a cell's colours through the renderer's table,
             // not the data's copy, so the shell hands it the pane's palette
@@ -657,6 +723,50 @@ impl Shell {
         }
     }
 
+    /// Shows or hides the active tab's find bar.
+    fn toggle_find(&mut self) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        tab.find.toggle();
+        if tab.find.open {
+            tab.find.refresh(&mut tab.control);
+            tab.find.scroll_to(&tab.control, &mut tab.view);
+        } else {
+            let _ = self.focus.request_focus();
+        }
+    }
+
+    /// Recomputes the matches and scrolls to the first.
+    fn find_query(&mut self, text: String) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        tab.find.query = text;
+        tab.find.refresh(&mut tab.control);
+        tab.find.scroll_to(&tab.control, &mut tab.view);
+    }
+
+    /// Moves to the next (true) or previous match.
+    fn find_step(&mut self, forward: bool) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if tab.find.searched != tab.find.query {
+            tab.find.refresh(&mut tab.control);
+        }
+        tab.find.step(forward);
+        tab.find.scroll_to(&tab.control, &mut tab.view);
+    }
+
+    /// Closes the find bar and returns focus to the terminal.
+    fn close_find(&mut self) {
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.find.hide();
+        }
+        let _ = self.focus.request_focus();
+    }
+
     /// The title the window shows: the active tab's.
     fn title(&self) -> &str {
         self.tabs.active().map_or("winterm", |tab| tab.title.as_str())
@@ -679,6 +789,7 @@ impl Shell {
             control,
             view: ViewState::new(),
             title: self.template.title.clone(),
+            find: FindBar::default(),
         });
         let _ = self.focus.request_focus();
     }
@@ -732,6 +843,12 @@ impl Shell {
             return;
         }
 
+        // The find field owns the keyboard while its bar is open; only a bound
+        // chord, handled above, leaves it.
+        if self.tabs.active().is_some_and(|tab| tab.find.open) {
+            return;
+        }
+
         let event = input::Event::Key {
             key,
             pressed,
@@ -754,6 +871,10 @@ impl Shell {
 
     /// Hands composed text to the active terminal's text path.
     fn character(&mut self, info: CharacterEventInfo) {
+        if self.tabs.active().is_some_and(|tab| tab.find.open) {
+            return;
+        }
+
         let Some(character) = char::from_u32(u32::from(info.character)) else {
             return;
         };
@@ -801,8 +922,9 @@ impl Shell {
             settings::Action::ScrollToTop => self.scroll_to_active(false),
             settings::Action::ScrollToBottom => self.scroll_to_active(true),
             settings::Action::OpenSettings => self.toggle_settings(),
-            // Panes, find and the palette are not this shell's yet, so their
-            // chords fall through.
+            settings::Action::Find => self.toggle_find(),
+            // Panes and the palette are not this shell's yet, so their chords
+            // fall through.
             _ => {}
         }
     }
@@ -1310,6 +1432,55 @@ fn resolved_settings(document: &settings::Settings) -> (TerminalSettings, Rc<[se
         document.keybindings.clone().into(),
         document.font.size,
     )
+}
+
+/// The find bar: a query field, previous and next, and the match count.
+fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox>) -> View {
+    let count = tab.find.matches.len();
+    let shown = tab.find.current.map_or(0, |index| index + 1);
+    let status = if count == 0 && !tab.find.query.is_empty() {
+        "No matches".to_string()
+    } else {
+        format!("{shown} of {count}")
+    };
+
+    let query = {
+        let sender = sender.clone();
+        TextBox::new()
+            .text(&tab.find.query)
+            .placeholder_text("Find")
+            .width(180.0)
+            .element_ref(field)
+            .on_text_changed(move |text: Rc<str>| {
+                let _ = sender.send(Message::FindQuery(text.to_string()));
+            })
+    };
+    let previous = {
+        let sender = sender.clone();
+        Button::new().content("↑").on_click(move || {
+            let _ = sender.send(Message::FindStep(false));
+        })
+    };
+    let next = {
+        let sender = sender.clone();
+        Button::new().content("↓").on_click(move || {
+            let _ = sender.send(Message::FindStep(true));
+        })
+    };
+
+    Border::new()
+        .background(Color::rgb(32, 32, 36))
+        .padding(Thickness::uniform(6.0))
+        .horizontal_alignment(HorizontalAlignment::Right)
+        .vertical_alignment(VerticalAlignment::Top)
+        .margin(Thickness::uniform(12.0))
+        .content(
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .children((query, previous, next, TextBlock::new().text(status))),
+        )
+        .into()
 }
 
 /// Maps a Windows virtual-key code to the terminal's key identity.

@@ -17,6 +17,7 @@ description: Build, run and live-check the WinUI 3 shell in crates/winterm/src/w
 | `surface.rs` | D3D11 device, composition swap chain, Direct2D blit (permitted `unsafe`) |
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
+| `../find.rs` | The query, matches and screen spans, shared with the egui pane |
 | `mod.rs` | Module boundary and `run()` |
 
 `app.rs` owns the only `Renderer` and swap chain. Both shells share `input.rs`,
@@ -83,6 +84,15 @@ scroll.
   start of a paint. These were real bugs; do not undo them.
 - The grid is the whole cells that fit the panel; the face is rasterised at the
   composition scale so a high-DPI monitor gets physical pixels.
+
+## Find bar
+
+Ctrl+Shift+F toggles the active tab's bar (`find::FindBar`). It is an overlay in
+the pane's `Grid`: a `TextBox`, previous/next and a count. While it is open the
+pane forwards no key or character to the terminal; a bound chord still reaches
+the window, Enter and Shift+Enter step, and Escape closes. Highlights come from
+`TerminalData`'s `search_highlights` and the renderer's selection-brush pass; do
+not paint them in the shell.
 
 ## Settings dialog
 

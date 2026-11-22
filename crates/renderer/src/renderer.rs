@@ -238,6 +238,9 @@ fn paint_commands(
     // 4. Selection.
     paint_selection(engine, data)?;
 
+    // 5. Find matches, over the selection colours.
+    paint_highlights(engine, data)?;
+
     // 5. Cursor.
     let cursor = data.cursor_options();
     if cursor.in_viewport && cursor.is_visible {
@@ -558,6 +561,37 @@ fn paint_selection(engine: &mut dyn RenderEngine, data: &impl RenderData) -> Ren
                 // A failed selection paint is not fatal in upstream either.
                 let _ = engine.paint_selection(rect);
             }
+        });
+    }
+
+    Ok(())
+}
+
+/// Paints the find bar's matches with the selection brush.
+fn paint_highlights(engine: &mut dyn RenderEngine, data: &impl RenderData) -> RenderResult<()> {
+    let spans = data.search_highlights();
+    if spans.is_empty() {
+        return Ok(());
+    }
+
+    let viewport = data.viewport();
+    let width = data.text_buffer().screen_width();
+
+    for span in spans {
+        span.iterate_rows(width, |row, left, right| {
+            if row < viewport.top() || row > viewport.bottom() {
+                return;
+            }
+
+            let screen_row = row - viewport.top();
+            let screen_left = (left - viewport.left()).max(0);
+            let screen_right = (right - viewport.left() + 1).min(viewport.width());
+            if screen_left >= screen_right {
+                return;
+            }
+
+            let rect = Rect::new(screen_left, screen_row, screen_right, screen_row + 1);
+            let _ = engine.paint_selection(rect);
         });
     }
 
@@ -1135,6 +1169,25 @@ mod tests {
     fn a_selection_span_is_painted_per_row() {
         let mut data = TestData::new(3, 2);
         data.selection = vec![PointSpan::new(Point::new(0, 0), Point::new(1, 1))];
+
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut renderer = Renderer::new(data, RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), vec![screen_rect(3, 2)])));
+
+        renderer.paint_frame().expect("frame");
+        let paints = log
+            .borrow()
+            .calls
+            .iter()
+            .filter(|call| **call == "paint_selection")
+            .count();
+        assert_eq!(paints, 2);
+    }
+
+    #[test]
+    fn a_search_highlight_is_painted_per_row() {
+        let mut data = TestData::new(3, 2);
+        data.highlights = vec![PointSpan::new(Point::new(0, 0), Point::new(1, 1))];
 
         let log = Rc::new(RefCell::new(Log::default()));
         let mut renderer = Renderer::new(data, RenderSettings::new());

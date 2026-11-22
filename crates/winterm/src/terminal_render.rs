@@ -11,6 +11,7 @@ use buffer::TextBuffer;
 use renderer::{Composition, CursorOptions, FontInfo, RenderData, RenderSettings};
 use utils::{InclusiveRect, Point, PointSpan};
 
+use crate::find::FindBar;
 use crate::term_control::Control;
 use crate::view::View;
 
@@ -24,6 +25,7 @@ pub struct TerminalData {
     cursor: CursorOptions,
     selection: Vec<PointSpan>,
     highlights: Vec<PointSpan>,
+    focused_highlight: Option<PointSpan>,
     block: bool,
     title: String,
     tsf: Composition,
@@ -42,6 +44,7 @@ impl TerminalData {
             cursor: CursorOptions::default(),
             selection: Vec::new(),
             highlights: Vec::new(),
+            focused_highlight: None,
             block: false,
             title: String::new(),
             tsf: Composition::default(),
@@ -50,8 +53,8 @@ impl TerminalData {
         }
     }
 
-    /// Refreshes the copy, the cursor and the selection from `control`.
-    pub fn refresh(&mut self, control: &mut Control, view: &View, cursor_on: bool) {
+    /// Refreshes the copy, the cursor, the selection and the find highlights.
+    pub(crate) fn refresh(&mut self, control: &mut Control, view: &View, cursor_on: bool, find: Option<&FindBar>) {
         let screen = control.snapshot(view);
         let (columns, rows) = (screen.width.max(1), screen.height.max(1));
 
@@ -95,6 +98,15 @@ impl TerminalData {
         if let Some(title) = control.title() {
             self.title.push_str(title);
         }
+
+        self.highlights.clear();
+        self.focused_highlight = None;
+        if let Some(find) = find.filter(|find| find.open && !find.matches.is_empty()) {
+            let (spans, focused) =
+                crate::find::highlight_spans(&find.matches, find.current, history, scroll, columns, rows);
+            self.highlights = spans;
+            self.focused_highlight = focused;
+        }
     }
 }
 
@@ -120,7 +132,7 @@ impl RenderData for TerminalData {
     }
 
     fn search_highlight_focused(&self) -> Option<PointSpan> {
-        None
+        self.focused_highlight
     }
 
     fn selection_spans(&self) -> &[PointSpan] {
@@ -274,7 +286,7 @@ mod tests {
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
         let view = View::new();
-        data.refresh(&mut control, &view, true);
+        data.refresh(&mut control, &view, true, None);
 
         let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(SolidRasterizer)));
         let mut renderer = Renderer::new(data, RenderSettings::new());
@@ -310,7 +322,7 @@ mod tests {
         view.extend((2, 0));
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 6, 2);
-        data.refresh(&mut control, &view, true);
+        data.refresh(&mut control, &view, true, None);
 
         assert!(!data.selection.is_empty(), "the selection reached the screen");
         assert!(data.selection.iter().all(|span| span.start.y < 2));
