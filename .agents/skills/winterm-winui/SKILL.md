@@ -131,6 +131,26 @@ this snapshot leaves a strip of the system caption title above the control's
 content. Tabs and `+` stay interactive; the rest of the row drags the window.
 The window title remains the active tab's title for the taskbar.
 
+## Scrollbar
+
+The bar is a XAML `Canvas` overlay in the pane's `Grid`, between the swap
+chain and the find bar, so it paints over the last cells the way the egui shell
+does. `winui::scrollbar` builds it from `scrollbar` (the shared fractions) and
+`TerminalData`, which now carries the snapshot's document height and prompt
+marks.
+
+- The overlay takes no pointer events of its own. The pane's handlers own the
+  strip: `bar::contains(panel_size.0, info.x)` decides, then `scrollbar::press`,
+  `drag` and `release` move the viewport, and `scrollbar::tick_at` turns a press
+  near a mark into `scroll_to_row`. `scrollbar_press` keeps the same press out
+  of selection and mouse forwarding.
+- The bar's geometry is DIPs: `panel_size` and `PointerEventInfo` are DIPs
+  while the grid is physical pixels at the composition scale. Do not mix them.
+- A press is owned until release; a move without the left button is treated as
+  the release when the pane never saw one.
+- `scrollbar::thumb_pixels` is shared with egui, so the two bars cannot drift.
+  `bar::mark_top` centres a tick on its row and keeps it inside the track.
+
 ## Find bar
 
 Ctrl+Shift+F toggles the active tab's bar (`find::FindBar`). It is an overlay in

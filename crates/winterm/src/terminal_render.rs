@@ -12,6 +12,7 @@ use renderer::{Composition, CursorOptions, FontInfo, RenderData, RenderSettings}
 use utils::{InclusiveRect, Point, PointSpan};
 
 use crate::find::FindBar;
+use crate::grid;
 use crate::term_control::Control;
 use crate::view::View;
 
@@ -31,6 +32,10 @@ pub struct TerminalData {
     tsf: Composition,
     snippet: Composition,
     composition_origin: Option<Point>,
+    /// How many rows the document holds, history included.
+    document_height: i32,
+    /// The prompt marks the scrollbar draws.
+    marks: Vec<grid::MarkTick>,
 }
 
 impl TerminalData {
@@ -50,6 +55,8 @@ impl TerminalData {
             tsf: Composition::default(),
             snippet: Composition::default(),
             composition_origin: None,
+            document_height: rows,
+            marks: Vec::new(),
         }
     }
 
@@ -107,6 +114,19 @@ impl TerminalData {
             self.highlights = spans;
             self.focused_highlight = focused;
         }
+
+        self.document_height = screen.document_height;
+        self.marks = screen.marks;
+    }
+
+    /// How many rows the document holds, history included.
+    pub const fn document_height(&self) -> i32 {
+        self.document_height
+    }
+
+    /// The prompt marks the scrollbar draws.
+    pub fn marks(&self) -> &[grid::MarkTick] {
+        &self.marks
     }
 }
 

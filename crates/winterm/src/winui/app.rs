@@ -26,6 +26,7 @@ use windows_reactor::*;
 
 use crate::find::FindBar;
 use crate::input;
+use crate::scrollbar;
 use crate::session::Session;
 use crate::tabs::Tabs;
 use crate::term_control::Control;
@@ -36,6 +37,7 @@ use crate::view::View as ViewState;
 
 use super::icon;
 use super::menu::{self, MenuEntry};
+use super::scrollbar as bar;
 use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
@@ -130,6 +132,10 @@ struct Shell {
     /// Whether the pane should take the keyboard back after XAML hands it to
     /// the window on a space, until the instant it stops trying.
     restore_focus_until: Option<Instant>,
+    /// The scrollbar's drag state.
+    scrollbar: scrollbar::Scrollbar,
+    /// Whether the pressed pointer is on the scrollbar rather than the grid.
+    scrollbar_press: bool,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
     /// The cell and block flag a left press started on, so a drag begins a
@@ -337,6 +343,8 @@ impl Component for Shell {
             sides: input::ModifierSides::default(),
             pending: None,
             restore_focus_until: None,
+            scrollbar: scrollbar::Scrollbar::default(),
+            scrollbar_press: false,
             blink_on: true,
             blink_at: Instant::now(),
             focused: false,
@@ -409,10 +417,18 @@ impl Component for Shell {
         let menu_open = self.menu_open;
 
         let mut pane_children: Vec<View> = vec![SwapChainPanel::new().element_ref(&self.panel).into()];
-        if let Some(tab) = self.tabs.active()
-            && tab.find.open
-        {
-            pane_children.push(find_bar(tab, &dialog, &self.find_field));
+        if let Some(tab) = self.tabs.active() {
+            if let Some(track) = bar::overlay(
+                tab.view.scroll(),
+                self.renderer.data(),
+                tab.control.size().1,
+                self.panel_size.1,
+            ) {
+                pane_children.push(track);
+            }
+            if tab.find.open {
+                pane_children.push(find_bar(tab, &dialog, &self.find_field));
+            }
         }
         if menu_open {
             pane_children.push(profile_menu(&self.settings, &dialog, menu_left(self)));
@@ -1327,12 +1343,74 @@ impl Shell {
         }
     }
 
+    /// Takes a press that landed in the scrollbar's strip, returning whether
+    /// it did.
+    fn scrollbar_pressed(&mut self, info: &PointerEventInfo) -> bool {
+        if !info.is_left_button_pressed || !bar::contains(self.panel_size.0, info.x) {
+            return false;
+        }
+        let track = self.panel_size.1;
+        if track <= 0.0 {
+            return false;
+        }
+
+        let Some(tab) = self.tabs.active_mut() else {
+            return false;
+        };
+        let (document, marks) = tab.control.scroll_facts();
+        let visible = tab.control.size().1;
+        if document <= visible {
+            self.scrollbar.release();
+            return false;
+        }
+
+        let fraction = (info.y / track).clamp(0.0, 1.0) as f32;
+        let positions: Vec<f32> = marks
+            .iter()
+            .map(|mark| scrollbar::position(mark.row, document))
+            .collect();
+
+        if let Some(index) = scrollbar::tick_at(&positions, fraction, scrollbar::MARK_GRAB / track as f32) {
+            // A prompt tick is a precise target: it brings the prompt into view
+            // rather than centring the clicked fraction.
+            tab.view.scroll_to_row(marks[index].row, visible, document);
+        } else if let scrollbar::Press::Jump(scroll) =
+            self.scrollbar.press(fraction, tab.view.scroll(), document, visible)
+        {
+            tab.view.set_scroll(scroll, document - visible);
+        }
+
+        self.scrollbar_press = true;
+        true
+    }
+
+    /// Continues a held scrollbar drag.
+    fn scrollbar_dragged(&mut self, info: &PointerEventInfo) {
+        let track = self.panel_size.1;
+        if track <= 0.0 {
+            return;
+        }
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let visible = tab.control.size().1;
+        let document = tab.control.max_scroll() + visible;
+        let fraction = (info.y / track).clamp(0.0, 1.0) as f32;
+        if let Some(scroll) = self.scrollbar.drag(fraction, document, visible) {
+            tab.view.set_scroll(scroll, document - visible);
+        }
+    }
+
     /// Starts a selection, or forwards the press to a tracking application.
     fn pointer_pressed(&mut self, info: PointerEventInfo) {
         // A press outside the menu dismisses it, as a flyout does; the press
         // itself is not passed on (ADR 052).
         if self.menu_open {
             self.close_menu();
+            return;
+        }
+
+        if self.scrollbar_pressed(&info) {
             return;
         }
 
@@ -1396,6 +1474,18 @@ impl Shell {
 
     /// Extends a selection, scrolls a drag past the pane, or forwards the move.
     fn pointer_moved(&mut self, info: PointerEventInfo) {
+        if self.scrollbar_press {
+            if info.is_left_button_pressed {
+                self.scrollbar_dragged(&info);
+            } else {
+                // A release outside the pane may never be reported; the button
+                // state on the move is the fallback.
+                self.scrollbar_press = false;
+                self.scrollbar.release();
+            }
+            return;
+        }
+
         let (columns, rows) = self.grid;
         let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
         self.pointer_cell = cell;
@@ -1484,6 +1574,14 @@ impl Shell {
 
     /// Finishes a forwarded press.
     fn pointer_released(&mut self, info: PointerEventInfo) {
+        if self.scrollbar_press {
+            self.scrollbar_press = false;
+            self.scrollbar.release();
+            self.press = None;
+            self.last_mouse_cell = None;
+            return;
+        }
+
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         if !input::forwards_to_application(self.active_tracking(), shift) {
             self.last_mouse_cell = None;

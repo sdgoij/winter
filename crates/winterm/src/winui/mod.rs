@@ -15,6 +15,8 @@ mod wheel;
 #[allow(unsafe_code)]
 mod icon;
 
+mod scrollbar;
+
 mod app;
 mod menu;
 mod settings;

@@ -9,6 +9,8 @@
 pub const WIDTH: f32 = 10.0;
 /// The smallest the thumb is drawn, in pixels, so it stays grabbable.
 pub const MIN_THUMB: f32 = 12.0;
+/// How close a press must be to a mark, in pixels, to take it.
+pub const MARK_GRAB: f32 = 4.0;
 
 /// What a press on the track asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +81,17 @@ pub fn scroll_at(top: f32, document: i32, visible: i32) -> i32 {
     let top = top.clamp(0.0, 1.0);
     let row = (top * document as f32).round() as i32;
     (document - visible - row).clamp(0, scrollable)
+}
+
+/// The thumb's top and height in pixels on a track `track` pixels tall.
+///
+/// The thumb never shrinks below [`MIN_THUMB`], and its bottom edge stops at
+/// the track's, so the last rows stay reachable.
+pub fn thumb_pixels(scroll: i32, document: i32, visible: i32, track: f64) -> (f64, f64) {
+    let (top, height) = thumb(scroll, document, visible);
+    let height = (f64::from(height) * track).max(f64::from(MIN_THUMB)).min(track);
+    let top = (f64::from(top) * track).min(track - height);
+    (top, height)
 }
 
 /// Where `row` sits on the track, from 0 at the top to 1 at the bottom.
@@ -155,6 +168,16 @@ mod tests {
         assert_eq!(position(50, 100), 0.5);
         assert_eq!(position(200, 100), 1.0);
         assert_eq!(position(5, 0), 0.0);
+    }
+
+    #[test]
+    fn the_thumb_keeps_a_grabbable_minimum() {
+        // 1000 rows in a 100-pixel track: a 20-row thumb is 2 pixels, lifted to
+        // the minimum and pinned to the bottom edge.
+        assert_eq!(thumb_pixels(0, 1000, 20, 100.0), (88.0, 12.0));
+
+        // A document that fits fills the whole track.
+        assert_eq!(thumb_pixels(0, 20, 20, 100.0), (0.0, 100.0));
     }
 
     #[test]

@@ -248,7 +248,7 @@ reloads a saved settings file within a second (ADR 025), a settings dialog
 matched before the terminal sees them (copy declines when nothing is selected,
 so Ctrl+C still interrupts; ADR 053), Win32 input records so a pressed key
 stays down until it is released (ADR 056), a retransmitted image painted once
-per batch (ADR 057), a pointer selection that copies through
+per batch (ADR 057), a scrollbar with the prompt marks, a pointer selection that copies through
 the clipboard, and scrollback reached by chord and by a low-level wheel hook
 that a mouse-tracking program receives unless Shift is held (ADRs 047, 048);
 egui remains the shell on Linux and macOS. The shell has wheel

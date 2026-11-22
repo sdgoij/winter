@@ -30,9 +30,6 @@ use crate::term_settings::TerminalSettings;
 use crate::{grid, scrollbar, session::Session, view::View};
 
 /// The colour used when the palette has no default background.
-/// How close to a scrollbar tick a press has to be, in pixels, to take it.
-pub(crate) const MARK_GRAB: f32 = 4.0;
-
 pub(crate) const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 /// The colour used when the palette has no default foreground.
 pub(crate) const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
@@ -478,7 +475,7 @@ impl Pane {
                 .map(|mark| scrollbar::position(mark.row, document))
                 .collect();
 
-            if let Some(index) = scrollbar::tick_at(&positions, pressed, MARK_GRAB / track.height()) {
+            if let Some(index) = scrollbar::tick_at(&positions, pressed, scrollbar::MARK_GRAB / track.height()) {
                 // A prompt tick is a precise target: it brings the prompt into
                 // view rather than centring the clicked fraction.
                 self.view.scroll_to_row(marks[index].row, visible, document);
@@ -529,12 +526,15 @@ impl Pane {
             );
         }
 
-        let (top, height) = scrollbar::thumb(self.view.scroll(), screen.document_height, screen.height);
-        let height = (height * track.height()).max(scrollbar::MIN_THUMB).min(track.height());
-        let top = (top * track.height()).min(track.height() - height);
+        let (top, height) = scrollbar::thumb_pixels(
+            self.view.scroll(),
+            screen.document_height,
+            screen.height,
+            f64::from(track.height()),
+        );
         let thumb = egui::Rect::from_min_size(
-            egui::pos2(track.min.x + 1.0, track.min.y + top),
-            egui::vec2(track.width() - 2.0, height),
+            egui::pos2(track.min.x + 1.0, track.min.y + top as f32),
+            egui::vec2(track.width() - 2.0, height as f32),
         );
         painter.rect_filled(thumb, 2, scrollbar_thumb_color());
     }
