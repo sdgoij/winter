@@ -1047,6 +1047,7 @@ struct Draft {
     default_scheme: Option<String>,
     profiles: Vec<ProfileDraft>,
     keybindings: Vec<BindingDraft>,
+    schemes: Vec<SchemeDraft>,
 }
 
 /// One profile as the window edits it.
@@ -1108,6 +1109,137 @@ impl BindingDraft {
     }
 }
 
+/// The scheme fields in the order the window lists them.
+///
+/// The list is one place so the form, the reader and the writer cannot disagree
+/// about which fields a scheme has (ADR 032).
+const SCHEME_COLORS: &[&str] = &[
+    "foreground",
+    "background",
+    "cursor_color",
+    "selection_background",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "purple",
+    "cyan",
+    "white",
+    "bright_black",
+    "bright_red",
+    "bright_green",
+    "bright_yellow",
+    "bright_blue",
+    "bright_purple",
+    "bright_cyan",
+    "bright_white",
+];
+
+/// Returns the colour a scheme holds for a field name.
+fn scheme_color(scheme: &settings::Scheme, field: &str) -> Option<settings::Color> {
+    match field {
+        "foreground" => scheme.foreground,
+        "background" => scheme.background,
+        "cursor_color" => scheme.cursor_color,
+        "selection_background" => scheme.selection_background,
+        "black" => scheme.black,
+        "red" => scheme.red,
+        "green" => scheme.green,
+        "yellow" => scheme.yellow,
+        "blue" => scheme.blue,
+        "purple" => scheme.purple,
+        "cyan" => scheme.cyan,
+        "white" => scheme.white,
+        "bright_black" => scheme.bright_black,
+        "bright_red" => scheme.bright_red,
+        "bright_green" => scheme.bright_green,
+        "bright_yellow" => scheme.bright_yellow,
+        "bright_blue" => scheme.bright_blue,
+        "bright_purple" => scheme.bright_purple,
+        "bright_cyan" => scheme.bright_cyan,
+        "bright_white" => scheme.bright_white,
+        _ => None,
+    }
+}
+
+/// Sets the colour a scheme holds for a field name.
+fn set_scheme_color(scheme: &mut settings::Scheme, field: &str, color: Option<settings::Color>) {
+    match field {
+        "foreground" => scheme.foreground = color,
+        "background" => scheme.background = color,
+        "cursor_color" => scheme.cursor_color = color,
+        "selection_background" => scheme.selection_background = color,
+        "black" => scheme.black = color,
+        "red" => scheme.red = color,
+        "green" => scheme.green = color,
+        "yellow" => scheme.yellow = color,
+        "blue" => scheme.blue = color,
+        "purple" => scheme.purple = color,
+        "cyan" => scheme.cyan = color,
+        "white" => scheme.white = color,
+        "bright_black" => scheme.bright_black = color,
+        "bright_red" => scheme.bright_red = color,
+        "bright_green" => scheme.bright_green = color,
+        "bright_yellow" => scheme.bright_yellow = color,
+        "bright_blue" => scheme.bright_blue = color,
+        "bright_purple" => scheme.bright_purple = color,
+        "bright_cyan" => scheme.bright_cyan = color,
+        "bright_white" => scheme.bright_white = color,
+        _ => {}
+    }
+}
+
+/// One scheme as the window edits it.
+///
+/// A colour is text until the document is built; an empty field means the
+/// scheme leaves that colour to the built-in palette, which is different from
+/// a field that cannot be parsed (ADR 032).
+struct SchemeDraft {
+    name: String,
+    colours: Vec<String>,
+}
+
+impl SchemeDraft {
+    fn from_scheme(scheme: &settings::Scheme) -> Self {
+        Self {
+            name: scheme.name.clone(),
+            colours: SCHEME_COLORS
+                .iter()
+                .map(|field| {
+                    scheme_color(scheme, field)
+                        .map(|color| color.to_string())
+                        .unwrap_or_default()
+                })
+                .collect(),
+        }
+    }
+
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            colours: vec![String::new(); SCHEME_COLORS.len()],
+        }
+    }
+
+    fn to_scheme(&self) -> Result<settings::Scheme, String> {
+        let mut scheme = settings::Scheme {
+            name: self.name.clone(),
+            ..Default::default()
+        };
+
+        for (field, text) in SCHEME_COLORS.iter().zip(&self.colours) {
+            if text.trim().is_empty() {
+                continue;
+            }
+            let color = settings::Color::parse(text).map_err(|_| format!("{field}: `{text}` is not a colour"))?;
+            set_scheme_color(&mut scheme, field, Some(color));
+        }
+
+        Ok(scheme)
+    }
+}
+
 impl Draft {
     fn from_settings(settings: &Settings) -> Self {
         Self {
@@ -1116,18 +1248,19 @@ impl Draft {
             default_scheme: settings.default_scheme.clone(),
             profiles: settings.profiles.iter().map(ProfileDraft::from_profile).collect(),
             keybindings: settings.keybindings.iter().map(BindingDraft::from_binding).collect(),
+            schemes: settings.schemes.iter().map(SchemeDraft::from_scheme).collect(),
         }
     }
 
     /// Whether the draft has edits that a save would write.
     ///
-    /// An invalid chord counts as an edit: the window must not look clean while
-    /// a row cannot be saved.
+    /// An invalid chord or colour counts as an edit: the window must not look
+    /// clean while a row cannot be saved.
     fn differs_from(&self, settings: &Settings) -> bool {
         self.document(settings).is_none_or(|document| document != *settings)
     }
 
-    /// The document a save writes, or None when a chord does not parse.
+    /// The document a save writes, or None when a value does not parse.
     fn document(&self, settings: &Settings) -> Option<Settings> {
         let mut document = settings.clone();
         document.font.size = self.font_size;
@@ -1139,7 +1272,21 @@ impl Draft {
             .iter()
             .map(BindingDraft::to_binding)
             .collect::<Option<Vec<_>>>()?;
+        document.schemes = self
+            .schemes
+            .iter()
+            .map(SchemeDraft::to_scheme)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
         Some(document)
+    }
+
+    /// Why the schemes cannot be built, one message per bad colour.
+    fn scheme_errors(&self) -> Vec<String> {
+        self.schemes
+            .iter()
+            .filter_map(|scheme| scheme.to_scheme().err())
+            .collect()
     }
 }
 
@@ -1953,13 +2100,14 @@ fn draft_editor(
             ui.end_row();
 
             ui.strong("Scheme");
+            let names: Vec<String> = draft.schemes.iter().map(|scheme| scheme.name.clone()).collect();
             let selected = draft.default_scheme.clone().unwrap_or_else(|| "built-in".to_string());
             egui::ComboBox::from_id_salt("winterm-settings-scheme")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut draft.default_scheme, None, "built-in");
-                    for scheme in &settings.schemes {
-                        ui.selectable_value(&mut draft.default_scheme, Some(scheme.name.clone()), &scheme.name);
+                    for name in names {
+                        ui.selectable_value(&mut draft.default_scheme, Some(name.clone()), name);
                     }
                 });
             ui.end_row();
@@ -2055,6 +2203,64 @@ fn draft_editor(
         .collect();
     if !invalid.is_empty() {
         ui.colored_label(CONFLICT, format!("These chords do not parse: {}", invalid.join(", ")));
+    }
+
+    ui.separator();
+    ui.strong("Schemes");
+    ui.label("A colour is #RGB, #RRGGBB or rgb:r/g/b. An empty field keeps the built-in colour.");
+
+    let mut remove = None;
+    egui::ScrollArea::vertical()
+        .id_salt("winterm-schemes")
+        .max_height(280.0)
+        .show(ui, |ui| {
+            for (index, scheme) in draft.schemes.iter_mut().enumerate() {
+                egui::Grid::new(("winterm-scheme", index))
+                    .num_columns(3)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut scheme.name);
+                        ui.label("");
+                        ui.end_row();
+
+                        for (field, text) in SCHEME_COLORS.iter().zip(scheme.colours.iter_mut()) {
+                            ui.label(*field);
+                            ui.text_edit_singleline(text);
+                            match settings::Color::parse(text)
+                                .ok()
+                                .and_then(|color| egui_color(color.text_color()))
+                            {
+                                Some(color) => {
+                                    ui.colored_label(color, "██");
+                                }
+                                None if text.trim().is_empty() => {
+                                    ui.label("built-in");
+                                }
+                                None => {
+                                    ui.label("");
+                                }
+                            }
+                            ui.end_row();
+                        }
+
+                        ui.label("");
+                        if ui.small_button("Remove scheme").clicked() {
+                            remove = Some(index);
+                        }
+                        ui.end_row();
+                    });
+            }
+        });
+    if let Some(index) = remove {
+        draft.schemes.remove(index);
+    }
+    if ui.button("Add scheme").clicked() {
+        let name = format!("scheme {}", draft.schemes.len() + 1);
+        draft.schemes.push(SchemeDraft::new(name));
+    }
+    for error in draft.scheme_errors() {
+        ui.colored_label(CONFLICT, error);
     }
 
     ui.separator();
@@ -2769,6 +2975,68 @@ mod tests {
         // A chord that does not parse keeps the document from being built.
         draft.keybindings[0].keys = "ctrl+a+b".to_string();
         assert!(draft.document(&settings).is_none());
+        assert!(draft.differs_from(&settings));
+    }
+
+    #[test]
+    fn a_scheme_round_trips_through_the_draft() {
+        let colour = |spec: &str| Some(settings::Color::parse(spec).expect("colour"));
+        let scheme = settings::Scheme {
+            name: "muted".to_string(),
+            foreground: colour("#C8C8C8"),
+            background: colour("#101014"),
+            cursor_color: colour("#E6E6E6"),
+            selection_background: colour("#264F78"),
+            black: colour("#000000"),
+            red: colour("#FF0000"),
+            green: colour("#00FF00"),
+            yellow: colour("#FFFF00"),
+            blue: colour("#0000FF"),
+            purple: colour("#FF00FF"),
+            cyan: colour("#00FFFF"),
+            white: colour("#FFFFFF"),
+            bright_black: colour("#111111"),
+            bright_red: colour("#EE0000"),
+            bright_green: colour("#00EE00"),
+            bright_yellow: colour("#EEEE00"),
+            bright_blue: colour("#0000EE"),
+            bright_purple: colour("#EE00EE"),
+            bright_cyan: colour("#00EEEE"),
+            bright_white: colour("#EEEEEE"),
+        };
+
+        let draft = SchemeDraft::from_scheme(&scheme);
+        assert_eq!(draft.name, "muted");
+        assert_eq!(draft.colours.len(), SCHEME_COLORS.len());
+        assert_eq!(draft.to_scheme().expect("scheme"), scheme);
+
+        // A field that is not a colour is named, and does not become a silent
+        // "unset".
+        let mut bad = draft;
+        bad.colours[5] = "#12345".to_string();
+        let error = bad.to_scheme().expect_err("a bad colour");
+        assert!(error.contains("red"), "{error}");
+        assert!(error.contains("#12345"), "{error}");
+    }
+
+    #[test]
+    fn the_draft_edits_the_schemes_and_blocks_a_bad_colour() {
+        let settings = settings::parse("[[schemes]]\nname = \"s\"\nred = \"#FF0000\"").expect("settings");
+        let mut draft = Draft::from_settings(&settings);
+        assert!(!draft.differs_from(&settings));
+        assert_eq!(draft.schemes.len(), 1);
+
+        draft.schemes[0].colours[5] = "#EE0000".to_string();
+        assert!(draft.differs_from(&settings));
+        let document = draft.document(&settings).expect("document");
+        assert_eq!(
+            document.schemes[0].red,
+            Some(settings::Color::parse("#EE0000").expect("colour"))
+        );
+
+        draft.schemes[0].colours[5] = "nope".to_string();
+        assert!(draft.document(&settings).is_none());
+        assert_eq!(draft.scheme_errors().len(), 1);
         assert!(draft.differs_from(&settings));
     }
 

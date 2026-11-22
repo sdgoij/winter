@@ -75,8 +75,8 @@ impl<'de> Deserialize<'de> for Color {
 ///
 /// Every colour is optional: a scheme that names only a background keeps the
 /// built-in palette for everything else, which is what a partial hand-written
-/// file needs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// file needs. `Default` is the empty scheme an editor starts from.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Scheme {
     /// The name `default_scheme` refers to.
     #[serde(default)]

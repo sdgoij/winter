@@ -59,4 +59,5 @@ Rules:
 | [028](028-settings-window-edits.md) | The window edits font size and the default profile and scheme, saving atomically | Amended by 030 and 031 |
 | [029](029-host-font-family.md) | The shell renders with the host's monospace family; italic is a real face when installed | Accepted |
 | [030](030-settings-window-edits-profiles.md) | The window edits the profile list; schemes and chords stay file-only | Amended by 031 (keybindings) |
-| [031](031-settings-window-edits-keybindings.md) | The window edits keybindings; the list shown is the effective one; an invalid chord blocks Save | Accepted |
+| [031](031-settings-window-edits-keybindings.md) | The window edits keybindings; the list shown is the effective one; an invalid chord blocks Save | Amended by 032 (schemes) |
+| [032](032-settings-window-edits-schemes.md) | The window edits schemes as text fields with swatches; an empty field means the built-in colour | Accepted |
