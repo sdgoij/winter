@@ -141,6 +141,10 @@ pub struct AdaptDispatch {
     pending_responses: Vec<String>,
     /// Terminal features announced in DA1.
     optional_features: std::collections::HashSet<OptionalFeature>,
+    /// Tab stops by column; empty until first use, then every eighth column.
+    tab_stops: Vec<bool>,
+    /// Saved cursor states, indexed by buffer (0 main, 1 alternate).
+    saved_cursor_state: [CursorState; 2],
 }
 
 impl AdaptDispatch {
@@ -169,7 +173,28 @@ impl AdaptDispatch {
             last_unhandled: None,
             pending_responses: Vec::new(),
             optional_features: std::collections::HashSet::new(),
+            tab_stops: Vec::new(),
+            saved_cursor_state: [CursorState::default(), CursorState::default()],
         }
+    }
+
+    /// Initializes the default tab stops for a buffer `width` wide.
+    fn ensure_tab_stops(&mut self, width: VTInt) {
+        if self.tab_stops.len() == width as usize {
+            return;
+        }
+        let mut stops = vec![false; width.max(0) as usize];
+        for column in (0..width).step_by(8) {
+            if let Some(stop) = stops.get_mut(column as usize) {
+                *stop = true;
+            }
+        }
+        self.tab_stops = stops;
+    }
+
+    /// The index of the saved-cursor slot for the buffer in use.
+    fn cursor_state_index(&self) -> usize {
+        usize::from(self.using_alt_buffer)
     }
 
     /// Appends a CSI response to the queue the host drains.
@@ -1099,6 +1124,116 @@ impl ITermDispatch for AdaptDispatch {
         self.optional_features = features;
     }
 
+    fn cursor_save_state(&mut self) {
+        let (row, column) = self.active_cursor_position();
+        let index = self.cursor_state_index();
+        let page = self.page_manager.active_page();
+        let attributes = page.attributes();
+        let page_number = page.number();
+        self.saved_cursor_state[index] = CursorState {
+            row,
+            column,
+            page: page_number,
+            is_delayed_eol_wrap: false,
+            is_origin_mode_relative: self.modes.contains(ModeFlags::DECOM),
+            attributes,
+            term_output: self.term_output.clone(),
+        };
+    }
+
+    fn cursor_restore_state(&mut self) {
+        let index = self.cursor_state_index();
+        let saved = self.saved_cursor_state[index].clone();
+        let (page_width, _) = self.page_size();
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let row = saved.row.max(0);
+        let column = saved.column.clamp(0, (page_width - 1).max(0));
+        buffer.cursor_mut().set_position(row, column);
+        drop(buffer);
+
+        self.page_manager.active_page().set_attributes(saved.attributes);
+        self.term_output.restore_from(&saved.term_output);
+        self.set_mode_flag(ModeFlags::DECOM, saved.is_origin_mode_relative);
+    }
+
+    fn horizontal_tab_set(&mut self) {
+        let (page_width, _) = self.page_size();
+        self.ensure_tab_stops(page_width);
+        let (_, column) = self.active_cursor_position();
+        if let Some(stop) = self.tab_stops.get_mut(column as usize) {
+            *stop = true;
+        }
+    }
+
+    fn forward_tab(&mut self, count: VTInt) {
+        let (page_width, page_height) = self.page_size();
+        self.ensure_tab_stops(page_width);
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (_left, right) = self.effective_horizontal_margins(page_width);
+        let (row, mut column) = self.active_cursor_position();
+
+        let clamp_to_margin = row >= top && row <= bottom && column <= right;
+        let max_column = if clamp_to_margin { right } else { page_width - 1 };
+
+        let mut performed = 0;
+        while column < max_column && performed < count {
+            column += 1;
+            if self.tab_stops.get(column as usize).copied().unwrap_or(false) {
+                performed += 1;
+            }
+        }
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        buffer.cursor_mut().set_position(row, column);
+    }
+
+    fn backwards_tab(&mut self, count: VTInt) {
+        let (page_width, page_height) = self.page_size();
+        self.ensure_tab_stops(page_width);
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, _right) = self.effective_horizontal_margins(page_width);
+        let (row, mut column) = self.active_cursor_position();
+
+        let clamp_to_margin = row >= top && row <= bottom && column >= left;
+        let min_column = if clamp_to_margin { left } else { 0 };
+
+        let mut performed = 0;
+        while column > min_column && performed < count {
+            column -= 1;
+            if self.tab_stops.get(column as usize).copied().unwrap_or(false) {
+                performed += 1;
+            }
+        }
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        buffer.cursor_mut().set_position(row, column);
+    }
+
+    fn tab_clear(&mut self, clear_type: TabClearType) {
+        let (page_width, _) = self.page_size();
+        self.ensure_tab_stops(page_width);
+        match clear_type {
+            TabClearType::ClearCurrentColumn => {
+                let (_, column) = self.active_cursor_position();
+                if let Some(stop) = self.tab_stops.get_mut(column as usize) {
+                    *stop = false;
+                }
+            }
+            TabClearType::ClearAllColumns => self.tab_stops.iter_mut().for_each(|stop| *stop = false),
+        }
+    }
+
+    fn tab_set(&mut self, _set_type: TabSetType) {
+        // DECST8C has one defined value: restore the every-eighth-column default.
+        let (page_width, _) = self.page_size();
+        self.tab_stops.clear();
+        self.ensure_tab_stops(page_width);
+    }
+
     fn cursor_up(&mut self, distance: VTInt) {
         self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
     }
@@ -1432,6 +1567,13 @@ mod tests {
         dispatch.vt52_device_attributes();
         dispatch.request_terminal_parameters(ReportingPermission::Solicited);
         dispatch.set_optional_features(std::collections::HashSet::new());
+        dispatch.cursor_save_state();
+        dispatch.cursor_restore_state();
+        dispatch.horizontal_tab_set();
+        dispatch.forward_tab(1);
+        dispatch.backwards_tab(1);
+        dispatch.tab_clear(TabClearType::ClearAllColumns);
+        dispatch.tab_set(TabSetType::SetEvery8Columns);
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
@@ -1769,6 +1911,55 @@ mod tests {
         let mut dispatch = AdaptDispatch::new();
         dispatch.vt52_device_attributes();
         assert_eq!(dispatch.take_responses(), vec!["\x1b/Z".to_string()]);
+    }
+
+    #[test]
+    fn forward_tab_moves_to_the_next_eighth_column() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.forward_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 8));
+        dispatch.forward_tab(2);
+        assert_eq!(dispatch.active_cursor_position(), (0, 24));
+    }
+
+    #[test]
+    fn backwards_tab_moves_to_the_previous_stop() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 25);
+        dispatch.backwards_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 16));
+    }
+
+    #[test]
+    fn hts_adds_a_stop_and_tbc_clears_it() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 4);
+        dispatch.horizontal_tab_set();
+
+        dispatch.cursor_position(1, 1);
+        dispatch.forward_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 3));
+
+        dispatch.cursor_position(1, 4);
+        dispatch.tab_clear(TabClearType::ClearCurrentColumn);
+        dispatch.cursor_position(1, 1);
+        dispatch.forward_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 8));
+    }
+
+    #[test]
+    fn saving_and_restoring_the_cursor_round_trips_position_and_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(5, 10);
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1]));
+        dispatch.cursor_save_state();
+
+        dispatch.cursor_position(1, 1);
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![22]));
+        dispatch.cursor_restore_state();
+
+        assert_eq!(dispatch.active_cursor_position(), (4, 9));
+        assert!(page_attributes(&mut dispatch).is_intense());
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {
