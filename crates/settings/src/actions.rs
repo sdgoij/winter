@@ -46,6 +46,8 @@ pub enum Action {
     Paste,
     /// Show or hide the settings window.
     OpenSettings,
+    /// Show or hide the command palette.
+    CommandPalette,
     /// Remove the chord named beside it. Resolved away at load; it never
     /// reaches the binding list the window searches.
     Unbound,
@@ -74,6 +76,7 @@ impl Action {
         Self::Copy,
         Self::Paste,
         Self::OpenSettings,
+        Self::CommandPalette,
     ];
 
     /// The name the file writes, which is also the window's label.
@@ -96,6 +99,7 @@ impl Action {
             Self::Copy => "copy",
             Self::Paste => "paste",
             Self::OpenSettings => "openSettings",
+            Self::CommandPalette => "commandPalette",
             Self::Unbound => "unbound",
         }
     }

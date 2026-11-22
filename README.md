@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1464 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1469 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -39,8 +39,8 @@ fourteen-phase plan, the milestone table, and the next module are in
 `crates/settings` reads `%APPDATA%\winterm\settings.toml` on Windows and
 `$XDG_CONFIG_HOME/winterm/settings.toml` (else
 `$HOME/.config/winterm/settings.toml`) elsewhere. A missing or invalid file
-starts the platform shell with the default chords; the application never writes
-the file.
+starts PowerShell on Windows (the user's `SHELL` elsewhere) from the default
+profiles and the default chords; the application never writes the file.
 
 ```toml
 version = 1
@@ -80,12 +80,17 @@ Keys are `0-9`, `a-z`, a single punctuation character, `tab`, `enter`, `esc`,
 `space`, `backspace`, `insert`, `delete`, `home`, `end`, `pgup`, `pgdn`, the
 arrows and `f1`–`f24`. Actions are `newTab`, `closeTab`, `nextTab`, `prevTab`,
 `splitHorizontal`, `splitVertical`, `focusLeft`/`Right`/`Up`/`Down`,
-`resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste`, `openSettings` and `unbound`.
+`resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste`, `openSettings`,
+`commandPalette` and `unbound`.
 
 A binding replaces a default with the same chord and adds a new chord to the
 defaults; `unbound` removes one, so the key reaches the shell. An empty list
 means the defaults. A chord or action the build does not know rejects the file,
 and the defaults load instead (ADR 023).
+
+The plus button starts any profile by name; Ctrl+Shift+P opens the command
+palette, which lists a tab per profile followed by the window's actions with the
+chord each is bound to (type to filter, arrows move, Enter runs, Escape closes).
 
 A scheme names any of `foreground`, `background`, `cursor_color`,
 `selection_background`, `black` … `white` and `bright_black` … `bright_white`. A

@@ -1320,8 +1320,45 @@ struct App {
     blink: Blink,
     /// Whether the cursor is drawn this frame.
     cursor_on: bool,
+    /// The command palette's state.
+    palette: Palette,
     /// The title last sent to the window.
     window_title: Option<String>,
+}
+
+/// The command palette's state between frames.
+#[derive(Debug, Default)]
+struct Palette {
+    /// Whether the palette is showing.
+    open: bool,
+    /// What the user has typed to narrow the list.
+    filter: String,
+    /// The entry the arrows have moved to, within the filtered list.
+    selected: usize,
+    /// Whether the filter field still needs the keyboard focus.
+    focus: bool,
+}
+
+impl Palette {
+    /// Opens the palette with an empty query and the first entry selected.
+    fn show(&mut self) {
+        self.open = true;
+        self.filter.clear();
+        self.selected = 0;
+        self.focus = true;
+    }
+
+    /// Closes the palette and forgets the query.
+    fn hide(&mut self) {
+        self.open = false;
+        self.filter.clear();
+        self.selected = 0;
+        self.focus = false;
+    }
+
+    fn toggle(&mut self) {
+        if self.open { self.hide() } else { self.show() }
+    }
 }
 
 /// What the tab strip or a chord asked for.
@@ -1341,6 +1378,7 @@ enum TabAction {
     Focus(Direction),
     Resize(Direction),
     ToggleSettings,
+    TogglePalette,
 }
 
 impl App {
@@ -1371,6 +1409,7 @@ impl App {
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
             cursor_on: true,
+            palette: Palette::default(),
             window_title: None,
         })
     }
@@ -1451,6 +1490,7 @@ impl App {
                 }
             }
             TabAction::ToggleSettings => self.toggle_settings(),
+            TabAction::TogglePalette => self.palette.toggle(),
         }
     }
 
@@ -1472,6 +1512,83 @@ impl App {
         if !self.tabs.close(index) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+
+    /// Draws the command palette and returns the command chosen this frame.
+    fn palette_window(&mut self, ctx: &egui::Context) -> Option<TabAction> {
+        if !self.palette.open {
+            return None;
+        }
+
+        let (up, down, enter, escape) = ctx.input(|input| {
+            (
+                input.key_pressed(egui::Key::ArrowUp),
+                input.key_pressed(egui::Key::ArrowDown),
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape {
+            self.palette.hide();
+            return None;
+        }
+
+        let mut chosen = None;
+        egui::Window::new("Command palette")
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 64.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.set_min_width(380.0);
+                let field = ui.add(egui::TextEdit::singleline(&mut self.palette.filter).hint_text("Type a command"));
+                if self.palette.focus {
+                    field.request_focus();
+                    self.palette.focus = false;
+                }
+
+                let matching: Vec<PaletteEntry> = palette_entries(&self.settings)
+                    .into_iter()
+                    .filter(|entry| matches_filter(&entry.label, &self.palette.filter))
+                    .collect();
+                if matching.is_empty() {
+                    self.palette.selected = 0;
+                    ui.label(egui::RichText::new("No matching command").weak());
+                    return;
+                }
+
+                if up {
+                    self.palette.selected = (self.palette.selected + matching.len() - 1) % matching.len();
+                }
+                if down {
+                    self.palette.selected = (self.palette.selected + 1) % matching.len();
+                }
+                self.palette.selected = self.palette.selected.min(matching.len() - 1);
+
+                if enter {
+                    chosen = Some(matching[self.palette.selected].action.clone());
+                }
+
+                egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                    for (index, entry) in matching.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(index == self.palette.selected, entry.label.as_str())
+                                .clicked()
+                            {
+                                chosen = Some(entry.action.clone());
+                            }
+                            if let Some(chord) = &entry.chord {
+                                ui.label(egui::RichText::new(chord).weak());
+                            }
+                        });
+                    }
+                });
+            });
+
+        if chosen.is_some() {
+            self.palette.hide();
+        }
+        chosen
     }
 
     /// Draws what the settings file said, whether it was used, and the fields
@@ -1736,7 +1853,12 @@ impl eframe::App for App {
             // rather than a frame later.
             tab.fit_panes(area, cell);
         }
-        tab.handle_events(forwarded, &mut self.sides);
+        // egui owns the keyboard while a window's text field has focus, and the
+        // palette owns it while it is open. Forwarding as well would type the
+        // same characters into the shell.
+        if shell_takes_keys(self.palette.open, ctx.egui_wants_keyboard_input()) {
+            tab.handle_events(forwarded, &mut self.sides);
+        }
 
         let screen = tab.focused_snapshot();
         let now = Instant::now();
@@ -1748,6 +1870,10 @@ impl eframe::App for App {
 
         if self.settings_open {
             self.settings_window(&ctx);
+        }
+
+        if let Some(action) = self.palette_window(&ctx) {
+            self.apply(action, &ctx);
         }
     }
 }
@@ -1815,9 +1941,94 @@ fn action_for(action: settings::Action) -> Option<TabAction> {
         settings::Action::Copy => TabAction::Copy,
         settings::Action::Paste => TabAction::Paste,
         settings::Action::OpenSettings => TabAction::ToggleSettings,
+        settings::Action::CommandPalette => TabAction::TogglePalette,
         // `unbound` is resolved away when the file loads.
         settings::Action::Unbound => return None,
     })
+}
+
+/// One command the palette can run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PaletteEntry {
+    /// The row's text.
+    label: String,
+    /// What choosing it asks the window to do.
+    action: TabAction,
+    /// The chord the settings bind to it, for the row's right-hand side.
+    chord: Option<String>,
+}
+
+/// Every command the palette offers: one tab per profile, then the actions.
+fn palette_entries(settings: &Settings) -> Vec<PaletteEntry> {
+    let mut entries = Vec::new();
+    for profile in &settings.profiles {
+        entries.push(PaletteEntry {
+            label: format!("New tab: {}", profile.name),
+            action: TabAction::NewProfile(profile.name.clone()),
+            chord: None,
+        });
+    }
+
+    for action in settings::Action::ALL.iter().copied() {
+        // The palette is not a command to run from the palette.
+        if action == settings::Action::CommandPalette {
+            continue;
+        }
+        if let Some(tab_action) = action_for(action) {
+            entries.push(PaletteEntry {
+                label: action_label(action).to_string(),
+                action: tab_action,
+                chord: settings
+                    .keybindings
+                    .iter()
+                    .find(|binding| binding.action == action)
+                    .map(|binding| binding.keys.to_string()),
+            });
+        }
+    }
+
+    entries
+}
+
+/// The name the palette gives an action.
+fn action_label(action: settings::Action) -> &'static str {
+    use settings::Action;
+
+    match action {
+        Action::NewTab => "New tab",
+        Action::CloseTab => "Close pane or tab",
+        Action::NextTab => "Next tab",
+        Action::PrevTab => "Previous tab",
+        Action::SplitHorizontal => "Split pane right",
+        Action::SplitVertical => "Split pane down",
+        Action::FocusLeft => "Focus pane left",
+        Action::FocusRight => "Focus pane right",
+        Action::FocusUp => "Focus pane up",
+        Action::FocusDown => "Focus pane down",
+        Action::ResizeLeft => "Resize pane left",
+        Action::ResizeRight => "Resize pane right",
+        Action::ResizeUp => "Resize pane up",
+        Action::ResizeDown => "Resize pane down",
+        Action::Copy => "Copy selection",
+        Action::Paste => "Paste",
+        Action::OpenSettings => "Settings",
+        Action::CommandPalette => "Command palette",
+        Action::Unbound => "Unbound",
+    }
+}
+
+/// Whether `label` matches `filter`, ignoring case and surrounding space.
+fn matches_filter(label: &str, filter: &str) -> bool {
+    let filter = filter.trim();
+    filter.is_empty() || label.to_lowercase().contains(&filter.to_lowercase())
+}
+
+/// Whether this frame's key events belong to the shell.
+///
+/// A window's text field owns the keyboard, and so does an open palette;
+/// forwarding as well would type the same characters into the shell.
+fn shell_takes_keys(palette_open: bool, keyboard_owned: bool) -> bool {
+    !palette_open && !keyboard_owned
 }
 
 /// Maps an egui key to the key a chord names.
@@ -2735,6 +2946,90 @@ mod tests {
     }
 
     #[test]
+    fn the_palette_chord_toggles_it() {
+        let key = |key, ctrl, shift| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl,
+                shift,
+                ..egui::Modifiers::default()
+            },
+        };
+
+        assert_eq!(
+            command_for(settings::DEFAULT_KEYBINDINGS, &key(egui::Key::P, true, true)),
+            Some(TabAction::TogglePalette)
+        );
+    }
+
+    #[test]
+    fn the_palette_offers_every_profile_and_the_actions() {
+        let settings = settings::parse(
+            "[[profiles]]\nname = \"one\"\ncommand = \"sh\"\n\n[[profiles]]\nname = \"two\"\ncommand = \"zsh\"\n",
+        )
+        .expect("settings");
+        let entries = palette_entries(&settings);
+
+        // A profile is reachable by name before the fixed commands.
+        assert_eq!(entries[0].label, "New tab: one");
+        assert_eq!(entries[0].action, TabAction::NewProfile("one".to_string()));
+        assert_eq!(entries[1].label, "New tab: two");
+
+        let settings_entry = entries
+            .iter()
+            .find(|entry| entry.action == TabAction::ToggleSettings)
+            .expect("a settings entry");
+        assert_eq!(settings_entry.label, "Settings");
+        assert_eq!(settings_entry.chord.as_deref(), Some("ctrl+,"));
+
+        let copy = entries
+            .iter()
+            .find(|entry| entry.action == TabAction::Copy)
+            .expect("a copy entry");
+        assert_eq!(copy.chord.as_deref(), Some("ctrl+shift+c"));
+
+        // The palette is not a command to run from the palette.
+        assert!(!entries.iter().any(|entry| entry.action == TabAction::TogglePalette));
+    }
+
+    #[test]
+    fn a_palette_filter_matches_any_case() {
+        assert!(matches_filter("Split pane right", ""));
+        assert!(matches_filter("Split pane right", "split"));
+        assert!(matches_filter("Split pane right", "PANE"));
+        assert!(!matches_filter("Split pane right", "paste"));
+    }
+
+    #[test]
+    fn opening_the_palette_starts_a_fresh_query() {
+        let mut palette = Palette {
+            filter: "abc".to_string(),
+            selected: 2,
+            ..Palette::default()
+        };
+
+        palette.show();
+        assert!(palette.open);
+        assert!(palette.filter.is_empty());
+        assert_eq!(palette.selected, 0);
+        assert!(palette.focus);
+
+        palette.toggle();
+        assert!(!palette.open);
+        assert!(palette.filter.is_empty());
+    }
+
+    #[test]
+    fn a_text_field_or_the_palette_keeps_keys_from_the_shell() {
+        assert!(shell_takes_keys(false, false));
+        assert!(!shell_takes_keys(false, true));
+        assert!(!shell_takes_keys(true, false));
+    }
+
+    #[test]
     fn tab_chords_are_the_windows_and_not_the_shells() {
         let key = |key, ctrl, shift| egui::Event::Key {
             key,
@@ -3113,7 +3408,7 @@ mod tests {
         assert_eq!(value("File"), "/cfg/settings.toml");
         assert_eq!(value("Status"), "loaded");
         assert_eq!(value("Profile"), "zsh (/bin/zsh)");
-        assert_eq!(value("Keybindings"), "17");
+        assert_eq!(value("Keybindings"), "18");
         assert_eq!(value("Scheme"), "muted");
         assert_eq!(value("Font"), "18 pt");
 

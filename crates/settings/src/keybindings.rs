@@ -213,6 +213,10 @@ pub const DEFAULT_KEYBINDINGS: &[Keybinding] = &[
         action: Action::OpenSettings,
     },
     Keybinding {
+        keys: chord(Key::Char('p'), true, true, false),
+        action: Action::CommandPalette,
+    },
+    Keybinding {
         keys: chord(Key::Left, false, false, true),
         action: Action::FocusLeft,
     },

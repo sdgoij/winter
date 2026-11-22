@@ -19,10 +19,10 @@ Verified by running the gate, not by reading the previous status:
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~1.8k | 53 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
-| `winterm` | ~5.1k | 77 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
+| `winterm` | ~5.3k | 82 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1464 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1469 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1175,8 +1175,9 @@ Phase 9 has started inside the Phase 8 shell: `crates/winterm/src/tabs.rs` is
 the tab list (add, close, select, wrap), `layout.rs` is the pane tree, and
 `ui.rs` draws the strip, splits the panes and owns the window-level chords:
 Ctrl+Shift+T/W (tab), Ctrl+Shift+D/E (split), Ctrl+Tab (switch), Alt+Arrow
-(focus), Alt+Shift+Arrow (resize) and Ctrl+Shift+C/V (clipboard). Settings and
-the rest of `src/cascadia` remain.
+(focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard) and Ctrl+Shift+P
+(the command palette). The plus menu starts any profile by name. Search, the
+scrollbar and the rest of `src/cascadia` remain.
 
 ### Application Core
 
@@ -1206,8 +1207,14 @@ the rest of `src/cascadia` remain.
 
 ### Command Palette & Settings
 
-- [ ] `winterm/crates/winterm/src/command_palette.rs` — Command palette
-  - [ ] **Tests:** open/close, filtering, selection, action execution, keyboard navigation
+- [x] ~~`winterm/crates/winterm/src/command_palette.rs`~~ — Command palette
+  - Landed in `ui.rs` as `Palette` and `palette_window`: Ctrl+Shift+P (the
+    `commandPalette` action) opens a filter field over a list holding a tab per
+    profile and then the window's actions, each with the chord the file binds to
+    it. The filter matches a label in any case, the arrows wrap the selection,
+    Enter runs it and Escape closes it. **Tests:** the chord, the entries, the
+    filter, the open/close reset, and that a text field or the palette keeps
+    keys out of the shell, not the pixels.
 - [x] ~~`winterm/crates/winterm/src/settings_editor.rs`~~ — Settings editor
   - Landed in `ui.rs`: the settings window edits everything the schema
     holds — font size, the default profile and scheme, the profile list, the
