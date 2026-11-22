@@ -13,6 +13,7 @@ use types::TextAttribute;
 use utils::{InclusiveRect, Point, PointSpan};
 
 use crate::composition::Composition;
+use crate::cursor_options::CursorOptions;
 use crate::font_info::FontInfo;
 
 /// The terminal state a render engine draws.
@@ -48,8 +49,8 @@ pub trait RenderData {
     /// means the cursor does not blink.
     fn blink_interval(&mut self) -> Duration;
 
-    /// Returns the width of a bar cursor in pixels.
-    fn cursor_pixel_width(&self) -> u32;
+    /// Returns the cursor state to paint, if any.
+    fn cursor_options(&self) -> CursorOptions;
 
     /// Returns whether grid lines may be drawn.
     fn is_grid_line_drawing_allowed(&self) -> bool;
@@ -105,6 +106,11 @@ pub trait RenderData {
             snippet
         }
     }
+
+    /// Returns the inclusive soft-font code-point range, if one is loaded.
+    fn soft_font_range(&self) -> Option<(usize, usize)> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -157,8 +163,8 @@ mod tests {
         fn blink_interval(&mut self) -> Duration {
             Duration::ZERO
         }
-        fn cursor_pixel_width(&self) -> u32 {
-            1
+        fn cursor_options(&self) -> CursorOptions {
+            CursorOptions::default()
         }
         fn is_grid_line_drawing_allowed(&self) -> bool {
             true
@@ -225,7 +231,7 @@ mod tests {
     #[test]
     fn the_trait_is_object_safe() {
         let data: Box<dyn RenderData> = Box::new(MockData::new());
-        assert_eq!(data.cursor_pixel_width(), 1);
+        assert_eq!(data.cursor_options(), CursorOptions::default());
         assert!(data.is_grid_line_drawing_allowed());
     }
 }
