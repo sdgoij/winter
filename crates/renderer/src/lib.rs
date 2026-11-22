@@ -17,6 +17,8 @@
 //! - [`font_info_desired`] — `FontInfoDesired` requested cell metrics
 //! - [`font_info`] — `FontInfo` measured cell metrics
 //! - [`render_data`] — `RenderData`, the terminal state the engine reads
+//! - [`render_engine`] — `RenderEngine`, `RenderError`, `RenderResult`, `StartPaint`
+//! - [`render_engine_base`] — `RenderEngineBase`, the shared title/frame state
 //! - [`render_frame_info`] — `RenderFrameInfo`, `GridLines` and `GridLineSet`
 
 pub mod cluster;
@@ -27,6 +29,8 @@ pub mod font_info;
 pub mod font_info_base;
 pub mod font_info_desired;
 pub mod render_data;
+pub mod render_engine;
+pub mod render_engine_base;
 pub mod render_frame_info;
 pub mod render_settings;
 
@@ -38,5 +42,7 @@ pub use font_info::{CellSizeInDIP, FontInfo};
 pub use font_info_base::{DEFAULT_RASTER_FONT_FACENAME, DEFAULT_TT_FONT_FACENAME, FontInfoBase, LF_FACESIZE};
 pub use font_info_desired::FontInfoDesired;
 pub use render_data::RenderData;
+pub use render_engine::{RenderEngine, RenderError, RenderResult, StartPaint};
+pub use render_engine_base::RenderEngineBase;
 pub use render_frame_info::{GridLineSet, GridLines, RenderFrameInfo};
 pub use render_settings::{INVALID_COLOR, Mode, RenderSettings};
