@@ -233,10 +233,40 @@ impl Pane {
             modifiers: input.modifiers,
         });
 
-        let Some(position) = input.hover.filter(|position| area.contains(*position)) else {
+        let Some(position) = input.hover else {
             self.last_mouse_cell = None;
             return;
         };
+
+        // A selection drag that leaves the pane keeps extending: the pointer
+        // claims the edge row and the view scrolls one row towards it, so the
+        // selection reaches into the history or back to the live screen.
+        let outside = if position.y < area.min.y {
+            -1
+        } else if position.y > area.max.y {
+            1
+        } else {
+            0
+        };
+        if outside != 0 && input.primary_down && self.view.selection().is_some() {
+            let max = self.max_scroll();
+            self.view.drag_scroll(outside, max, Instant::now());
+
+            let rows = self.size.1.max(1);
+            let row = if outside < 0 { 0 } else { rows - 1 };
+            let column = (((position.x - area.min.x) / cell.x).floor() as i32).clamp(0, self.size.0.max(1) - 1);
+            let document = screen_to_document(max, self.view.scroll(), row);
+            self.view.extend((column, document));
+
+            self.last_mouse_cell = None;
+            ctx.request_repaint_after(std::time::Duration::from_millis(25));
+            return;
+        }
+
+        if !area.contains(position) {
+            self.last_mouse_cell = None;
+            return;
+        }
         let Some(cell_position) = self.cell_at(area, cell, position) else {
             return;
         };

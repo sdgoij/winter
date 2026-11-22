@@ -223,7 +223,8 @@ the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp a
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
 It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
 paints the buffer through egui on winit and wgpu (ADR 018), with wheel
-scrollback, mouse selection that reaches into history, mouse forwarding to a
+scrollback, mouse selection that reaches into history and scrolls when a drag
+leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC
 titles, bell attention, cursor shapes, text decorations, reverse video,
 intense brightening and faint text, tabs (ADR 021),

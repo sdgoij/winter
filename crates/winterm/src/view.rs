@@ -23,6 +23,8 @@ use utils::Point;
 const MULTI_CLICK: Duration = Duration::from_millis(500);
 /// The highest click count a selection distinguishes.
 const MAX_CLICK_COUNT: usize = 3;
+/// The interval between rows while a drag holds the pointer off the screen.
+const DRAG_SCROLL: Duration = Duration::from_millis(40);
 
 /// A selection in document cells, `(column, document row)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +132,9 @@ pub struct View {
     scroll: i32,
     selection: Option<Selection>,
     clicks: ClickTracker,
+    /// When the drag last scrolled, so a fast pointer does not outrun the
+    /// screen.
+    last_drag_scroll: Option<Instant>,
 }
 
 impl View {
@@ -139,6 +144,7 @@ impl View {
             scroll: 0,
             selection: None,
             clicks: ClickTracker::new(),
+            last_drag_scroll: None,
         }
     }
 
@@ -158,6 +164,27 @@ impl View {
     /// can be extended across the boundary between history and screen.
     pub fn scroll_by(&mut self, lines: i32, max: i32) {
         self.scroll = (self.scroll + lines).clamp(0, max.max(0));
+    }
+
+    /// Scrolls one row towards a drag that has left the screen.
+    ///
+    /// `outside` is negative above the screen and positive below it; zero
+    /// means the pointer is back inside and only re-arms the next drag. A drag
+    /// held outside scrolls at most once per `DRAG_SCROLL`, however often the
+    /// pointer reports a position.
+    pub fn drag_scroll(&mut self, outside: i32, max: i32, now: Instant) {
+        if outside == 0 {
+            self.last_drag_scroll = None;
+            return;
+        }
+
+        let last = self.last_drag_scroll;
+        if last.is_some_and(|last| now.saturating_duration_since(last) < DRAG_SCROLL) {
+            return;
+        }
+
+        self.last_drag_scroll = Some(now);
+        self.scroll_by(if outside < 0 { 1 } else { -1 }, max);
     }
 
     /// Returns to the live screen.
@@ -263,6 +290,45 @@ mod tests {
         assert_eq!(view.scroll(), 3);
 
         view.scroll_by(-10, 3);
+        assert_eq!(view.scroll(), 0);
+    }
+
+    #[test]
+    fn a_drag_off_the_screen_scrolls_at_a_bounded_rate() {
+        let base = Instant::now();
+        let mut view = View::new();
+        view.drag_scroll(-1, 5, base);
+        assert_eq!(view.scroll(), 1, "above the screen scrolls into history");
+
+        // A pointer that reports faster than the interval does not outrun it.
+        view.drag_scroll(-1, 5, base + Duration::from_millis(10));
+        assert_eq!(view.scroll(), 1);
+        view.drag_scroll(-1, 5, base + DRAG_SCROLL);
+        assert_eq!(view.scroll(), 2);
+
+        // Below the screen scrolls back towards the live rows.
+        view.drag_scroll(1, 5, base + DRAG_SCROLL * 2);
+        assert_eq!(view.scroll(), 1);
+
+        // Back inside re-arms the interval: the next exit scrolls at once, even
+        // at the instant the last one happened.
+        let now = base + DRAG_SCROLL * 2;
+        view.drag_scroll(0, 5, now);
+        view.drag_scroll(-1, 5, now);
+        assert_eq!(view.scroll(), 2);
+    }
+
+    #[test]
+    fn a_drag_scroll_stops_at_both_ends() {
+        let base = Instant::now();
+        let mut view = View::new();
+
+        view.drag_scroll(-1, 1, base);
+        view.drag_scroll(-1, 1, base + DRAG_SCROLL);
+        assert_eq!(view.scroll(), 1);
+
+        view.drag_scroll(1, 1, base + DRAG_SCROLL * 2);
+        view.drag_scroll(1, 1, base + DRAG_SCROLL * 3);
         assert_eq!(view.scroll(), 0);
     }
 
