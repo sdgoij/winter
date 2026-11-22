@@ -9,20 +9,23 @@ use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 
 use windows::Win32::Foundation::HMODULE;
-use windows::Win32::Graphics::Direct2D::Common::{D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_PIXEL_FORMAT};
+use windows::Win32::Graphics::Direct2D::Common::{D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_OPTIONS, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-    D2D1CreateFactory, ID2D1Bitmap, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1,
+    D2D1CreateFactory, ID2D1Bitmap, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1Image,
 };
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{
+    DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
+};
 use windows::Win32::Graphics::Dxgi::{
-    DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-    DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2, IDXGIOutput, IDXGISurface, IDXGISwapChain1,
+    DXGI_MATRIX_3X2_F, DXGI_PRESENT, DXGI_SCALING_STRETCH, DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG,
+    DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT, IDXGIDevice, IDXGIFactory2, IDXGIOutput,
+    IDXGISurface, IDXGISwapChain1, IDXGISwapChain2,
 };
 use windows::core::{BOOL, Interface as _, Result};
 
@@ -35,7 +38,9 @@ pub struct Surface {
     _d2d_device: ID2D1Device,
     swap_chain: IDXGISwapChain1,
     context: ID2D1DeviceContext,
-    _target: ID2D1Bitmap1,
+    _target: Option<ID2D1Bitmap1>,
+    width: u32,
+    height: u32,
 }
 
 // The target is held so the context's target stays alive; nothing reads it.
@@ -100,8 +105,62 @@ impl Surface {
             _d2d_device: d2d_device,
             swap_chain,
             context,
-            _target: target,
+            _target: Some(target),
+            width,
+            height,
         })
+    }
+
+    /// Resizes the swap chain to `width` by `height` device pixels.
+    ///
+    /// Every reference to a back buffer must be released before `ResizeBuffers`,
+    /// so the Direct2D target is dropped and recreated around the call.
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
+        if (self.width, self.height) == (width, height) || width == 0 || height == 0 {
+            return Ok(());
+        }
+
+        // SAFETY: the context is live; releasing its target satisfies
+        // `ResizeBuffers`' requirement that no back buffer be referenced.
+        unsafe { self.context.SetTarget(None::<&ID2D1Image>) };
+        self._target = None;
+
+        // SAFETY: the swap chain is a live composition swap chain, a buffer
+        // count of zero keeps the existing count, and the format is unchanged.
+        unsafe {
+            self.swap_chain
+                .ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG(0))?;
+        }
+
+        self._target = Some(create_target(&self.context, &self.swap_chain)?);
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
+    /// Undoes the panel's composition scale.
+    ///
+    /// A `SwapChainPanel` multiplies its swap chain's content by the composition
+    /// scale; sizing the swap chain in device pixels and setting the inverse
+    /// transform keeps one device pixel on one physical pixel.
+    pub fn set_scale(&mut self, scale_x: f32, scale_y: f32) -> Result<()> {
+        if !(scale_x > 0.0 && scale_y > 0.0 && scale_x.is_finite() && scale_y.is_finite()) {
+            return Ok(());
+        }
+
+        let transform = DXGI_MATRIX_3X2_F {
+            _11: 1.0 / scale_x,
+            _12: 0.0,
+            _21: 0.0,
+            _22: 1.0 / scale_y,
+            _31: 0.0,
+            _32: 0.0,
+        };
+        let chain: IDXGISwapChain2 = self.swap_chain.cast()?;
+
+        // SAFETY: a composition swap chain accepts a transform, and the matrix
+        // is a valid scale matrix on the stack for the duration of the call.
+        unsafe { chain.SetMatrixTransform(&transform) }
     }
 
     /// Returns the swap chain as the interface `windows-reactor` attaches.
@@ -118,10 +177,20 @@ impl Surface {
     }
 
     /// Blits `pixels` (`0xAARRGGBB`, which is BGRA in memory) and presents.
-    pub fn present(&mut self, pixels: &[u32], width: u32, height: u32) -> Result<()> {
+    ///
+    /// The grid is drawn at the top left, one pixel to one pixel; the rest of
+    /// the surface is cleared to `background` (a `COLORREF`).
+    pub fn present(&mut self, pixels: &[u32], width: u32, height: u32, background: u32) -> Result<()> {
         if width == 0 || height == 0 || pixels.len() < (width as usize) * (height as usize) {
             return Ok(());
         }
+
+        let clear = D2D1_COLOR_F {
+            r: f32::from((background & 0xFF) as u8) / 255.0,
+            g: f32::from(((background >> 8) & 0xFF) as u8) / 255.0,
+            b: f32::from(((background >> 16) & 0xFF) as u8) / 255.0,
+            a: 1.0,
+        };
 
         let properties = D2D1_BITMAP_PROPERTIES1 {
             pixelFormat: D2D1_PIXEL_FORMAT {
@@ -143,11 +212,13 @@ impl Surface {
         };
         let bitmap: ID2D1Bitmap = bitmap.into();
 
-        // SAFETY: the target was set in `new`; Direct2D requires BeginDraw and
-        // EndDraw to pair, which they do on every path out of this block.
+        // SAFETY: the target was set in `new` (or `resize`); Direct2D requires
+        // BeginDraw and EndDraw to pair, which they do on every path out of this
+        // block. The clear colour outlives the call and the bitmap is drawn at
+        // the origin, one pixel to one pixel.
         unsafe {
             self.context.BeginDraw();
-            self.context.Clear(None);
+            self.context.Clear(Some(&clear as *const _));
             self.context
                 .DrawBitmap(&bitmap, None, 1.0, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, None, None);
             self.context.EndDraw(None, None)?;

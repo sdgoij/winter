@@ -122,6 +122,18 @@ impl<D: RenderData> Renderer<D> {
         self.engines.push(engine);
     }
 
+    /// Changes the size every engine paints for.
+    ///
+    /// `target_size` is the surface in pixels and `viewport` the grid in cells;
+    /// the two describe the same resize, so they are applied together.
+    pub fn resize(&mut self, target_size: (u16, u16), viewport: InclusiveRect) -> RenderResult<()> {
+        for engine in &mut self.engines {
+            engine.update_target_size(target_size)?;
+            engine.update_viewport(viewport)?;
+        }
+        Ok(())
+    }
+
     /// Records which hyperlink is under the pointer.
     ///
     /// A hovered hyperlink is underlined solidly instead of with the normal
@@ -575,6 +587,8 @@ mod tests {
         grid_lines: Vec<GridLineSet>,
         cursor_paints: usize,
         titles: Vec<String>,
+        target_sizes: Vec<(u16, u16)>,
+        viewports: Vec<InclusiveRect>,
     }
 
     struct RecordingEngine {
@@ -725,7 +739,12 @@ mod tests {
         fn update_dpi(&mut self, _dpi: i32) -> RenderResult<()> {
             Ok(())
         }
-        fn update_viewport(&mut self, _viewport: InclusiveRect) -> RenderResult<()> {
+        fn update_viewport(&mut self, viewport: InclusiveRect) -> RenderResult<()> {
+            self.log.borrow_mut().viewports.push(viewport);
+            Ok(())
+        }
+        fn update_target_size(&mut self, target_size: (u16, u16)) -> RenderResult<()> {
+            self.log.borrow_mut().target_sizes.push(target_size);
             Ok(())
         }
         fn get_proposed_font(
@@ -869,6 +888,21 @@ mod tests {
 
     fn screen_rect(width: i32, height: i32) -> Rect {
         Rect::new(0, 0, width, height)
+    }
+
+    #[test]
+    fn a_resize_reaches_every_engine_as_a_size_and_a_viewport() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut renderer = Renderer::new(TestData::new(3, 2), RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), Vec::new())));
+
+        renderer
+            .resize((96, 64), InclusiveRect::new(0, 0, 11, 3))
+            .expect("resize");
+
+        let log = log.borrow();
+        assert_eq!(log.target_sizes, vec![(96, 64)]);
+        assert_eq!(log.viewports, vec![InclusiveRect::new(0, 0, 11, 3)]);
     }
 
     #[test]

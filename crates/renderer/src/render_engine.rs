@@ -173,6 +173,15 @@ pub trait RenderEngine {
     /// Changes the viewport.
     fn update_viewport(&mut self, viewport: InclusiveRect) -> RenderResult<()>;
 
+    /// Changes the pixel size of the target.
+    ///
+    /// The default is a no-op for a back end whose target is fixed. The atlas
+    /// engine caches the size, so a shell whose window can be resized must call
+    /// this whenever the target changes.
+    fn update_target_size(&mut self, _target_size: (u16, u16)) -> RenderResult<()> {
+        Ok(())
+    }
+
     /// Measures the font a desired font would produce without loading it.
     fn get_proposed_font(&mut self, desired: &FontInfoDesired, info: &mut FontInfo, dpi: i32) -> RenderResult<()>;
 

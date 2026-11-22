@@ -99,8 +99,10 @@ impl AtlasEngine {
     fn ensure_bitmap(&mut self) {
         let (columns, rows) = self.viewport_size();
         let cells = usize::from(columns) * usize::from(rows);
-        self.payload.settings.target_size = self.settings.target_size;
-        self.payload.settings.viewport_cell_count = self.viewport_size();
+        // The payload describes the frame to the back end, so it carries the
+        // engine's settings: a back end that falls back to its own defaults
+        // paints the wrong cell size and leaves the rest of the target blank.
+        self.payload.settings = self.settings.clone();
         self.payload.color_bitmap_row_stride = usize::from(columns);
         self.payload.color_bitmap_depth_stride = cells;
         if self.payload.color_bitmap.len() != cells * 3 {
@@ -404,6 +406,15 @@ impl RenderEngine for AtlasEngine {
         Ok(())
     }
 
+    fn update_target_size(&mut self, target_size: (u16, u16)) -> RenderResult<()> {
+        if self.settings.target_size != target_size {
+            self.settings.target_size = target_size;
+            self.ensure_bitmap();
+            self.mark_all_dirty();
+        }
+        Ok(())
+    }
+
     fn get_proposed_font(&mut self, _desired: &FontInfoDesired, _info: &mut FontInfo, _dpi: i32) -> RenderResult<()> {
         Ok(())
     }
@@ -483,6 +494,47 @@ mod tests {
             .update_viewport(InclusiveRect::new(0, 0, 3, 0))
             .expect("viewport");
         (engine, log)
+    }
+
+    #[test]
+    fn the_payload_carries_the_cell_size_the_engine_was_given() {
+        let settings = Settings {
+            font: FontSettings {
+                cell_size: (9, 20),
+                baseline: 16,
+                ..FontSettings::default()
+            },
+            viewport_cell_count: (4, 1),
+            target_size: (36, 20),
+            ..Settings::default()
+        };
+        let mut engine = AtlasEngine::with_settings(
+            settings,
+            Box::new(RecordingBackend {
+                log: Rc::new(RefCell::new(Log::default())),
+            }),
+        );
+
+        engine.paint_background().expect("background");
+
+        assert_eq!(engine.payload().settings.font.cell_size, (9, 20));
+        assert_eq!(engine.payload().settings.font.baseline, 16);
+        assert_eq!(engine.payload().settings.target_size, (36, 20));
+    }
+
+    #[test]
+    fn a_target_resize_reaches_the_payload_and_dirties_everything() {
+        let (mut engine, _log) = engine();
+        engine
+            .present(&std::sync::atomic::AtomicBool::new(false))
+            .expect("present");
+        assert!(engine.dirty_area().is_empty(), "the frame cleared the dirty area");
+
+        engine.update_target_size((64, 32)).expect("target size");
+
+        assert_eq!(engine.settings().target_size, (64, 32));
+        assert_eq!(engine.payload().settings.target_size, (64, 32));
+        assert_eq!(engine.payload().dirty_rect_in_px, (0, 0, 64, 32));
     }
 
     #[test]
