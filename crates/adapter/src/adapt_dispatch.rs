@@ -370,8 +370,13 @@ impl AdaptDispatch {
     pub fn new() -> Self {
         // DECAWM is set at power-on: a terminal that does not wrap by default
         // overprints the last column instead of starting a new line.
+        // DECARM and alternate scroll are set too, matching upstream's initial
+        // `_inputMode{ Ansi, AutoRepeat, AlternateScroll }`; DECRQM must report
+        // them enabled on a fresh terminal.
         let mut modes = ModeSet::default();
         modes.insert(ModeFlags::DECAWM);
+        modes.insert(ModeFlags::DECARM);
+        modes.insert(ModeFlags::ALTERNATE_SCROLL);
 
         Self {
             page_manager: PageManager::new(),

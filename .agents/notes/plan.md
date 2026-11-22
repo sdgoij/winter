@@ -14,11 +14,11 @@ Verified by running the gate, not by reading the previous status:
 | `buffer` | ~6.8k | 201 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator` |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~3.3k | 109 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key encoder from `terminalInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus). 50 of the tests are the CSI and private-mode conformance corpus |
+| `term` | ~3.9k | 127 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 51 of the tests are the CSI and private-mode conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-956 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+974 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -551,9 +551,11 @@ The Windows Terminal codebase maps to these Rust module groups:
     shifted and base key parameters, win32-input-mode and focus reporting.
     Repeat, release and AltGr come from the platform (ADR 009)
   - [x] **Tests:** 30 cases covering every sequence family above
-- [ ] `crates/term/src/input/mouse_input.rs` — `TerminalInput`, the mouse path
-  - [ ] Ported from `mouseInput.cpp`: the default, UTF-8 and SGR encodings,
-    wheel accumulation, hover and drag filtering, alternate scroll
+- [x] `crates/term/src/input/mouse_input.rs` — `TerminalInput`, the mouse path
+  - [x] Ported from `mouseInput.cpp`: the default, UTF-8 and SGR encodings,
+    wheel accumulation, hover and drag filtering, alternate scroll. UTF-8
+    coordinates are written as UTF-8 characters, not UTF-16 units
+  - [x] **Tests:** 16 cases covering every encoding and filter
 - [ ] `crates/term/src/input_engine.rs` — `InputStateMachineEngine`
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor

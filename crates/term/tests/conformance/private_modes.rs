@@ -53,6 +53,17 @@ fn decrqm_reports_whether_a_mode_is_set() {
 }
 
 #[test]
+fn decrqm_reports_the_initial_input_modes() {
+    // Upstream's input modes start as { ANSI, AutoRepeat, AlternateScroll }.
+    let mut screen = Screen::new(10, 3);
+    screen.feed_str("\x1b[?8$p\x1b[?1007$p");
+    assert_eq!(
+        screen.responses(),
+        vec!["\x1b[?8;1$y".to_string(), "\x1b[?1007;1$y".to_string()]
+    );
+}
+
+#[test]
 fn decrqm_reports_an_unknown_mode_as_zero() {
     let mut screen = Screen::new(10, 3);
     screen.feed_str("\x1b[?9999$p");

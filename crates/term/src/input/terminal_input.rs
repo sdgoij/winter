@@ -8,6 +8,8 @@
 
 use types::InputModes;
 
+use super::mouse_input::MouseState;
+
 /// `KittyKeyboardProtocolFlags::DisambiguateEscapeCodes`.
 const KITTY_DISAMBIGUATE: u8 = 1 << 0;
 /// `KittyKeyboardProtocolFlags::ReportEventTypes`.
@@ -224,12 +226,16 @@ impl KeyEvent {
 
 /// Translates key events into the bytes a program reads from its pty.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct TerminalInput;
+pub struct TerminalInput {
+    pub(super) mouse: MouseState,
+}
 
 impl TerminalInput {
     /// Creates an input engine.
     pub const fn new() -> Self {
-        Self
+        Self {
+            mouse: MouseState::new(),
+        }
     }
 
     /// Translates a key event, or returns `None` when it has no encoding.
@@ -316,6 +322,23 @@ impl TerminalInput {
         }
         let csi = introducer(modes);
         Some(format!("{csi}{}", if focused { 'I' } else { 'O' }))
+    }
+
+    /// Encodes a cursor key without the kitty, win32 or filter prelude.
+    ///
+    /// Upstream's `_makeAlternateScrollOutput` calls `_encodeRegular` and
+    /// `_formatEncodingHelper` directly; this is that path.
+    pub(super) fn encode_cursor_key(&self, key: Key, modes: &InputModes) -> Option<String> {
+        let event = KeyEvent::down(key);
+        let class = Classification {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            enhanced: false,
+        };
+        let mut enc = Encoding::default();
+        self.encode_regular(&mut enc, &event, &class, modes);
+        format_encoding(&enc, &class, modes)
     }
 
     /// Encodes an event as a win32-input-mode record.

@@ -8,7 +8,7 @@ use adapter::{AdaptDispatch, PageManager};
 use types::VTInt;
 use vt::{ParserMode, StateMachine, VtState};
 
-use crate::input::{KeyEvent, TerminalInput};
+use crate::input::{KeyEvent, MouseEvent, TerminalInput};
 use crate::output_engine::OutputStateMachineEngine;
 
 /// A terminal: the VT parser driving an `ITermDispatch`.
@@ -39,6 +39,15 @@ impl Terminal {
     pub fn handle_key(&mut self, event: &KeyEvent) -> Option<String> {
         let modes = self.dispatch().input_modes();
         self.input.handle_key(event, &modes)
+    }
+
+    /// Translates a mouse event into the bytes to write to the pty.
+    ///
+    /// `Some("")` means the event was consumed without producing bytes, as a
+    /// partly accumulated wheel turn is.
+    pub fn handle_mouse(&mut self, event: &MouseEvent) -> Option<String> {
+        let modes = self.dispatch().input_modes();
+        self.input.handle_mouse(event, &modes)
     }
 
     /// Translates a focus change into the bytes to write to the pty.
@@ -206,7 +215,7 @@ impl Default for Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::{Key, KeyEvent};
+    use crate::input::{Key, KeyEvent, MouseButton, MouseEvent, WheelAxis};
 
     #[test]
     fn a_device_attributes_query_queues_a_response() {
@@ -389,6 +398,27 @@ mod tests {
         assert_eq!(terminal.handle_focus(true), None);
         terminal.process_str("\x1b[?1004h");
         assert_eq!(terminal.handle_focus(true).as_deref(), Some("\x1b[I"));
+    }
+
+    #[test]
+    fn mouse_reporting_follows_the_tracking_mode() {
+        let mut terminal = Terminal::new();
+        let press = MouseEvent::press((2, 3), MouseButton::Left);
+
+        // Nothing is reported until a tracking mode is set.
+        assert_eq!(terminal.handle_mouse(&press), None);
+
+        terminal.process_str("\x1b[?1000h");
+        assert_eq!(terminal.handle_mouse(&press).as_deref(), Some("\x1b[M #$"));
+
+        // SGR takes over when it is enabled.
+        terminal.process_str("\x1b[?1006h");
+        assert_eq!(terminal.handle_mouse(&press).as_deref(), Some("\x1b[<0;3;4M"));
+
+        // On the alternate screen the wheel moves the cursor instead.
+        terminal.process_str("\x1b[?1000l\x1b[?1006l\x1b[?1049h");
+        let wheel = MouseEvent::wheel((0, 0), WheelAxis::Vertical, 120);
+        assert_eq!(terminal.handle_mouse(&wheel).as_deref(), Some("\x1b[A"));
     }
 
     #[test]
