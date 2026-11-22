@@ -130,7 +130,7 @@ pub struct AdaptDispatch {
     /// Font buffer.
     font_buffer: FontBuffer,
     /// Macro buffer.
-    macro_buffer: MacroBuffer,
+    macro_buffer: std::sync::Arc<std::sync::Mutex<MacroBuffer>>,
     /// Whether we're using the alternate buffer.
     using_alt_buffer: bool,
     /// Scrolling margins, 0-based and inclusive; `(0, 0)` means unset, which the
@@ -155,6 +155,8 @@ pub struct AdaptDispatch {
     /// Upstream writes these through `ITerminalApi::ReturnResponse`; until that
     /// seam exists the adapter queues them and the host drains the queue.
     pending_responses: Vec<String>,
+    /// Macro sequences waiting to be injected into the parser by the host.
+    pending_macro_input: Vec<Vec<u8>>,
     /// Terminal features announced in DA1.
     optional_features: std::collections::HashSet<OptionalFeature>,
     /// Tab stops by column; empty until first use, then every eighth column.
@@ -182,7 +184,7 @@ impl AdaptDispatch {
             term_output: TerminalOutput::new(false),
             sixel_parser: SixelParser::new(SIXEL_DEFAULT_CONFORMANCE),
             font_buffer: FontBuffer::new(),
-            macro_buffer: MacroBuffer::new(),
+            macro_buffer: std::sync::Arc::new(std::sync::Mutex::new(MacroBuffer::new())),
             using_alt_buffer: false,
             scroll_top_margin: 0,
             scroll_bottom_margin: 0,
@@ -194,6 +196,7 @@ impl AdaptDispatch {
             unhandled_count: 0,
             last_unhandled: None,
             pending_responses: Vec::new(),
+            pending_macro_input: Vec::new(),
             optional_features: std::collections::HashSet::new(),
             tab_stops: Vec::new(),
             saved_cursor_state: [CursorState::default(), CursorState::default()],
@@ -343,13 +346,16 @@ impl AdaptDispatch {
     }
 
     /// Returns the macro buffer.
-    pub fn macro_buffer(&self) -> &MacroBuffer {
-        &self.macro_buffer
+    pub fn macro_buffer(&self) -> std::sync::Arc<std::sync::Mutex<MacroBuffer>> {
+        std::sync::Arc::clone(&self.macro_buffer)
     }
 
-    /// Returns the macro buffer mutably.
-    pub fn macro_buffer_mut(&mut self) -> &mut MacroBuffer {
-        &mut self.macro_buffer
+    /// Takes the macro sequences the application should feed to its parser.
+    ///
+    /// Upstream injects an invoked macro into its own state machine; this crate
+    /// does not own one, so invocation is queued instead (ADR 001).
+    pub fn take_macro_input(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.pending_macro_input)
     }
 
     /// Returns the font buffer.
@@ -412,6 +418,8 @@ impl AdaptDispatch {
         self.using_alt_buffer = false;
         self.cursor_style = CursorStyle::UserDefault;
         self.modes = ModeSet::default();
+        // RIS discards the macro definitions, as upstream does.
+        self.macro_buffer.lock().unwrap_or_else(|e| e.into_inner()).reset();
         if erase {
             // Erasing the pages is part of the dispatch work; the page manager
             // owns the buffers, so the reset path has nothing to clear here yet.
@@ -1542,7 +1550,14 @@ impl ITermDispatch for AdaptDispatch {
             .push(format!("\x1b[{}{};{}$y", private, param.param_number(), state));
     }
 
-    fn device_status_report(&mut self, status_type: StatusType, _id: VTParameter) {
+    fn device_status_report(&mut self, status_type: StatusType, id: VTParameter) {
+        // DECCKSR answers with a DCS response rather than a CSI one.
+        if matches!(status_type, StatusType::MemoryChecksum) {
+            let checksum = self.macro_buffer.lock().unwrap_or_else(|e| e.into_inner()).checksum();
+            self.push_dcs(&format!("{}!~{:04X}", id.value_or(0), checksum));
+            return;
+        }
+
         let body = match status_type {
             StatusType::OperatingStatus => "0n".to_string(),
             StatusType::CursorPositionReport => self.cursor_position_report(false),
@@ -1554,11 +1569,53 @@ impl ITermDispatch for AdaptDispatch {
             StatusType::LocatorIdentity => "?57;0n".to_string(),
             StatusType::DataIntegrity => "?70n".to_string(),
             StatusType::MultipleSessionStatus => "?83n".to_string(),
-            // The macro space and checksum reports need the macro buffer to
-            // answer; they are the two DSR forms that stay open.
-            StatusType::MacroSpaceReport | StatusType::MemoryChecksum => return,
+            // DECMSR reports free macro space in 16-byte blocks.
+            StatusType::MacroSpaceReport => {
+                let space = self
+                    .macro_buffer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .space_available();
+                format!("{}*{{", space / 16)
+            }
+            StatusType::MemoryChecksum => unreachable!(),
         };
         self.push_csi(&body);
+    }
+
+    fn define_macro(
+        &mut self,
+        macro_id: VTInt,
+        delete_control: MacroDeleteControl,
+        encoding: MacroEncoding,
+    ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        let buffer = std::sync::Arc::clone(&self.macro_buffer);
+        let ready = buffer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .init_parser(macro_id, delete_control, encoding);
+        if !ready {
+            return None;
+        }
+
+        Some(Box::new(move |ch| {
+            buffer.lock().unwrap_or_else(|e| e.into_inner()).parse_definition(ch)
+        }))
+    }
+
+    fn invoke_macro(&mut self, macro_id: VTInt) {
+        let Ok(id) = usize::try_from(macro_id) else {
+            return;
+        };
+        let bytes = {
+            let buffer = self.macro_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            buffer.macro_bytes(id).map(<[u8]>::to_vec)
+        };
+        if let Some(bytes) = bytes
+            && !bytes.is_empty()
+        {
+            self.pending_macro_input.push(bytes);
+        }
     }
 
     fn device_attributes(&mut self) {
@@ -2117,6 +2174,12 @@ mod tests {
         dispatch.reset_mode(&ModeParams::DecAwm);
         dispatch.request_mode(&ModeParams::DecOm);
         dispatch.device_status_report(StatusType::OperatingStatus, VTParameter::default());
+        dispatch.device_status_report(StatusType::MacroSpaceReport, VTParameter::default());
+        dispatch.device_status_report(StatusType::MemoryChecksum, VTParameter::default());
+        if let Some(mut handler) = dispatch.define_macro(0, MacroDeleteControl::DeleteId, MacroEncoding::Text) {
+            handler('\x1b');
+        }
+        dispatch.invoke_macro(0);
         dispatch.device_attributes();
         dispatch.secondary_device_attributes();
         dispatch.tertiary_device_attributes();
@@ -2692,6 +2755,65 @@ mod tests {
         dispatch.add_hyperlink("https://example.com", "same");
 
         assert_eq!(page_attributes(&mut dispatch).get_hyperlink_id(), first);
+    }
+
+    fn define_text_macro(dispatch: &mut AdaptDispatch, id: VTInt, payload: &str) {
+        let mut handler = dispatch
+            .define_macro(id, MacroDeleteControl::DeleteId, MacroEncoding::Text)
+            .expect("macro definition accepted");
+        for ch in payload.chars() {
+            assert!(handler(ch));
+        }
+        assert!(!handler('\x1b'));
+    }
+
+    #[test]
+    fn a_defined_macro_is_queued_for_invocation() {
+        let mut dispatch = AdaptDispatch::new();
+        define_text_macro(&mut dispatch, 0, "AB");
+
+        dispatch.invoke_macro(0);
+
+        assert_eq!(dispatch.take_macro_input(), vec![b"AB".to_vec()]);
+    }
+
+    #[test]
+    fn invoking_an_undefined_macro_queues_nothing() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.invoke_macro(3);
+
+        assert!(dispatch.take_macro_input().is_empty());
+    }
+
+    #[test]
+    fn macro_space_and_checksum_reports_answer_from_the_buffer() {
+        let mut dispatch = AdaptDispatch::new();
+        define_text_macro(&mut dispatch, 0, "AB");
+
+        dispatch.device_status_report(StatusType::MacroSpaceReport, VTParameter::default());
+        dispatch.device_status_report(StatusType::MemoryChecksum, VTParameter::from(7));
+
+        let checksum = 0u16.wrapping_sub(0x41).wrapping_sub(0x42);
+        let space = (crate::macro_buffer::MAX_SPACE - 2) / 16;
+        assert_eq!(
+            dispatch.take_responses(),
+            vec![format!("\x1b[{space}*{{"), format!("\x1bP7!~{checksum:04X}\x1b\\"),]
+        );
+    }
+
+    #[test]
+    fn a_hard_reset_clears_macro_definitions() {
+        let mut dispatch = AdaptDispatch::new();
+        define_text_macro(&mut dispatch, 0, "AB");
+
+        dispatch.hard_reset(false);
+        dispatch.invoke_macro(0);
+
+        assert!(dispatch.take_macro_input().is_empty());
+        let buffer = dispatch.macro_buffer();
+        let buffer = buffer.lock().unwrap();
+        assert_eq!(buffer.defined_count(), 0);
     }
 
     #[test]

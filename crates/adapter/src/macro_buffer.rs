@@ -1,138 +1,284 @@
-//! `MacroBuffer` — VT macro support.
+//! `MacroBuffer` — VT macro storage and definition parser.
 //!
-//! Ported from `MacroBuffer.hpp/cpp` in the Windows Terminal C++ codebase.
-//! Manages storage and retrieval of terminal macros.
+//! Ported from `MacroBuffer.hpp/cpp`: DECDMAC definitions in text or hex-pair
+//! encoding (with `!count;…;` repeats), a shared 256 KiB budget, and the DEC
+//! VT420 checksum used by DECCKSR.
+//!
+//! Invocation differs from upstream because this crate owns no state machine:
+//! upstream feeds the sequence back into its parser, while
+//! [`crate::AdaptDispatch::take_macro_input`] hands the bytes to the
+//! application, which feeds them to the parser it already owns.
 
 use crate::dispatch_types::{MacroDeleteControl, MacroEncoding};
 
-/// Maximum number of macros.
-const MAX_MACROS: usize = 10;
+/// The macro identifier space, ported from upstream `_macros` (64 entries).
+pub const MAX_MACROS: usize = 64;
 
-/// Maximum macro ID.
-const MAX_MACRO_ID: i32 = 9;
+/// The shared macro memory budget, in bytes. Upstream counts UTF-16 units; the
+/// sequences are control bytes in practice, so the units coincide.
+pub const MAX_SPACE: usize = 0x40000;
 
-/// A single macro entry.
-#[derive(Debug, Clone)]
-struct MacroEntry {
-    /// Macro ID (0-9).
-    #[allow(dead_code)]
-    id: i32,
-    /// Whether the macro is defined.
-    defined: bool,
-    /// Encoding type.
-    encoding: MacroEncoding,
-    /// Macro content as bytes.
-    content: Vec<u8>,
+/// The largest repeat count, matching the parser's parameter cap.
+const MAX_PARAMETER_VALUE: usize = 65535;
+
+/// Which part of a macro definition the next character belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseState {
+    Text,
+    HexDigit,
+    SecondHexDigit,
+    RepeatCount,
 }
 
-impl MacroEntry {
-    /// Creates a new empty macro entry.
-    fn new(id: i32) -> Self {
-        Self {
-            id,
-            defined: false,
-            encoding: MacroEncoding::Text,
-            content: Vec::new(),
-        }
-    }
-}
-
-/// Buffer for storing VT macros.
+/// Stores macro definitions and parses DECDMAC payloads.
 #[derive(Debug)]
 pub struct MacroBuffer {
-    /// Macro entries.
-    macros: [MacroEntry; MAX_MACROS],
+    /// The parser state for the definition currently being received.
+    parse_state: ParseState,
+    /// The byte assembled from the two hex digits seen so far.
+    decoded_char: u8,
+    /// Whether a repeat sequence is waiting for its closing `;`.
+    repeat_pending: bool,
+    /// The repeat count being accumulated.
+    repeat_count: usize,
+    /// Where the repeated sequence starts in the active macro.
+    repeat_start: usize,
+    /// Macro content by id; empty means undefined.
+    macros: Vec<Vec<u8>>,
+    /// The macro being defined.
+    active_macro_id: usize,
+    /// Total bytes held across all macros.
+    space_used: usize,
 }
 
 impl MacroBuffer {
     /// Creates a new MacroBuffer.
     pub fn new() -> Self {
         Self {
-            macros: [
-                MacroEntry::new(0),
-                MacroEntry::new(1),
-                MacroEntry::new(2),
-                MacroEntry::new(3),
-                MacroEntry::new(4),
-                MacroEntry::new(5),
-                MacroEntry::new(6),
-                MacroEntry::new(7),
-                MacroEntry::new(8),
-                MacroEntry::new(9),
-            ],
+            parse_state: ParseState::Text,
+            decoded_char: 0,
+            repeat_pending: false,
+            repeat_count: 0,
+            repeat_start: 0,
+            macros: vec![Vec::new(); MAX_MACROS],
+            active_macro_id: 0,
+            space_used: 0,
         }
     }
 
-    /// Resets all macros.
+    /// Discards every macro, which is what a hard reset does.
     pub fn reset(&mut self) {
-        for entry in &mut self.macros {
-            entry.defined = false;
-            entry.content.clear();
-            entry.encoding = MacroEncoding::Text;
+        for macro_content in &mut self.macros {
+            macro_content.clear();
         }
+        self.space_used = 0;
+        self.parse_state = ParseState::Text;
+        self.decoded_char = 0;
+        self.repeat_pending = false;
+        self.repeat_count = 0;
+        self.repeat_start = 0;
     }
 
-    /// Defines a macro with the given ID.
-    /// Returns the writer function that will receive macro content.
-    pub fn define_macro(
-        &mut self,
-        id: i32,
-        delete_control: MacroDeleteControl,
-        encoding: MacroEncoding,
-    ) -> Option<&mut Vec<u8>> {
-        if !(0..MAX_MACRO_ID).contains(&id) {
-            return None;
+    /// Prepares to receive a definition, deleting the macro (or all macros)
+    /// first as `delete_control` asks.
+    ///
+    /// Ported from `MacroBuffer::InitParser`. Returns false for an out-of-range
+    /// id or an encoding this parser does not implement.
+    pub fn init_parser(&mut self, macro_id: i32, delete_control: MacroDeleteControl, encoding: MacroEncoding) -> bool {
+        let Ok(macro_id) = usize::try_from(macro_id) else {
+            return false;
+        };
+        if macro_id >= MAX_MACROS {
+            return false;
         }
+
+        self.active_macro_id = macro_id;
+        self.decoded_char = 0;
+        self.repeat_pending = false;
+
+        self.parse_state = match encoding {
+            MacroEncoding::HexPair => ParseState::HexDigit,
+            MacroEncoding::Text => ParseState::Text,
+        };
 
         match delete_control {
-            MacroDeleteControl::DeleteId => {
-                let entry = &mut self.macros[id as usize];
-                entry.defined = true;
-                entry.content.clear();
-                entry.encoding = encoding;
-                Some(&mut entry.content)
-            }
-            MacroDeleteControl::DeleteAll => {
-                self.reset();
-                Some(&mut self.macros[id as usize].content)
-            }
+            MacroDeleteControl::DeleteId => self.delete_macro(macro_id),
+            MacroDeleteControl::DeleteAll => self.delete_all_macros(),
         }
+        true
     }
 
-    /// Invokes a macro by ID.
-    /// Returns the macro content if the macro is defined.
-    pub fn invoke_macro(&self, id: i32) -> Option<&[u8]> {
-        if !(0..MAX_MACRO_ID).contains(&id) {
-            return None;
+    /// Feeds one character of a definition.
+    ///
+    /// Ported from `MacroBuffer::ParseDefinition`: an ESC ends the definition,
+    /// other control characters are ignored, and any syntax error clears what
+    /// has been received so far. Returns whether parsing should continue.
+    pub fn parse_definition(&mut self, ch: char) -> bool {
+        if ch == '\x1b' {
+            if self.repeat_pending && !self.apply_pending_repeat() {
+                self.delete_macro(self.active_macro_id);
+            }
+            return false;
         }
 
-        let entry = &self.macros[id as usize];
-        if entry.defined { Some(&entry.content) } else { None }
+        if ch < ' ' {
+            return true;
+        }
+
+        let mut success = true;
+        match self.parse_state {
+            ParseState::Text => {
+                success = self.append_to_active_macro(ch);
+            }
+            ParseState::HexDigit => {
+                if self.decode_hex_digit(ch) {
+                    self.parse_state = ParseState::SecondHexDigit;
+                } else if ch == '!' && !self.repeat_pending {
+                    self.parse_state = ParseState::RepeatCount;
+                    self.repeat_count = 0;
+                } else if ch == ';' && self.repeat_pending {
+                    success = self.apply_pending_repeat();
+                } else {
+                    success = false;
+                }
+            }
+            ParseState::SecondHexDigit => {
+                success = self.decode_hex_digit(ch) && self.append_byte(self.decoded_char);
+                self.decoded_char = 0;
+                self.parse_state = ParseState::HexDigit;
+            }
+            ParseState::RepeatCount => {
+                if let Some(digit) = ch.to_digit(10) {
+                    self.repeat_count = self
+                        .repeat_count
+                        .saturating_mul(10)
+                        .saturating_add(digit as usize)
+                        .min(MAX_PARAMETER_VALUE);
+                } else if ch == ';' {
+                    self.repeat_pending = true;
+                    self.repeat_start = self.macros[self.active_macro_id].len();
+                    self.parse_state = ParseState::HexDigit;
+                } else {
+                    success = false;
+                }
+            }
+        }
+
+        if !success {
+            self.delete_macro(self.active_macro_id);
+        }
+        success
+    }
+
+    /// Decodes one hex digit into `decoded_char`.
+    fn decode_hex_digit(&mut self, ch: char) -> bool {
+        let Some(digit) = ch.to_digit(16) else {
+            return false;
+        };
+        self.decoded_char = self.decoded_char.wrapping_shl(4) | digit as u8;
+        true
+    }
+
+    /// Appends a text character, encoded as UTF-8.
+    fn append_to_active_macro(&mut self, ch: char) -> bool {
+        let mut buffer = [0u8; 4];
+        let bytes = ch.encode_utf8(&mut buffer).as_bytes();
+        if bytes.len() > self.space_available() {
+            return false;
+        }
+        self.macros[self.active_macro_id].extend_from_slice(bytes);
+        self.space_used += bytes.len();
+        true
+    }
+
+    /// Appends one decoded byte.
+    fn append_byte(&mut self, byte: u8) -> bool {
+        if self.space_available() == 0 {
+            return false;
+        }
+        self.macros[self.active_macro_id].push(byte);
+        self.space_used += 1;
+        true
+    }
+
+    /// Repeats the sequence since `repeat_start` as the pending count asks.
+    ///
+    /// Ported from `MacroBuffer::_applyPendingRepeat`: the sequence has already
+    /// been stored once, so only the extra copies are appended.
+    fn apply_pending_repeat(&mut self) -> bool {
+        if self.repeat_count > 1 {
+            let content = &self.macros[self.active_macro_id];
+            let sequence_length = content.len() - self.repeat_start;
+            let Some(space_required) = (self.repeat_count - 1).checked_mul(sequence_length) else {
+                return false;
+            };
+            if space_required > self.space_available() {
+                return false;
+            }
+
+            let sequence = content[self.repeat_start..].to_vec();
+            for _ in 1..self.repeat_count {
+                self.macros[self.active_macro_id].extend_from_slice(&sequence);
+                self.space_used += sequence_length;
+            }
+        }
+        self.repeat_pending = false;
+        true
+    }
+
+    /// Returns the content of a macro, or None for an out-of-range id.
+    pub fn macro_bytes(&self, id: usize) -> Option<&[u8]> {
+        self.macros.get(id).map(Vec::as_slice)
     }
 
     /// Deletes a specific macro.
-    pub fn delete_macro(&mut self, id: i32) {
-        if !(0..MAX_MACRO_ID).contains(&id) {
-            return;
+    pub fn delete_macro(&mut self, id: usize) {
+        if let Some(content) = self.macros.get_mut(id) {
+            self.space_used = self.space_used.saturating_sub(content.len());
+            content.clear();
         }
-        let entry = &mut self.macros[id as usize];
-        entry.defined = false;
-        entry.content.clear();
     }
 
     /// Deletes all macros.
     pub fn delete_all_macros(&mut self) {
-        self.reset();
+        for content in &mut self.macros {
+            content.clear();
+        }
+        self.space_used = 0;
     }
 
-    /// Returns the number of defined macros.
+    /// Returns the bytes still available.
+    pub fn space_available(&self) -> usize {
+        MAX_SPACE - self.space_used
+    }
+
+    /// Returns the total bytes held.
+    pub const fn space_used(&self) -> usize {
+        self.space_used
+    }
+
+    /// Returns the DEC VT420 checksum of every stored macro byte.
+    ///
+    /// Ported from `MacroBuffer::CalculateChecksum`: bytes are summed and
+    /// subtracted from zero, so the result wraps like the terminal's.
+    pub fn checksum(&self) -> u16 {
+        let mut checksum: u16 = 0;
+        for content in &self.macros {
+            for byte in content {
+                checksum = checksum.wrapping_sub(u16::from(*byte));
+            }
+        }
+        checksum
+    }
+
+    /// Returns the number of non-empty macros.
     pub fn defined_count(&self) -> usize {
-        self.macros.iter().filter(|m| m.defined).count()
+        self.macros.iter().filter(|content| !content.is_empty()).count()
     }
 
-    /// Returns the total storage used by all macros in bytes.
+    /// Returns the total bytes held, matching [`MacroBuffer::space_used`].
     pub fn total_size(&self) -> usize {
-        self.macros.iter().map(|m| m.content.len()).sum()
+        self.space_used
     }
 }
 
@@ -146,85 +292,141 @@ impl Default for MacroBuffer {
 mod tests {
     use super::*;
 
+    fn define(buffer: &mut MacroBuffer, id: i32, encoding: MacroEncoding, payload: &str) {
+        assert!(buffer.init_parser(id, MacroDeleteControl::DeleteId, encoding));
+        for ch in payload.chars() {
+            buffer.parse_definition(ch);
+        }
+        buffer.parse_definition('\x1b');
+    }
+
     #[test]
-    fn test_macro_buffer_new() {
+    fn a_new_buffer_holds_nothing() {
         let buffer = MacroBuffer::new();
         assert_eq!(buffer.defined_count(), 0);
         assert_eq!(buffer.total_size(), 0);
+        assert_eq!(buffer.space_available(), MAX_SPACE);
+        assert_eq!(buffer.checksum(), 0);
+        assert_eq!(buffer.macro_bytes(0), Some(&[][..]));
     }
 
     #[test]
-    fn test_define_macro() {
+    fn text_definitions_store_their_payload() {
         let mut buffer = MacroBuffer::new();
-        let content = buffer
-            .define_macro(1, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-            .unwrap();
-        content.extend_from_slice(b"test macro");
+
+        define(&mut buffer, 2, MacroEncoding::Text, "hello");
+
+        assert_eq!(buffer.macro_bytes(2), Some(&b"hello"[..]));
         assert_eq!(buffer.defined_count(), 1);
-        assert_eq!(buffer.total_size(), 10);
+        assert_eq!(buffer.total_size(), 5);
     }
 
     #[test]
-    fn test_invoke_macro() {
+    fn hex_definitions_decode_pairs() {
         let mut buffer = MacroBuffer::new();
-        let content = buffer
-            .define_macro(5, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-            .unwrap();
-        content.extend_from_slice(b"hello");
 
-        let invoked = buffer.invoke_macro(5).unwrap();
-        assert_eq!(invoked, b"hello");
+        define(&mut buffer, 3, MacroEncoding::HexPair, "1b5b41");
+
+        assert_eq!(buffer.macro_bytes(3), Some(&[0x1b, 0x5b, 0x41][..]));
     }
 
     #[test]
-    fn test_invoke_undefined_macro() {
-        let buffer = MacroBuffer::new();
-        assert!(buffer.invoke_macro(3).is_none());
-    }
-
-    #[test]
-    fn test_delete_macro() {
+    fn a_hex_repeat_appends_the_extra_copies() {
         let mut buffer = MacroBuffer::new();
-        let content = buffer
-            .define_macro(2, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-            .unwrap();
-        content.extend_from_slice(b"data");
-        assert_eq!(buffer.defined_count(), 1);
 
-        buffer.delete_macro(2);
+        // `!count;sequence;` repeats `sequence` count times in total.
+        define(&mut buffer, 4, MacroEncoding::HexPair, "!3;4142;");
+
+        assert_eq!(buffer.macro_bytes(4), Some(&b"ABABAB"[..]));
+    }
+
+    #[test]
+    fn a_malformed_hex_definition_is_discarded() {
+        let mut buffer = MacroBuffer::new();
+        assert!(buffer.init_parser(1, MacroDeleteControl::DeleteId, MacroEncoding::HexPair));
+
+        assert!(buffer.parse_definition('4'));
+        assert!(!buffer.parse_definition('z'));
+
+        assert_eq!(buffer.macro_bytes(1), Some(&[][..]));
         assert_eq!(buffer.defined_count(), 0);
-        assert!(buffer.invoke_macro(2).is_none());
     }
 
     #[test]
-    fn test_delete_all_macros() {
+    fn control_characters_are_ignored_but_esc_ends_the_definition() {
         let mut buffer = MacroBuffer::new();
-        for i in 0..5 {
-            let content = buffer
-                .define_macro(i, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-                .unwrap();
-            content.extend_from_slice(&[i as u8]);
+        assert!(buffer.init_parser(0, MacroDeleteControl::DeleteId, MacroEncoding::Text));
+
+        assert!(buffer.parse_definition('\n'));
+        assert!(buffer.parse_definition('A'));
+        assert!(!buffer.parse_definition('\x1b'));
+
+        assert_eq!(buffer.macro_bytes(0), Some(&b"A"[..]));
+    }
+
+    #[test]
+    fn the_budget_is_shared_and_overflow_aborts_the_definition() {
+        let mut buffer = MacroBuffer::new();
+        assert!(buffer.init_parser(0, MacroDeleteControl::DeleteId, MacroEncoding::Text));
+        for _ in 0..MAX_SPACE {
+            assert!(buffer.parse_definition('x'));
         }
-        assert_eq!(buffer.defined_count(), 5);
 
-        buffer.delete_all_macros();
-        assert_eq!(buffer.defined_count(), 0);
+        assert!(!buffer.parse_definition('y'));
+        // A failed definition is discarded, returning the space.
+        assert_eq!(buffer.space_available(), MAX_SPACE);
     }
 
     #[test]
-    fn test_invalid_macro_id() {
+    fn delete_id_clears_only_the_named_macro() {
         let mut buffer = MacroBuffer::new();
-        assert!(
-            buffer
-                .define_macro(-1, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-                .is_none()
-        );
-        assert!(
-            buffer
-                .define_macro(10, MacroDeleteControl::DeleteId, MacroEncoding::Text)
-                .is_none()
-        );
-        assert!(buffer.invoke_macro(-1).is_none());
-        assert!(buffer.invoke_macro(10).is_none());
+        define(&mut buffer, 0, MacroEncoding::Text, "zero");
+        define(&mut buffer, 1, MacroEncoding::Text, "one");
+
+        define(&mut buffer, 0, MacroEncoding::Text, "two");
+
+        assert_eq!(buffer.macro_bytes(0), Some(&b"two"[..]));
+        assert_eq!(buffer.macro_bytes(1), Some(&b"one"[..]));
+        assert_eq!(buffer.total_size(), 6);
+    }
+
+    #[test]
+    fn delete_all_clears_every_macro_first() {
+        let mut buffer = MacroBuffer::new();
+        define(&mut buffer, 0, MacroEncoding::Text, "zero");
+        define(&mut buffer, 1, MacroEncoding::Text, "one");
+
+        assert!(buffer.init_parser(2, MacroDeleteControl::DeleteAll, MacroEncoding::Text));
+        buffer.parse_definition('x');
+
+        assert_eq!(buffer.defined_count(), 1);
+        assert_eq!(buffer.macro_bytes(2), Some(&b"x"[..]));
+    }
+
+    #[test]
+    fn the_checksum_subtracts_every_byte_from_zero() {
+        let mut buffer = MacroBuffer::new();
+        define(&mut buffer, 0, MacroEncoding::Text, "AB");
+
+        assert_eq!(buffer.checksum(), 0u16.wrapping_sub(0x41).wrapping_sub(0x42));
+    }
+
+    #[test]
+    fn ids_outside_the_macro_space_are_rejected() {
+        let mut buffer = MacroBuffer::new();
+        assert!(!buffer.init_parser(-1, MacroDeleteControl::DeleteId, MacroEncoding::Text));
+        assert!(!buffer.init_parser(MAX_MACROS as i32, MacroDeleteControl::DeleteId, MacroEncoding::Text));
+        assert!(buffer.macro_bytes(MAX_MACROS).is_none());
+    }
+
+    #[test]
+    fn reset_discards_everything() {
+        let mut buffer = MacroBuffer::new();
+        define(&mut buffer, 0, MacroEncoding::Text, "zero");
+
+        buffer.reset();
+
+        assert_eq!(buffer.defined_count(), 0);
+        assert_eq!(buffer.space_available(), MAX_SPACE);
     }
 }
