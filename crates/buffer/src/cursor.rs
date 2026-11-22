@@ -36,7 +36,8 @@ impl Cursor {
         Self {
             row: 0,
             column: 0,
-            visible: false,
+            // Upstream's `Cursor` starts visible; a fresh terminal shows one.
+            visible: true,
             blinking: false,
             shape: CursorType::Legacy,
             width: 0,
@@ -206,7 +207,7 @@ mod tests {
         let cursor = Cursor::new();
         assert_eq!(cursor.row(), 0);
         assert_eq!(cursor.column(), 0);
-        assert!(!cursor.is_visible());
+        assert!(cursor.is_visible(), "upstream starts with a visible cursor");
         assert!(!cursor.is_blinking());
     }
 
@@ -263,9 +264,9 @@ mod tests {
     fn test_visibility_toggle() {
         let mut cursor = Cursor::new();
         cursor.toggle_visibility();
-        assert!(cursor.is_visible());
-        cursor.toggle_visibility();
         assert!(!cursor.is_visible());
+        cursor.toggle_visibility();
+        assert!(cursor.is_visible());
     }
 
     #[test]

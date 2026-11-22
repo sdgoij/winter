@@ -367,16 +367,14 @@ impl<D: ITermDispatch> IStateMachineEngine for OutputStateMachineEngine<D> {
             b"\"v" => self.dispatch.request_displayed_extent(),
             b"#p" | b"#q" => self.dispatch.push_graphics_rendition(parameters),
             b"#{" | b"#}" => self.dispatch.pop_graphics_rendition(),
-            b"$p" => {
-                if let Some(mode) = mode_param(parameters.at(0).value_or(0), false) {
-                    self.dispatch.request_mode(&mode);
-                }
-            }
-            b"?$p" => {
-                if let Some(mode) = mode_param(parameters.at(0).value_or(0), true) {
-                    self.dispatch.request_mode(&mode);
-                }
-            }
+            b"$p" => match mode_param(parameters.at(0).value_or(0), false) {
+                Some(mode) => self.dispatch.request_mode(&mode),
+                None => self.dispatch.request_unknown_mode(parameters.at(0).value_or(0), false),
+            },
+            b"?$p" => match mode_param(parameters.at(0).value_or(0), true) {
+                Some(mode) => self.dispatch.request_mode(&mode),
+                None => self.dispatch.request_unknown_mode(parameters.at(0).value_or(0), true),
+            },
             b"$r" => self.dispatch.change_attributes_rectangular_area(
                 param_or_one(parameters.at(0)),
                 param_or_one(parameters.at(1)),

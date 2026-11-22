@@ -12,13 +12,13 @@ Verified by running the gate, not by reading the previous status:
 | `utils` | ~4.6k | 207 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
 | `types` | ~3.4k | 95 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.8k | 201 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator` |
-| `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
+| `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~2.1k | 28 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
+| `term` | ~2.1k | 78 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter. 50 of the tests are the CSI and private-mode conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-873 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+923 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1089,22 +1089,31 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 ### D. VT Conformance Suite (against xterm/kitty/iterm2)
 
-- [ ] `winterm/tests/conformance/csi/sgr.rs` — All SGR codes
-- [ ] `winterm/tests/conformance/csi/cursor.rs` — All cursor movement commands
-- [ ] `winterm/tests/conformance/csi/scroll.rs` — All scroll commands
-- [ ] `winterm/tests/conformance/csi/erase.rs` — All erase commands
-- [ ] `winterm/tests/conformance/csi/insert_delete.rs` — IL/DL/ICH/DCH
-- [ ] `winterm/tests/conformance/osc.rs` — All OSC sequences
-- [ ] `winterm/tests/conformance/dcs/sixel.rs` — All Sixel sequences
-- [ ] `winterm/tests/conformance/private_modes.rs` — All DECSET/DECRST
-- [ ] `winterm/tests/conformance/mouse.rs` — All mouse tracking modes
-- [ ] `winterm/tests/conformance/kitty_keyboard.rs` — All KKP sequences
-- [ ] `winterm/tests/conformance/bracketed_paste.rs` — Bracketed paste
-- [ ] `winterm/tests/conformance/win32_input_mode.rs` — Win32 Input Mode
-- [ ] `winterm/tests/conformance/escape.rs` — All escape sequences
-- [ ] `winterm/tests/conformance/vt52.rs` — All VT52 commands
-- [ ] `winterm/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
-- [ ] `winterm/tests/conformance/generate.rs` — Fuzz-generated sequences against reference
+The corpus drives the public `term::Terminal` API and reads the screen, so it
+lives in the crate that owns the parser-to-dispatch loop:
+`crates/term/tests/conformance/`, with one entry point declared in
+`crates/term/Cargo.toml`.
+
+- [x] `crates/term/tests/conformance/csi/sgr.rs` — SGR colours, the attribute
+  pairs, the `:`-form underline styles and full reset
+- [x] `crates/term/tests/conformance/csi/cursor.rs` — CUP/HVP, CUU/CUD,
+  CUF/CUB, CHA/VPA, CNL/CPL, HPR/VPR, DECSC/DECRC, CSI s/u and 8-bit C1
+- [x] `crates/term/tests/conformance/csi/scroll.rs` — SU/SD, LF and CR+LF at the
+  bottom margin, DECSTBM and RI
+- [x] `crates/term/tests/conformance/csi/erase.rs` — EL 0/1/2, ED 0/1/2 and ECH
+- [x] `crates/term/tests/conformance/csi/insert_delete.rs` — IL/DL/ICH/DCH
+- [ ] `crates/term/tests/conformance/osc.rs` — All OSC sequences
+- [ ] `crates/term/tests/conformance/dcs/sixel.rs` — All Sixel sequences
+- [x] `crates/term/tests/conformance/private_modes.rs` — DECTCEM, DECAWM,
+  the alternate buffer and DECRQM (set, reset and unsupported)
+- [ ] `crates/term/tests/conformance/mouse.rs` — All mouse tracking modes
+- [ ] `crates/term/tests/conformance/kitty_keyboard.rs` — All KKP sequences
+- [ ] `crates/term/tests/conformance/bracketed_paste.rs` — Bracketed paste
+- [ ] `crates/term/tests/conformance/win32_input_mode.rs` — Win32 Input Mode
+- [ ] `crates/term/tests/conformance/escape.rs` — All escape sequences
+- [ ] `crates/term/tests/conformance/vt52.rs` — All VT52 commands
+- [ ] `crates/term/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
+- [ ] `crates/term/tests/conformance/generate.rs` — Fuzz-generated sequences against reference
 
 ### E. Snapshot Tests (insta)
 

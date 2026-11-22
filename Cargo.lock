@@ -537,6 +537,7 @@ name = "term"
 version = "0.1.0"
 dependencies = [
  "adapter",
+ "buffer",
  "types",
  "vt",
 ]

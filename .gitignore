@@ -7,6 +7,9 @@
 # Editor and compiler scratch files.
 **/*.rs.bk
 
+# The file `git commit -F` reads a message from.
+/.commit-msg-tmp
+
 # Local state a run may create; never commit it.
 *.db
 *.db-wal

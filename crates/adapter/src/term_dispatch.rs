@@ -481,6 +481,15 @@ pub trait ITermDispatch: std::fmt::Debug {
         self.unhandled("request_mode");
     }
 
+    /// DECRQM — Request the state of a mode with no entry in the mode table.
+    ///
+    /// Upstream's `RequestMode` formats whatever number it was given, with
+    /// state `DECRPM_Unsupported`, so a query is always answered. Splitting the
+    /// unknown case out keeps `ModeParams` a closed set.
+    fn request_unknown_mode(&mut self, mode: VTInt, private: bool) {
+        self.unhandled("request_unknown_mode");
+    }
+
     // ─── Device Status ──────────────────────────────────────────────
 
     /// DSR — Device Status Report.

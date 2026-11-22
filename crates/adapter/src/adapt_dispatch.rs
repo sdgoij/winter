@@ -2792,6 +2792,11 @@ impl ITermDispatch for AdaptDispatch {
             .push(format!("\x1b[{}{};{}$y", private, param.param_number(), state));
     }
 
+    fn request_unknown_mode(&mut self, mode: VTInt, private: bool) {
+        let private = if private { "?" } else { "" };
+        self.pending_responses.push(format!("\x1b[{}{};0$y", private, mode));
+    }
+
     fn device_status_report(&mut self, status_type: StatusType, id: VTParameter) {
         // DECCKSR answers with a DCS response rather than a CSI one.
         if matches!(status_type, StatusType::MemoryChecksum) {
@@ -3636,9 +3641,11 @@ impl ITermDispatch for AdaptDispatch {
     }
 
     fn set_left_right_scrolling_margins(&mut self, left_margin: VTInt, right_margin: VTInt) {
-        // DECSLRM is ignored unless DECLRMM (private mode 69) is set.
         if self.modes.contains(ModeFlags::DECLRMM) {
             self.set_horizontal_scrolling_margins(left_margin, right_margin, true);
+        } else {
+            // When DECLRMM isn't allowed, `CSI s` is interpreted as ANSISYSSC.
+            self.cursor_save_state();
         }
     }
 }
@@ -3923,6 +3930,7 @@ mod tests {
         dispatch.set_mode(&ModeParams::DecAwm);
         dispatch.reset_mode(&ModeParams::DecAwm);
         dispatch.request_mode(&ModeParams::DecOm);
+        dispatch.request_unknown_mode(9999, true);
         dispatch.device_status_report(StatusType::OperatingStatus, VTParameter::default());
         dispatch.device_status_report(StatusType::MacroSpaceReport, VTParameter::default());
         dispatch.device_status_report(StatusType::MemoryChecksum, VTParameter::default());

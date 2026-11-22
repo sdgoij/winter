@@ -12,5 +12,13 @@ types.workspace = true
 vt.workspace = true
 adapter.workspace = true
 
+[dev-dependencies]
+buffer.workspace = true
+
+# The corpus has one entry point so its modules can live in subdirectories.
+[[test]]
+name = "conformance"
+path = "tests/conformance/main.rs"
+
 [lints]
 workspace = true
