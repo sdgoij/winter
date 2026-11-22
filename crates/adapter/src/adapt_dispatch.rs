@@ -169,6 +169,12 @@ pub struct AdaptDispatch {
     current_working_directory: Option<String>,
     /// Clipboard content set by OSC 52, waiting for the host to take it.
     clipboard_content: Option<String>,
+    /// Window visibility requested by CSI 1/2 t; true means show.
+    pending_window_visibility: Option<bool>,
+    /// Window size requested by CSI 8 t as `(width, height)`; 0 means unchanged.
+    pending_window_resize: Option<(VTInt, VTInt)>,
+    /// Whether CSI 7 t asked for a full redraw.
+    redraw_requested: bool,
 }
 
 impl AdaptDispatch {
@@ -203,6 +209,9 @@ impl AdaptDispatch {
             window_title: None,
             current_working_directory: None,
             clipboard_content: None,
+            pending_window_visibility: None,
+            pending_window_resize: None,
+            redraw_requested: false,
         }
     }
 
@@ -283,6 +292,28 @@ impl AdaptDispatch {
     /// Takes the clipboard content set by OSC 52.
     pub fn take_clipboard_content(&mut self) -> Option<String> {
         self.clipboard_content.take()
+    }
+
+    /// Takes the window visibility requested by CSI 1/2 t; true means show.
+    pub fn take_window_visibility(&mut self) -> Option<bool> {
+        self.pending_window_visibility.take()
+    }
+
+    /// Takes the window size requested by CSI 8 t as `(width, height)`.
+    pub fn take_window_resize(&mut self) -> Option<(VTInt, VTInt)> {
+        self.pending_window_resize.take()
+    }
+
+    /// Takes the full-redraw request made by CSI 7 t.
+    pub fn take_redraw_request(&mut self) -> bool {
+        std::mem::take(&mut self.redraw_requested)
+    }
+
+    /// The size of the visible page, which is what the window reports describe.
+    fn visible_page_size(&mut self) -> (VTInt, VTInt) {
+        let buffer = self.page_manager.visible_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        (buffer.screen_width(), buffer.screen_height())
     }
 
     /// Returns whether insert/replace mode is enabled.
@@ -1689,6 +1720,40 @@ impl ITermDispatch for AdaptDispatch {
         page.set_attributes(attributes);
     }
 
+    fn window_manipulation(
+        &mut self,
+        function: WindowManipulationType,
+        parameter1: VTParameter,
+        parameter2: VTParameter,
+    ) {
+        use WindowManipulationType::*;
+
+        match function {
+            DeIconifyWindow => self.pending_window_visibility = Some(true),
+            IconifyWindow => self.pending_window_visibility = Some(false),
+            RefreshWindow => self.redraw_requested = true,
+            // The host owns the window, so the request is recorded rather than
+            // applied; `parameter2` is the width and `parameter1` the height.
+            ResizeWindowInCharacters => {
+                self.pending_window_resize = Some((parameter2.value_or(0), parameter1.value_or(0)));
+            }
+            ReportTextSizeInCharacters => {
+                let (width, height) = self.visible_page_size();
+                self.push_csi(&format!("8;{};{}t", height, width));
+            }
+            ReportTextSizeInPixels => {
+                let (width, height) = self.visible_page_size();
+                let (cell_width, cell_height) = SixelParser::cell_size_for_level(SIXEL_DEFAULT_CONFORMANCE);
+                self.push_csi(&format!("4;{};{}t", height * cell_height, width * cell_width));
+            }
+            ReportCharacterCellSize => {
+                let (cell_width, cell_height) = SixelParser::cell_size_for_level(SIXEL_DEFAULT_CONFORMANCE);
+                self.push_csi(&format!("6;{};{}t", cell_height, cell_width));
+            }
+            Invalid => {}
+        }
+    }
+
     fn cursor_save_state(&mut self) {
         let (row, column) = self.active_cursor_position();
         let index = self.cursor_state_index();
@@ -2191,6 +2256,11 @@ mod tests {
         dispatch.set_clipboard("copied");
         dispatch.add_hyperlink("https://example.com", "");
         dispatch.end_hyperlink();
+        dispatch.window_manipulation(
+            WindowManipulationType::Invalid,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
         dispatch.cursor_save_state();
         dispatch.cursor_restore_state();
         dispatch.horizontal_tab_set();
@@ -2814,6 +2884,79 @@ mod tests {
         let buffer = dispatch.macro_buffer();
         let buffer = buffer.lock().unwrap();
         assert_eq!(buffer.defined_count(), 0);
+    }
+
+    #[test]
+    fn window_visibility_and_redraw_requests_wait_for_the_host() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.window_manipulation(
+            WindowManipulationType::IconifyWindow,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+        assert_eq!(dispatch.take_window_visibility(), Some(false));
+        assert_eq!(dispatch.take_window_visibility(), None);
+
+        dispatch.window_manipulation(
+            WindowManipulationType::DeIconifyWindow,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+        assert_eq!(dispatch.take_window_visibility(), Some(true));
+
+        dispatch.window_manipulation(
+            WindowManipulationType::RefreshWindow,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+        assert!(dispatch.take_redraw_request());
+        assert!(!dispatch.take_redraw_request());
+    }
+
+    #[test]
+    fn window_resize_records_the_requested_width_and_height() {
+        let mut dispatch = AdaptDispatch::new();
+
+        // The second parameter is the width and the first the height.
+        dispatch.window_manipulation(
+            WindowManipulationType::ResizeWindowInCharacters,
+            VTParameter::from(40),
+            VTParameter::from(120),
+        );
+
+        assert_eq!(dispatch.take_window_resize(), Some((120, 40)));
+        assert_eq!(dispatch.take_window_resize(), None);
+    }
+
+    #[test]
+    fn window_size_reports_use_the_visible_page() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.window_manipulation(
+            WindowManipulationType::ReportTextSizeInCharacters,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+        dispatch.window_manipulation(
+            WindowManipulationType::ReportCharacterCellSize,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+        dispatch.window_manipulation(
+            WindowManipulationType::ReportTextSizeInPixels,
+            VTParameter::default(),
+            VTParameter::default(),
+        );
+
+        assert_eq!(
+            dispatch.take_responses(),
+            vec![
+                "\x1b[8;24;80t".to_string(),
+                "\x1b[6;13;6t".to_string(),
+                "\x1b[4;312;480t".to_string(),
+            ]
+        );
     }
 
     #[test]

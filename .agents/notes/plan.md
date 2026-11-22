@@ -13,10 +13,10 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~2.0k | 80 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
 | `buffer` | ~5.6k | 192 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed; OSC 8 hyperlink registry |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~8.7k | 130 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, macro, save-restore and tab handlers ported |
+| `adapter` | ~8.9k | 133 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, macro, window, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-662 tests, doc tests. Phases 5–14 are not started.
+665 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -45,10 +45,12 @@ settled.
    rectangular operations (DECCARA, DECRARA with DECSACE extent, DECCRA,
    DECFRA, DECERA, DECSERA, DECRQCRA), hyperlinks and OSC strings (OSC 8
    into the buffer's hyperlink registry, OSC 0/2 title, OSC 7 CWD, OSC 52
-   clipboard), and macros (DECDMAC text/hex with repeats, DECINVM, DECMSR,
-   DECCKSR).
-   Still ported nowhere: colour-table OSC strings, sixel/DCS (blocked on
-   image storage), DRCS, presentation state, and window manipulation.
+   clipboard), macros (DECDMAC text/hex with repeats, DECINVM, DECMSR,
+   DECCKSR), and window manipulation (CSI 1/2/3/7/8/14/16/18 t, with the
+   reports answered from the visible page).
+   Still ported nowhere: colour-table OSC strings, sixel/DCS and DRCS (the
+   storage model is decided by ADR 005; the decoders wait for it), and
+   presentation state.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -59,6 +61,16 @@ settled.
 
 **Settled.**
 
+- **Window manipulation is ported.** CSI 1 t and CSI 2 t record a visibility
+  request, CSI 7 t a redraw request, and CSI 8 t a size request; all three are
+  host actions, so they wait in `take_window_visibility`,
+  `take_redraw_request` and `take_window_resize` instead of calling a window
+  API that does not exist. The size reports (CSI 14/16/18 t) answer immediately
+  from the visible page and the sixel cell size, so applications that probe the
+  cell grid get an answer now. Unlike CSI 8 t, DECCOLM resizes the buffer
+  directly: its column count is terminal state, while the window size belongs
+  to the host.
+
 - **Macros are ported; sixel/DCS is blocked.** `MacroBuffer` now carries
   upstream's definition parser (text and hex-pair encodings, `!count;…;`
   repeats, the 64 macro ids and 256 KiB shared budget), its checksum and its
@@ -68,9 +80,9 @@ settled.
   through `take_macro_input`, so the re-entrancy guard is the application's job.
 
   Sixel has no handler because there is nowhere to put an image: `Row` and
-  `TextBuffer` store no image data and the renderer does not exist yet. Porting
-  `SixelParser` now would decode into nothing, so `DefineSixelImage` stays
-  unported until image storage lands.
+  `TextBuffer` store no image data and the renderer does not exist yet. ADR 005
+  decides the model (per-row bands, carried by every cell operation) and sets the
+  order: storage first, then the decoder.
 
 - **Hyperlinks and OSC 0/2, 7 and 52 are ported.** OSC 8 allocates a numeric id
   (`TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`, which every upstream
