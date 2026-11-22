@@ -51,9 +51,9 @@ settled.
    reports answered from the visible page), the colour table (OSC
    4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report), and
    sixel (DCS `q`, decoded into row bands; see the sixel entry below).
-   Still ported nowhere: DRCS (`download_drcs`; storage exists per
-   ADR 005), and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action
-   strings.
+   Still ported nowhere: DRCS (the `FontBuffer` in the adapter is a
+   placeholder, not upstream's DECDLD parser) and the
+   ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -617,11 +617,12 @@ The Windows Terminal codebase maps to these Rust module groups:
   - Methods: is_insert_mode(), is_origin_mode(), is_auto_wrap(), is_lnm_mode(), is_bracketed_paste()
   - Margin getters/setters, cursor style management, soft/hard reset
   - 7 unit tests passing
-- [x] `winterm/crates/adapter/src/font_buffer.rs` — Font tracking
-  - FontInfo struct with face_name, size, weight, italic, charset, pitch_and_family
-  - FontBuffer with FIFO replacement (max 16 fonts), duplicate detection
-  - FontError enum (IndexOutOfBounds, NotFound, Empty)
-  - 6 unit tests passing
+- [ ] `winterm/crates/adapter/src/font_buffer.rs` — **wrong module**
+  - The file is a font cache (face/size/weight), not upstream's `FontBuffer`,
+    which parses DECDLD sixel data into a soft-font bit pattern. DRCS needs
+    the latter: `SetEraseControl`, `SetAttributes`, `SetStartChar`,
+    `AddSixelData`, `FinalizeSixelData`, `GetDesignation`. The cache is
+    deleted or renamed when the real port lands.
 - [x] `winterm/crates/adapter/src/macro_buffer.rs` — VT macro support
   - MacroBuffer for storing/retrieving terminal macros (IDs 0-9)
   - MacroEntry with encoding support (Text/HexPair)
@@ -661,7 +662,8 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] Cursor operations — covered in adapt_dispatch.rs tests (cursor style, margins)
 - [x] Page management — covered in page_manager.rs tests (buffer switching, state restoration)
 - [x] Macro operations — covered in macro_buffer.rs tests (define/invoke/delete)
-- [x] Font operations — covered in font_buffer.rs tests (add/duplicate/clear)
+- [ ] Font operations — the current font cache is a placeholder; DRCS needs
+  upstream's DECDLD parser
 - [x] Sixel parsing — covered in sixel_parser.rs tests (commands, palette,
   aspect ratio, background) and adapt_dispatch.rs (payload paints a row band)
 - [x] Charset translation — covered in terminal_output.rs and charsets.rs tests
