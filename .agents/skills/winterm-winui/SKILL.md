@@ -7,7 +7,7 @@ description: Build, run and live-check the WinUI 3 shell in crates/winterm/src/w
 
 `crates/winterm/src/winui/` is the Windows shell; `main.rs` chooses it under
 `cfg(windows)` and the egui shell everywhere else. The decisions are ADRs
-040–048. This is how to change it without rediscovering the traps.
+040–052. This is how to change it without rediscovering the traps.
 
 ## Shape
 
@@ -17,6 +17,7 @@ description: Build, run and live-check the WinUI 3 shell in crates/winterm/src/w
 | `surface.rs` | D3D11 device, composition swap chain, Direct2D blit (permitted `unsafe`) |
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
+| `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
 | `../find.rs` | The query, matches and screen spans, shared with the egui pane |
 | `mod.rs` | Module boundary and `run()` |
 
@@ -101,6 +102,22 @@ pane forwards no key or character to the terminal; a bound chord still reaches
 the window, Enter and Shift+Enter step, and Escape closes. Highlights come from
 `TerminalData`'s `search_highlights` and the renderer's selection-brush pass; do
 not paint them in the shell.
+
+## Profile menu
+
+The `▾` after the tab strip's `+` toggles a list built by `menu::entries`: every
+profile in file order, then `Settings` and `About winterm`. The binding has no
+flyout, so the list is an overlay in the pane's `Grid`, anchored top-left — not
+tracked to the button, whose position the binding does not report (ADR 052).
+
+- A profile row opens a tab through `TerminalSettings::for_profile` and the
+  shell's `add_tab`; `open_tab` is the same path with the default template.
+- While the menu is open the pane forwards no key or character, and a pane press
+  dismisses it. Escape is handled by the pane and, when focus is in the title
+  bar, by the root `Border`'s preview handler; that handler is the only reason
+  the root is a Border.
+- Keep the list in `menu.rs`. Its ordering rule is a unit test; do not build rows
+  inline in `view`.
 
 ## Settings dialog
 

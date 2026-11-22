@@ -34,6 +34,7 @@ use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
+use super::menu::{self, MenuEntry};
 use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
@@ -74,6 +75,10 @@ struct Shell {
     settings: settings::Settings,
     /// The settings dialog and its draft.
     settings_window: SettingsWindow,
+    /// Whether the profile drop-down is showing.
+    menu_open: bool,
+    /// Whether the About dialog is showing.
+    about_open: bool,
     /// The file the settings were read from, polled for a save (ADR 025).
     settings_path: Option<PathBuf>,
     /// The file's stamp at the last read, so a save is noticed.
@@ -154,6 +159,18 @@ pub(super) enum Message {
     FindStep(bool),
     /// Closes the find bar.
     FindClose,
+    /// Shows or hides the profile drop-down.
+    MenuToggle,
+    /// Hides the profile drop-down without acting on a row.
+    MenuClose,
+    /// Opens a tab on the named profile.
+    MenuProfile(String),
+    /// Opens the settings dialog from the drop-down.
+    MenuSettings,
+    /// Opens the About dialog from the drop-down.
+    MenuAbout,
+    /// The About dialog closed.
+    AboutClose,
 }
 
 impl Component for Shell {
@@ -249,6 +266,8 @@ impl Component for Shell {
             bindings,
             settings,
             settings_window,
+            menu_open: false,
+            about_open: false,
             settings_path,
             settings_stamp,
             settings_at: Instant::now(),
@@ -292,6 +311,8 @@ impl Component for Shell {
         let moved = keys.clone();
         let released = keys.clone();
         let dialog = keys.clone();
+        let menu_sender = keys.clone();
+        let escape = keys.clone();
         let bindings = Rc::clone(&self.bindings);
 
         let items: Vec<KeyedView> = (0..self.tabs.len())
@@ -326,12 +347,16 @@ impl Component for Shell {
             });
 
         let find_open = self.tabs.active().is_some_and(|tab| tab.find.open);
+        let menu_open = self.menu_open;
 
         let mut pane_children: Vec<View> = vec![SwapChainPanel::new().element_ref(&self.panel).into()];
         if let Some(tab) = self.tabs.active()
             && tab.find.open
         {
             pane_children.push(find_bar(tab, &dialog, &self.find_field));
+        }
+        if menu_open {
+            pane_children.push(profile_menu(&self.settings, &dialog));
         }
         let pane_content = Grid::new().children(pane_children);
 
@@ -372,6 +397,21 @@ impl Component for Shell {
                     return false;
                 }
 
+                if menu_open {
+                    // The drop-down owns the keyboard: a bound chord still
+                    // reaches the window, Escape dismisses it, and nothing is
+                    // typed into the terminal behind it (ADR 052).
+                    if !pressed {
+                        return true;
+                    }
+                    if bound {
+                        let _ = keys.send(Message::Key(info));
+                    } else if matches!(key_of(info.key), Some(Key::Escape)) {
+                        let _ = keys.send(Message::MenuClose);
+                    }
+                    return true;
+                }
+
                 // A bound chord is the window's, so the toolkit must not also
                 // type it. A printable key with no binding still has to raise
                 // `CharacterReceived`, which is the text path; the keys the
@@ -380,7 +420,7 @@ impl Component for Shell {
                 bound || !matches!(key_of(info.key), Some(Key::Char(_) | Key::Space))
             }))
             .on_character_received(RoutedCallback::new(move |info: CharacterEventInfo| {
-                if find_open {
+                if find_open || menu_open {
                     return false;
                 }
                 let _ = characters.send(Message::Char(info));
@@ -410,6 +450,20 @@ impl Component for Shell {
                 .client_size(self.initial_client.0, self.initial_client.1),
         );
 
+        // The drop-down sits immediately after the strip's `+`, as in Windows
+        // Terminal, so the two travel together in one header.
+        let drop_down = Button::new()
+            .content("\u{25be}")
+            .style(ButtonStyle::Subtle)
+            .width(36.0)
+            .on_click(move || {
+                let _ = menu_sender.send(Message::MenuToggle);
+            });
+        let header = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(4.0)
+            .children((strip, drop_down));
+
         // The tab strip is the title bar, as in Windows Terminal: the TitleBar
         // control extends the client area and hands the system the drag region,
         // leaving room for the caption buttons on its right.
@@ -423,14 +477,32 @@ impl Component for Shell {
                 TitleBar::new()
                     .is_back_button_visible(false)
                     .is_pane_toggle_button_visible(false)
-                    .left_header(strip),
+                    .left_header(header),
             );
 
         // The pane takes the rest; the panel stays mounted, so switching tabs
         // never rebuilds the surface.
-        let root: View = Grid::new()
-            .rows([GridLength::Auto, GridLength::STAR])
-            .children((title_bar, pane.grid_row(1)))
+        //
+        // The root is a Border only for its window-level preview key handler:
+        // the drop-down's buttons live in the title bar, which is not under the
+        // pane's preview route, so this is the one ancestor both share (ADR
+        // 052).
+        let root: View = Border::new()
+            .on_preview_key_down(RoutedCallback::new(move |info: KeyEventInfo| {
+                if !menu_open || info.status.is_released {
+                    return false;
+                }
+                if matches!(key_of(info.key), Some(Key::Escape)) {
+                    let _ = escape.send(Message::MenuClose);
+                    return true;
+                }
+                false
+            }))
+            .content(
+                Grid::new()
+                    .rows([GridLength::Auto, GridLength::STAR])
+                    .children((title_bar, pane.grid_row(1))),
+            )
             .into();
 
         if self.settings_window.is_open() {
@@ -438,6 +510,8 @@ impl Component for Shell {
                 self.settings_window
                     .view(&self.settings, self.settings_path.as_deref(), &dialog),
             )
+        } else if self.about_open {
+            root.content_dialog(about_dialog(&dialog))
         } else {
             root
         }
@@ -467,6 +541,23 @@ impl Component for Shell {
             Message::FindQuery(text) => self.find_query(text),
             Message::FindStep(forward) => self.find_step(forward),
             Message::FindClose => self.close_find(),
+            Message::MenuToggle => self.menu_open = !self.menu_open,
+            Message::MenuClose => self.close_menu(),
+            Message::MenuProfile(name) => self.open_profile_tab(&name),
+            Message::MenuSettings => {
+                self.close_menu();
+                if !self.settings_window.is_open() {
+                    self.toggle_settings();
+                }
+            }
+            Message::MenuAbout => {
+                self.close_menu();
+                self.about_open = true;
+            }
+            Message::AboutClose => {
+                self.about_open = false;
+                let _ = self.focus.request_focus();
+            }
         }
     }
 }
@@ -790,13 +881,33 @@ impl Shell {
 
     /// Opens a tab on the same profile and activates it.
     fn open_tab(&mut self) {
+        self.add_tab(self.template.clone());
+    }
+
+    /// Opens a tab on the profile the drop-down named and activates it.
+    fn open_profile_tab(&mut self, name: &str) {
+        self.close_menu();
+        let Some(profile) = self.settings.profile_named(name) else {
+            return;
+        };
+        let terminal = TerminalSettings::for_profile(&self.settings, Some(profile));
+        self.add_tab(terminal);
+    }
+
+    /// Hides the drop-down, returning the pointer to the pane.
+    fn close_menu(&mut self) {
+        self.menu_open = false;
+    }
+
+    /// Starts a terminal and adds it as the active tab.
+    fn add_tab(&mut self, terminal: TerminalSettings) {
         let size = pty_size(self.grid);
-        let Ok(session) = spawn_shell(&self.template.command, size) else {
+        let Ok(session) = spawn_shell(&terminal.command, size) else {
             return;
         };
 
         let mut control = Control::new(Box::new(session), self.grid);
-        control.apply_scheme(self.template.scheme.as_ref());
+        control.apply_scheme(terminal.scheme.as_ref());
 
         let id = self.next_tab;
         self.next_tab += 1;
@@ -804,7 +915,7 @@ impl Shell {
             id,
             control,
             view: ViewState::new(),
-            title: self.template.title.clone(),
+            title: terminal.title,
             find: FindBar::default(),
         });
         let _ = self.focus.request_focus();
@@ -859,9 +970,10 @@ impl Shell {
             return;
         }
 
-        // The find field owns the keyboard while its bar is open; only a bound
-        // chord, handled above, leaves it.
-        if self.tabs.active().is_some_and(|tab| tab.find.open) {
+        // The find field owns the keyboard while its bar is open, and the
+        // drop-down owns it while it shows; only a bound chord, handled above,
+        // leaves either.
+        if self.menu_open || self.tabs.active().is_some_and(|tab| tab.find.open) {
             return;
         }
 
@@ -887,7 +999,7 @@ impl Shell {
 
     /// Hands composed text to the active terminal's text path.
     fn character(&mut self, info: CharacterEventInfo) {
-        if self.tabs.active().is_some_and(|tab| tab.find.open) {
+        if self.menu_open || self.tabs.active().is_some_and(|tab| tab.find.open) {
             return;
         }
 
@@ -1036,6 +1148,13 @@ impl Shell {
 
     /// Starts a selection, or forwards the press to a tracking application.
     fn pointer_pressed(&mut self, info: PointerEventInfo) {
+        // A press outside the menu dismisses it, as a flyout does; the press
+        // itself is not passed on (ADR 052).
+        if self.menu_open {
+            self.close_menu();
+            return;
+        }
+
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         let forward = input::forwards_to_application(self.active_tracking(), shift);
         let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
@@ -1497,6 +1616,86 @@ fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox
                 .children((query, previous, next, TextBlock::new().text(status))),
         )
         .into()
+}
+
+/// The drop-down next to the tab strip: one row per profile and the window
+/// commands.
+///
+/// The pinned binding has no flyout, so this is an overlay anchored to the
+/// pane's top-left, under the title bar (ADR 052).
+fn profile_menu(settings: &settings::Settings, sender: &LocalSender<Message>) -> View {
+    let rows: Vec<View> = menu::entries(settings)
+        .into_iter()
+        .map(|entry| menu_row(entry, sender))
+        .collect();
+
+    Border::new()
+        .background(Color::rgb(44, 44, 48))
+        .border_brush(Color::rgb(72, 72, 78))
+        .border_thickness(Thickness::uniform(1.0))
+        .corner_radius(CornerRadius::uniform(6.0))
+        .padding(Thickness::uniform(4.0))
+        .width(240.0)
+        .horizontal_alignment(HorizontalAlignment::Left)
+        .vertical_alignment(VerticalAlignment::Top)
+        .margin(Thickness::new(8.0, 8.0, 0.0, 0.0))
+        .content(StackPanel::new().spacing(1.0).children(rows))
+        .into()
+}
+
+/// One clickable row of the drop-down.
+fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>) -> View {
+    let button = match entry {
+        MenuEntry::Profile(name) => {
+            let sender = sender.clone();
+            menu_button(name.clone()).on_click(move || {
+                let _ = sender.send(Message::MenuProfile(name.clone()));
+            })
+        }
+        MenuEntry::Settings => {
+            let sender = sender.clone();
+            menu_button("Settings".to_string()).on_click(move || {
+                let _ = sender.send(Message::MenuSettings);
+            })
+        }
+        MenuEntry::About => {
+            let sender = sender.clone();
+            menu_button("About winterm".to_string()).on_click(move || {
+                let _ = sender.send(Message::MenuAbout);
+            })
+        }
+    };
+    button.into()
+}
+
+/// A flat, left-aligned row sized to the menu.
+fn menu_button(label: String) -> Button {
+    Button::new()
+        .content(label)
+        .style(ButtonStyle::Subtle)
+        .horizontal_content_alignment(HorizontalAlignment::Left)
+        .width(232.0)
+}
+
+/// The About dialog: the version this build was compiled as.
+fn about_dialog(sender: &LocalSender<Message>) -> ContentDialog {
+    let details = StackPanel::new().spacing(8.0).children((
+        TextBlock::new().text(format!("winterm {}", env!("CARGO_PKG_VERSION"))),
+        TextBlock::new().text("A cross-platform terminal emulator in Rust."),
+        TextBlock::new().text("Ported from Microsoft's Windows Terminal."),
+    ));
+
+    ContentDialog::new()
+        .title("About winterm")
+        .close_button_text("Close")
+        .is_open(true)
+        .content(details)
+        .on_closed({
+            let sender = sender.clone();
+            move |_| {
+                let _ = sender.send(Message::AboutClose);
+            }
+        })
 }
 
 /// Maps a Windows virtual-key code to the terminal's key identity.

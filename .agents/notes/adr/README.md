@@ -80,3 +80,4 @@ Rules:
 | [049](049-winui-settings-dialog.md) | The WinUI settings window is a modal dialog over the shared `config::Draft` | Accepted |
 | [050](050-winui-find-bar.md) | The WinUI find bar is an overlay over the shared `find::FindBar`; the renderer paints the matches | Accepted |
 | [051](051-tabs-in-the-title-bar.md) | The WinUI tab strip is the title bar: a `TitleBar` with the `TabView` in its left header | Accepted |
+| [052](052-profile-menu-overlay.md) | The WinUI profile menu is a custom overlay: the binding has no flyout; rows come from `winui::menu` | Accepted |
