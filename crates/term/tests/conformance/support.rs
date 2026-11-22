@@ -2,7 +2,7 @@
 
 use buffer::TextBuffer;
 use term::Terminal;
-use types::TextAttribute;
+use types::{LineRendition, TextAttribute, TextColor};
 
 /// A terminal with a fixed page size and the accessors the corpus asserts on.
 pub struct Screen {
@@ -84,6 +84,37 @@ impl Screen {
     /// Drains the responses owed to the program.
     pub fn responses(&mut self) -> Vec<String> {
         self.terminal.take_responses()
+    }
+
+    /// Returns the terminal, for the host-facing state an OSC sets.
+    pub fn terminal(&mut self) -> &mut Terminal {
+        &mut self.terminal
+    }
+
+    /// Returns the hyperlink URI under a cell, when it has one.
+    pub fn hyperlink(&mut self, row: i32, col: i32) -> Option<String> {
+        self.with_buffer(|buffer| {
+            let id = buffer.get_cell_data_at(row, col)?.get_attributes().get_hyperlink_id();
+            if id == 0 {
+                return None;
+            }
+            buffer.get_hyperlink_uri(id).map(str::to_string)
+        })
+    }
+
+    /// Returns the line rendition of a row.
+    pub fn line_rendition(&mut self, row: i32) -> LineRendition {
+        self.with_buffer(|buffer| buffer.get_line_rendition(row))
+    }
+
+    /// Returns a palette entry.
+    pub fn color(&mut self, index: usize) -> Option<TextColor> {
+        let table = self.terminal.dispatch().color_table();
+        let table = match table.lock() {
+            Ok(table) => table,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        table.get(index)
     }
 
     fn with_buffer<R>(&mut self, read: impl FnOnce(&TextBuffer) -> R) -> R {

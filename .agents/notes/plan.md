@@ -18,7 +18,7 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-974 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+993 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -188,6 +188,15 @@ it; the rest of this section is the record of what the cleanup passes settled.
   and never sets a line rendition. A cursor whose line is pushed entirely into
   the scrollback is clamped to the top visible row rather than stopping the
   copy early as upstream's circular buffer does.
+
+**Open in `adapter`.**
+
+- `types::charsets` stores every table as `u8`, so DEC Special Graphics cannot
+  hold the line-drawing code points (`U+2500`, `U+2502`, …): `ESC ( 0`
+  translates to Latin-1 bytes instead of box characters. The tables need to
+  carry `char`, and `TerminalOutput::translate_key` needs single-shift
+  (`SS2`/`SS3`) consumption ported with them. Designation, the active GL/GR
+  table refresh and the British set's `#` mapping are tested meanwhile.
 
 - The upstream source was not present when the cleanup started; it now is, at
   `.design/refs/terminal`, and the handler port is running against it (ADR 004).
@@ -556,7 +565,9 @@ The Windows Terminal codebase maps to these Rust module groups:
     wheel accumulation, hover and drag filtering, alternate scroll. UTF-8
     coordinates are written as UTF-8 characters, not UTF-16 units
   - [x] **Tests:** 16 cases covering every encoding and filter
-- [ ] `crates/term/src/input_engine.rs` — `InputStateMachineEngine`
+- [ ] `crates/host/src/input_engine.rs` — `InputStateMachineEngine`
+  - Deferred from `term`: it builds console input records for the host, and
+    `InputRecord` grows with its first consumer (ADR 010)
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor
     events (1005/1015/1036)
@@ -1113,7 +1124,8 @@ lives in the crate that owns the parser-to-dispatch loop:
   bottom margin, DECSTBM and RI
 - [x] `crates/term/tests/conformance/csi/erase.rs` — EL 0/1/2, ED 0/1/2 and ECH
 - [x] `crates/term/tests/conformance/csi/insert_delete.rs` — IL/DL/ICH/DCH
-- [ ] `crates/term/tests/conformance/osc.rs` — All OSC sequences
+- [x] `crates/term/tests/conformance/osc.rs` — window title (0/2), working
+  directory (7), clipboard (52), palette set/reset (4/104)
 - [ ] `crates/term/tests/conformance/dcs/sixel.rs` — All Sixel sequences
 - [x] `crates/term/tests/conformance/private_modes.rs` — DECTCEM, DECAWM,
   the alternate buffer and DECRQM (set, reset and unsupported)
@@ -1121,9 +1133,10 @@ lives in the crate that owns the parser-to-dispatch loop:
 - [ ] `crates/term/tests/conformance/kitty_keyboard.rs` — All KKP sequences
 - [ ] `crates/term/tests/conformance/bracketed_paste.rs` — Bracketed paste
 - [ ] `crates/term/tests/conformance/win32_input_mode.rs` — Win32 Input Mode
-- [ ] `crates/term/tests/conformance/escape.rs` — All escape sequences
+- [x] `crates/term/tests/conformance/escape.rs` — DECSC/DECRC, IND/NEL/RI,
+  line rendition, tab stops and character-set designation
 - [ ] `crates/term/tests/conformance/vt52.rs` — All VT52 commands
-- [ ] `crates/term/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
+- [x] `crates/term/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
 - [ ] `crates/term/tests/conformance/generate.rs` — Fuzz-generated sequences against reference
 
 ### E. Snapshot Tests (insta)

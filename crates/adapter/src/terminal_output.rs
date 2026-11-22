@@ -106,6 +106,13 @@ impl TerminalOutput {
             self.lookup_translation_table_94(&charset_id)
         };
         self.upss_translation_table = table;
+        // Every G-set mapped to the user-preference set follows it.
+        for gset in 0..4 {
+            if self.gset_ids[gset].as_bytes() == b"<" {
+                self.gset_translation_tables[gset] = table;
+            }
+        }
+        self.apply_locking_shifts();
     }
 
     /// Returns the user preference charset ID.
@@ -119,25 +126,18 @@ impl TerminalOutput {
     }
 
     /// Translates a key character.
+    /// Translates a character through the active character sets.
+    ///
+    /// GL covers `0x20..=0x7E` and GR covers `0xA0..=0xFF`, as upstream's
+    /// `TranslateKey` does. Single-shift consumption is not ported yet.
     pub fn translate_key(&self, ch: char) -> char {
-        if !(' '..='~').contains(&ch) {
-            return ch;
+        let code = ch as u32;
+        if (0x20..=0x7E).contains(&code) {
+            return translate_with(self.gl_translation_table, ch, 0x20);
         }
-
-        let offset = (ch as usize).saturating_sub(' ' as usize);
-        let table = if self.needs_translation() && self.gr_translation_enabled {
-            &self.gr_translation_table
-        } else {
-            &self.gl_translation_table
-        };
-
-        if offset < table.len() {
-            let translated = table[offset] as char;
-            if translated != '\0' {
-                return translated;
-            }
+        if (0xA0..=0xFF).contains(&code) {
+            return translate_with(self.gr_translation_table, ch, 0xA0);
         }
-
         ch
     }
 
@@ -149,6 +149,7 @@ impl TerminalOutput {
         self.gset_ids[gset_number] = charset_id;
         self.gset_sizes_96[gset_number] = false;
         self.gset_translation_tables[gset_number] = self.lookup_translation_table_94(&charset_id);
+        self.apply_locking_shifts();
     }
 
     /// Designates a 96-character set.
@@ -159,6 +160,19 @@ impl TerminalOutput {
         self.gset_ids[gset_number] = charset_id;
         self.gset_sizes_96[gset_number] = true;
         self.gset_translation_tables[gset_number] = self.lookup_translation_table_96(&charset_id);
+        self.apply_locking_shifts();
+    }
+
+    /// Re-reads the active GL and GR tables from their G-sets.
+    ///
+    /// Upstream's `_SetTranslationTable` does this after every designation, and
+    /// `LockingShift`/`LockingShiftRight` do it after every shift: without it a
+    /// designation has no effect on what is printed.
+    fn apply_locking_shifts(&mut self) {
+        let gl = self.gl_set_number;
+        let gr = self.gr_set_number;
+        self.locking_shift(gl);
+        self.locking_shift_right(gr);
     }
 
     /// Sets the DRCS94 designation.
@@ -197,6 +211,7 @@ impl TerminalOutput {
             return;
         }
         self.gl_set_number = gset_number;
+        self.gl_translation_table = self.gset_translation_tables[gset_number];
     }
 
     /// Performs a locking shift right.
@@ -205,6 +220,12 @@ impl TerminalOutput {
             return;
         }
         self.gr_set_number = gset_number;
+        // Upstream clears the table while GR translation is disabled.
+        self.gr_translation_table = if self.gr_translation_enabled {
+            self.gset_translation_tables[gset_number]
+        } else {
+            charsets::ASCII
+        };
     }
 
     /// Performs a single shift.
@@ -235,20 +256,36 @@ impl TerminalOutput {
 
     /// Returns whether translation is needed.
     pub fn needs_translation(&self) -> bool {
-        !self.gl_translation_table.is_empty() && self.gl_translation_table != charsets::ASCII
+        self.gl_translation_table != charsets::ASCII || self.gr_translation_table != charsets::ASCII
     }
 
     /// Enables GR translation.
     pub fn enable_gr_translation(&mut self, enabled: bool) {
         self.gr_translation_enabled = enabled;
+        // G2 and G3 default to the user-preference set while GR translation is
+        // enabled, and to ASCII otherwise.
+        let table = if enabled {
+            self.upss_translation_table
+        } else {
+            charsets::ASCII
+        };
+        self.gset_translation_tables[2] = table;
+        self.gset_translation_tables[3] = table;
+        let id = if enabled {
+            VTID::from_byte(b'<')
+        } else {
+            VTID::from_byte(b'B')
+        };
+        self.gset_ids[2] = id;
+        self.gset_ids[3] = id;
+        self.apply_locking_shifts();
     }
 
     fn lookup_translation_table_94(&self, charset_id: &VTID) -> &'static [u8] {
         match charset_id.as_bytes() {
-            [b'C'] => charsets::DEC_SPECIAL_GRAPHICS,
-            [b'0'] => charsets::LATIN1,
+            [b'B'] | [b'1'] => charsets::ASCII,
+            [b'0'] | [b'2'] => charsets::DEC_SPECIAL_GRAPHICS,
             [b'A'] => charsets::LATIN1,
-            [b'B'] => charsets::ASCII,
             [b'4'] => charsets::LATIN2,
             [b'E'] => charsets::LATIN2,
             [b'6'] => charsets::LATIN_CYRILLIC,
@@ -285,6 +322,18 @@ impl TerminalOutput {
         // For now, just update the translation table directly.
         let _ = old_table;
         self.drcs_translation_table = new_table;
+    }
+}
+
+/// Applies a 94- or 96-character table to `ch`, returning it unchanged when
+/// the table has no mapping.
+fn translate_with(table: &[u8], ch: char, base: u32) -> char {
+    let Some(offset) = (ch as u32).checked_sub(base) else {
+        return ch;
+    };
+    match table.get(offset as usize) {
+        Some(&translated) if translated != 0 => char::from(translated),
+        _ => ch,
     }
 }
 
@@ -327,6 +376,32 @@ mod tests {
         let mut output = TerminalOutput::new(false);
         output.locking_shift(1);
         assert_eq!(output.get_left_set_number(), 1);
+    }
+
+    #[test]
+    fn designating_a_charset_changes_what_is_printed() {
+        let mut output = TerminalOutput::new(false);
+        // `A` is the British set, which differs from ASCII at `#`.
+        output.designate_94_charset(0, VTID::from_byte(b'A'));
+        assert!(output.needs_translation());
+        assert_eq!(output.translate_key('#'), '\u{a3}');
+
+        output.designate_94_charset(0, VTID::from_byte(b'B'));
+        assert_eq!(output.translate_key('#'), '#');
+        assert!(!output.needs_translation());
+    }
+
+    #[test]
+    fn a_locking_shift_selects_the_designated_set() {
+        let mut output = TerminalOutput::new(false);
+        output.designate_94_charset(1, VTID::from_byte(b'A'));
+        assert_eq!(output.translate_key('#'), '#', "G1 is not active yet");
+
+        output.locking_shift(1);
+        assert_eq!(output.translate_key('#'), '\u{a3}');
+
+        output.locking_shift(0);
+        assert_eq!(output.translate_key('#'), '#');
     }
 
     #[test]

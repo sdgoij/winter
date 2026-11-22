@@ -9,5 +9,8 @@
 //! here disagrees with the reference, the reference wins.
 
 mod csi;
+mod escape;
+mod hyperlink;
+mod osc;
 mod private_modes;
 mod support;
