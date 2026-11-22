@@ -41,11 +41,19 @@ server = { path = "crates/server" }
 
 bitflags = "2"
 fontdue = "0.9"
+libc = "0.2"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [workspace.lints.rust]
 # `utils` is the one crate that opts out, at its root, because it owns the

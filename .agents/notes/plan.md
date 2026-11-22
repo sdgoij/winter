@@ -1011,8 +1011,11 @@ porting skill requires.
 The server's Windows driver plumbing is not ported (ADR 015): conhost's
 `ConDrvDeviceComm`, `Entrypoints`, `WinNTControl` and the API dispatcher tables
 serve `condrv.sys`, and a portable terminal has no driver to talk to. The
-portable policy modules land as they get consumers. The pty layer is the port's
-own and needs an `unsafe` decision (ADR 015) before it can start.
+portable policy modules land as they get consumers.
+
+The pty layer is the port's own (ADR 016): hand-written FFI behind two
+already-named, `#[allow(unsafe_code)]` modules, with a blocking `Read`/`Write`
+API. Non-blocking I/O and signal forwarding belong to the input layer.
 
 ### Portable Server Modules
 
@@ -1033,12 +1036,23 @@ own and needs an `unsafe` decision (ADR 015) before it can start.
 
 ### Cross-Platform PTY Abstraction
 
-- [ ] `winterm/crates/server/src/pty.rs` — the port's own pty trait
-- [ ] `winterm/crates/server/src/conpty.rs` — ConPTY
-- [ ] `winterm/crates/server/src/posix_pty.rs` — `openpty`
-- [ ] `winterm/crates/server/src/device_comm.rs` — device communication trait
-  - These are not upstream files; see ADR 015. Each backend needs FFI, and the
-    workspace denies `unsafe`, so an ADR comes first.
+- [x] `winterm/crates/server/src/pty.rs` — the façade: `PtySize`, `PtyCommand`,
+  and the platform `Pty` re-export
+  - [x] **Tests:** command construction, the default size
+- [x] `winterm/crates/server/src/conpty.rs` — ConPTY
+  - [x] Created with `CreatePseudoConsole`, `ResizePseudoConsole` and
+    `ClosePseudoConsole`; the client starts with
+    `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` and `STARTF_USESTDHANDLES` with null
+    handles, so it inherits nothing and uses the pseudoconsole's console.
+  - [x] **Tests:** command-line quoting, output, input, exit status, resize
+- [x] `winterm/crates/server/src/posix_pty.rs` — `openpty`
+  - [x] `posix_openpt`/`grantpt`/`unlockpt`, the slave opened for the child's
+    standard streams, `setsid` + `TIOCSCTTY` in `pre_exec`, `TIOCSWINSZ`.
+  - [x] **Tests:** output, the window size as `stty` sees it, input, exit
+    status, resize
+- [x] `winterm/crates/server/src/device_comm.rs` — `DeviceComm` trait
+  - [x] **Tests:** `Pty` implements it; the pty tests exercise it
+  - These are not upstream files; see ADR 016.
 
 ---
 

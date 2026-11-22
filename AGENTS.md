@@ -160,10 +160,12 @@ tests pass.
   parser and the console interfaces; `server` sits on `host`.
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
-- **`unsafe` is denied workspace-wide.** `utils` is the only crate that opts out,
-  at its root, because it owns the lock-free primitives. The two
-  self-referential buffer iterators carry an item-level `#[allow(unsafe_code)]`
-  and a `SAFETY:` note. New `unsafe` anywhere is a review event.
+- **`unsafe` is denied workspace-wide.** `utils` opts out at its root because it
+  owns the lock-free primitives, and `server`'s two pty backends carry a
+  module-level `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016).
+  The two self-referential buffer iterators carry an item-level
+  `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe` anywhere is a
+  review event.
 - **No new dependency without a reason in the commit.** Prefer what the
   workspace already has.
 - **No decorative comments.** No banners, box-drawing separators, or section
@@ -190,7 +192,7 @@ Do not add call sites under an allowance.
 | `.agents/notes/plan.md` | The porting plan, milestone status, and what to build next |
 | `.agents/notes/adr/` | Decisions that constrain future code |
 | `.agents/skills/` | Procedures loaded on demand: porting, testing, commit messages |
-| `crates/utils` | Geometry, colour, containers, locks — the only crate with `unsafe` |
+| `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
 | `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, marks, search, images |
 | `crates/vt` | The DFA parser and its dispatch actions |
@@ -198,7 +200,7 @@ Do not add call sites under an allowance.
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
 | `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
-| `crates/server` | The console API surface: shim policy, and the pty layer's home (ADR 015) |
+| `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its two backends, ADR 016) |
 
 ## Where the port stands
 
@@ -215,9 +217,9 @@ layer with the read-data wait path; `registry.cpp`, `handle.cpp` and
 `tracing.cpp` follow. The read-data family's `IWaitRoutine` completion path,
 the cooked read's pager, the render settings and the window metrics wait for
 the server, renderer and window layers; `outputStream.cpp` has no counterpart
-(ADR 013). Phase 7 has started with the server crate's portable policy
-(ADR 015); its pty layer waits for an `unsafe` decision, and Phases 8–14 are not
-started.
+(ADR 013). Phase 7 has the server's portable policy (ADR 015) and its pty
+layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules); Phases 8–14
+are not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

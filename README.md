@@ -24,9 +24,9 @@ runnable yet because the host and server layers are still landing.
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Phase 6 under way |
-| [`crates/server`](crates/server) | Console API surface: shim policy; the pty layer's home | Phase 7 under way (ADR 015) |
+| [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Phase 7 under way (ADRs 015, 016) |
 
-1316 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1324 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -60,7 +60,7 @@ crates/adapter    applies parsed sequences to buffers: dispatch, pages, sixel, m
 crates/term       wires the parser to the adapter; the `Terminal` handle and input encoding
 crates/renderer   fonts, cell metrics, atlas, and the software paint path
 crates/host       the console side: history, input buffer, cooked read, input parser, selection
-crates/server     the console API surface; the pty layer's home
+crates/server     the console API surface; the pty layer (ConPTY and `openpty`)
 ```
 
 The dependency ring starts at `utils → types → {buffer, vt} → adapter → term`.
