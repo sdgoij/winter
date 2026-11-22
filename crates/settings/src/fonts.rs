@@ -6,7 +6,8 @@
 //! code reads (ADR 022's rule). The schema keeps the object shape, so those
 //! fields can arrive without a migration when a font loader exists.
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The smallest point size the shell honours.
 pub const MIN_SIZE: f32 = 4.0;
@@ -20,7 +21,41 @@ pub const DEFAULT_SIZE: f32 = 16.0;
 #[serde(default)]
 pub struct Font {
     /// The point size the grid is measured and painted at.
+    #[serde(deserialize_with = "size_from_number")]
     pub size: f32,
+}
+
+/// Reads a size written as either an integer or a float.
+///
+/// TOML distinguishes `size = 16` from `size = 16.0`, and a hand-written file
+/// will use the first; a serde derive would refuse it as the wrong type.
+fn size_from_number<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct Number;
+
+    impl Visitor<'_> for Number {
+        type Value = f32;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a point size")
+        }
+
+        fn visit_i64<E: de::Error>(self, value: i64) -> Result<f32, E> {
+            Ok(value as f32)
+        }
+
+        fn visit_u64<E: de::Error>(self, value: u64) -> Result<f32, E> {
+            Ok(value as f32)
+        }
+
+        fn visit_f64<E: de::Error>(self, value: f64) -> Result<f32, E> {
+            Ok(value as f32)
+        }
+    }
+
+    deserializer.deserialize_any(Number)
 }
 
 impl Default for Font {

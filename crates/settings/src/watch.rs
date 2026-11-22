@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn a_stamp_changes_when_the_file_changes() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("settings.json");
+        let path = directory.path().join("settings.toml");
         assert_eq!(stamp(&path), None, "a missing file has no stamp");
 
         std::fs::write(&path, "{}").expect("write");

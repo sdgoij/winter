@@ -49,7 +49,7 @@ winterm = { path = "crates/winterm" }
 arboard = "3"
 bitflags = "2"
 eframe = "0.37"
-serde_json = "1"
+toml = "1"
 fontdue = "0.9"
 libc = "0.2"
 proptest = "1"

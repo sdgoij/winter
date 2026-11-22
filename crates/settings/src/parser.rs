@@ -1,4 +1,4 @@
-//! Reading and writing the settings file.
+//! Reading and writing the settings document.
 //!
 //! A missing file is normal — a fresh install has none — and yields the
 //! defaults silently. A file that is present but unreadable or invalid also
@@ -8,17 +8,68 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::Settings;
+use crate::{CURRENT_VERSION, Settings};
 
-/// Parses a settings file, filling in what it leaves out.
-pub fn parse(json: &str) -> Result<Settings, serde_json::Error> {
-    let settings: Settings = serde_json::from_str(json)?;
+/// Parses a settings document, filling in what it leaves out.
+///
+/// A document written for a newer schema is refused before it is normalized:
+/// the fields whose meaning changed are exactly the ones this build would
+/// misread (ADR 026).
+pub fn parse(text: &str) -> Result<Settings, SettingsError> {
+    let settings: Settings = toml::from_str(text)?;
+    if settings.version > CURRENT_VERSION {
+        return Err(SettingsError::NewerVersion {
+            found: settings.version,
+            supported: CURRENT_VERSION,
+        });
+    }
     Ok(settings.normalize())
 }
 
-/// Serialises settings for writing.
-pub fn to_json(settings: &Settings) -> String {
-    serde_json::to_string_pretty(settings).unwrap_or_default()
+/// Why a settings document was not used.
+#[derive(Debug)]
+pub enum SettingsError {
+    /// The document is not TOML for this schema.
+    Format(toml::de::Error),
+    /// The document names a schema version this build does not know.
+    NewerVersion {
+        /// The version the document names.
+        found: u32,
+        /// The version this build writes and understands.
+        supported: u32,
+    },
+}
+
+impl fmt::Display for SettingsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Format(error) => error.fmt(f),
+            Self::NewerVersion { found, supported } => write!(
+                f,
+                "the file is version {found}; this build understands up to version {supported}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SettingsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Format(error) => Some(error),
+            Self::NewerVersion { .. } => None,
+        }
+    }
+}
+
+impl From<toml::de::Error> for SettingsError {
+    fn from(error: toml::de::Error) -> Self {
+        Self::Format(error)
+    }
+}
+
+/// Serialises settings as TOML, which is what the file is written in.
+pub fn to_toml(settings: &Settings) -> String {
+    toml::to_string_pretty(settings).unwrap_or_default()
 }
 
 /// Returns where this platform keeps the settings file.
@@ -60,7 +111,7 @@ pub enum LoadError {
         /// The operating system's message.
         detail: String,
     },
-    /// The file was read but is not valid settings JSON.
+    /// The file was read but is not valid settings TOML.
     Invalid {
         /// The file that was tried.
         path: PathBuf,
@@ -93,8 +144,8 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
         };
     };
 
-    let json = match std::fs::read_to_string(&path) {
-        Ok(json) => json,
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Loaded {
                 settings: Settings::default(),
@@ -114,7 +165,7 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
         }
     };
 
-    match parse(&json) {
+    match parse(&text) {
         Ok(settings) => Loaded {
             settings,
             path: Some(path),
@@ -145,7 +196,7 @@ fn config_base() -> Option<PathBuf> {
 }
 
 fn settings_path_in(base: &Path) -> PathBuf {
-    base.join("winterm").join("settings.json")
+    base.join("winterm").join("settings.toml")
 }
 
 #[cfg(test)]
@@ -157,13 +208,13 @@ mod tests {
         let base = Path::new("/tmp/config");
         assert_eq!(
             settings_path_in(base),
-            PathBuf::from("/tmp/config/winterm/settings.json")
+            PathBuf::from("/tmp/config/winterm/settings.toml")
         );
     }
 
     #[test]
     fn a_missing_file_is_not_an_error() {
-        let loaded = load_from_path(Some(PathBuf::from("/definitely/not/here.json")));
+        let loaded = load_from_path(Some(PathBuf::from("/definitely/not/here.toml")));
         assert_eq!(loaded.settings, Settings::default());
         assert_eq!(loaded.error, None);
         assert!(loaded.path.is_some());
@@ -177,8 +228,8 @@ mod tests {
     #[test]
     fn a_broken_file_loads_the_defaults_and_says_why() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("settings.json");
-        std::fs::write(&path, "{").expect("write");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "[[").expect("write");
 
         let loaded = load_from_path(Some(path.clone()));
         assert_eq!(loaded.settings, Settings::default());
@@ -189,6 +240,23 @@ mod tests {
             other => panic!("expected an invalid-file error, got {other:?}"),
         }
         assert!(loaded.error.expect("error").to_string().contains("does not parse"));
+    }
+
+    #[test]
+    fn a_file_from_a_newer_build_is_reported() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "version = 7").expect("write");
+
+        let loaded = load_from_path(Some(path));
+        assert_eq!(loaded.settings, Settings::default());
+        match loaded.error {
+            Some(LoadError::Invalid { detail, .. }) => {
+                assert!(detail.contains("version 7"), "{detail}");
+                assert!(detail.contains("version 1"), "{detail}");
+            }
+            other => panic!("expected an invalid-file error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -207,8 +275,8 @@ mod tests {
     #[test]
     fn a_valid_file_is_loaded() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("settings.json");
-        std::fs::write(&path, r#"{"profiles": [{"name": "a", "command": "sh"}]}"#).expect("write");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "[[profiles]]\nname = \"a\"\ncommand = \"sh\"\n").expect("write");
 
         let loaded = load_from_path(Some(path));
         assert_eq!(loaded.error, None);

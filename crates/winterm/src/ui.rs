@@ -1777,12 +1777,15 @@ mod tests {
     #[test]
     fn a_scheme_colours_resolve_through_the_table() {
         let settings = settings::parse(
-            r##"{
-                "schemes": [
-                    { "name": "x", "foreground": "#010203", "background": "#101112", "blue": "#0000FF" }
-                ],
-                "default_scheme": "x"
-            }"##,
+            r##"
+                default_scheme = "x"
+
+                [[schemes]]
+                name = "x"
+                foreground = "#010203"
+                background = "#101112"
+                blue = "#0000FF"
+            "##,
         )
         .expect("settings");
 
@@ -1985,13 +1988,19 @@ mod tests {
             },
         };
         let settings = settings::parse(
-            r#"{
-                "keybindings": [
-                    { "keys": "ctrl+alt+t", "action": "newTab" },
-                    { "keys": "ctrl+shift+t", "action": "paste" },
-                    { "keys": "ctrl+shift+c", "action": "unbound" }
-                ]
-            }"#,
+            r#"
+                [[keybindings]]
+                keys = "ctrl+alt+t"
+                action = "newTab"
+
+                [[keybindings]]
+                keys = "ctrl+shift+t"
+                action = "paste"
+
+                [[keybindings]]
+                keys = "ctrl+shift+c"
+                action = "unbound"
+            "#,
         )
         .expect("settings");
 
@@ -2020,17 +2029,24 @@ mod tests {
     #[test]
     fn the_settings_rows_report_what_the_file_asked_for() {
         let settings = settings::parse(
-            r#"{
-                "profiles": [{ "name": "zsh", "command": "/bin/zsh" }],
-                "default_profile": "zsh",
-                "schemes": [{ "name": "muted" }],
-                "default_scheme": "muted",
-                "font": { "size": 18 }
-            }"#,
+            r#"
+                default_profile = "zsh"
+                default_scheme = "muted"
+
+                [[profiles]]
+                name = "zsh"
+                command = "/bin/zsh"
+
+                [[schemes]]
+                name = "muted"
+
+                [font]
+                size = 18
+            "#,
         )
         .expect("settings");
 
-        let rows = settings_rows(&settings, Some(Path::new("/cfg/settings.json")), None);
+        let rows = settings_rows(&settings, Some(Path::new("/cfg/settings.toml")), None);
         let value = |label: &str| {
             rows.iter()
                 .find(|(name, _)| *name == label)
@@ -2038,7 +2054,7 @@ mod tests {
                 .unwrap_or("")
         };
 
-        assert_eq!(value("File"), "/cfg/settings.json");
+        assert_eq!(value("File"), "/cfg/settings.toml");
         assert_eq!(value("Status"), "loaded");
         assert_eq!(value("Profile"), "zsh (/bin/zsh)");
         assert_eq!(value("Keybindings"), "17");

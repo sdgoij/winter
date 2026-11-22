@@ -27,44 +27,53 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
-| [`crates/settings`](crates/settings) | The JSON settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–024) |
+| [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1439 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1440 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
 ## Configuration
 
-`crates/settings` reads `%APPDATA%\winterm\settings.json` on Windows and
-`$XDG_CONFIG_HOME/winterm/settings.json` (else
-`$HOME/.config/winterm/settings.json`) elsewhere. A missing or invalid file
+`crates/settings` reads `%APPDATA%\winterm\settings.toml` on Windows and
+`$XDG_CONFIG_HOME/winterm/settings.toml` (else
+`$HOME/.config/winterm/settings.toml`) elsewhere. A missing or invalid file
 starts the platform shell with the default chords; the application never writes
 the file.
 
-```json
-{
-  "profiles": [
-    { "name": "default", "command": "pwsh.exe", "args": ["-NoLogo"] }
-  ],
-  "default_profile": "default",
-  "keybindings": [
-    { "keys": "ctrl+alt+t", "action": "newTab" },
-    { "keys": "ctrl+shift+c", "action": "unbound" }
-  ],
-  "schemes": [
-    {
-      "name": "muted",
-      "foreground": "#C8C8C8",
-      "background": "#101014",
-      "selectionBackground": "#264F78",
-      "red": "#D2504A"
-    }
-  ],
-  "default_scheme": "muted",
-  "font": { "size": 16 }
-}
+```toml
+version = 1
+
+default_profile = "default"
+default_scheme = "muted"
+
+[[profiles]]
+name = "default"
+command = "pwsh.exe"
+args = ["-NoLogo"]
+
+[[keybindings]]
+keys = "ctrl+alt+t"
+action = "newTab"
+
+[[keybindings]]
+keys = "ctrl+shift+c"
+action = "unbound"
+
+[[schemes]]
+name = "muted"
+foreground = "#C8C8C8"
+background = "#101014"
+selection_background = "#264F78"
+red = "#D2504A"
+
+[font]
+size = 16
 ```
+
+`version` is the schema version. A file that names a newer version than the
+build understands is refused, and the defaults load instead (ADR 026).
 
 A chord is `[ctrl+][alt+][shift+]<key>` in any modifier order, case-insensitive.
 Keys are `0-9`, `a-z`, a single punctuation character, `tab`, `enter`, `esc`,
@@ -78,16 +87,16 @@ defaults; `unbound` removes one, so the key reaches the shell. An empty list
 means the defaults. A chord or action the build does not know rejects the file,
 and the defaults load instead (ADR 023).
 
-A scheme names any of `foreground`, `background`, `cursorColor`,
-`selectionBackground`, `black` … `white` and `brightBlack` … `brightWhite`. A
+A scheme names any of `foreground`, `background`, `cursor_color`,
+`selection_background`, `black` … `white` and `bright_black` … `bright_white`. A
 colour is written in the grammar Windows Terminal accepts — `#RGB`, `#RRGGBB`,
 `rgb:r/g/b` — and the colours it leaves out keep the built-in Campbell palette.
 A scheme is chosen by `default_scheme`; a name that matches nothing paints the
 built-in palette. A bad colour rejects the file (ADR 024).
 
-`font.size` sets the grid's point size (4–100); a size outside that range is
-clamped. The face is not configurable yet: the shell uses one embedded
-monospace family.
+`font.size` sets the grid's point size (4–100), written as an integer or a
+float; a size outside that range is clamped. The face is not configurable yet:
+the shell uses one embedded monospace family.
 
 The settings window (Ctrl+, or the gear beside the tabs) shows the file that was
 read, whether it parsed, and what is in force. A saved file is picked up within

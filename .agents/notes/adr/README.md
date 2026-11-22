@@ -50,7 +50,8 @@ Rules:
 | [019](019-terminal-selection-is-app-state.md) | The terminal's viewport and selection are application state | Accepted |
 | [020](020-selection-adds-document-rows.md) | Selection addresses document rows (history first) | Accepted |
 | [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |
-| [022](022-settings-json-profiles.md) | Settings are a JSON file of named profiles | Accepted |
+| [022](022-settings-json-profiles.md) | Settings are a JSON file of named profiles | Superseded in part by 026 (format and file name) |
 | [023](023-keybindings-are-settings.md) | Keybindings are settings data: typed chords, flat action names, merged over the defaults | Accepted |
 | [024](024-colour-schemes.md) | Colour schemes are settings; `settings` may depend on `types` for the colour vocabulary | Accepted |
 | [025](025-settings-are-reloaded-by-polling.md) | A saved settings file is reloaded by polling its stamp; a bad save keeps the session | Accepted |
+| [026](026-settings-are-toml.md) | Settings are TOML with a schema `version`; a newer version is refused | Accepted |

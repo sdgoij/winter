@@ -417,15 +417,15 @@ mod tests {
 
     #[test]
     fn a_chord_serialises_as_its_string_and_parses_back() {
-        let json = r#"{ "keys": "ctrl+shift+t", "action": "newTab" }"#;
-        let binding: Keybinding = serde_json::from_str(json).expect("binding");
+        let text = "keys = \"ctrl+shift+t\"\naction = \"newTab\"\n";
+        let binding: Keybinding = toml::from_str(text).expect("binding");
 
         assert_eq!(binding.keys, Chord::parse("ctrl+shift+t").expect("chord"));
+        assert_eq!(binding.keys.to_string(), "ctrl+shift+t");
         assert_eq!(binding.action, Action::NewTab);
-        assert_eq!(
-            serde_json::to_string(&binding).expect("json"),
-            r#"{"keys":"ctrl+shift+t","action":"newTab"}"#
-        );
+
+        let written = toml::to_string(&binding).expect("toml");
+        assert_eq!(toml::from_str::<Keybinding>(&written).expect("binding"), binding);
     }
 
     #[test]

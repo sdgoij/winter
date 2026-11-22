@@ -77,7 +77,6 @@ impl<'de> Deserialize<'de> for Color {
 /// built-in palette for everything else, which is what a partial hand-written
 /// file needs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Scheme {
     /// The name `default_scheme` refers to.
     #[serde(default)]
@@ -207,24 +206,30 @@ mod tests {
 
     #[test]
     fn a_color_serialises_as_canonical_hex() {
-        let json = serde_json::to_string(&Color::parse("#c50f1f").expect("colour")).expect("json");
-        assert_eq!(json, "\"#C50F1F\"");
-        assert_eq!(
-            serde_json::from_str::<Color>("\"#123\"").expect("colour").text_color(),
-            TextColor::rgb(0x10, 0x20, 0x30)
-        );
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct Holder {
+            colour: Color,
+        }
+
+        let holder = Holder {
+            colour: Color::parse("#c50f1f").expect("colour"),
+        };
+        assert_eq!(toml::to_string(&holder).expect("toml"), "colour = \"#C50F1F\"\n");
+
+        let back: Holder = toml::from_str("colour = \"#123\"").expect("colour");
+        assert_eq!(back.colour.text_color(), TextColor::rgb(0x10, 0x20, 0x30));
     }
 
     fn scheme() -> Scheme {
-        serde_json::from_str(
-            r##"{
-                "name": "test",
-                "foreground": "#010203",
-                "background": "#101112",
-                "cursorColor": "#A0B0C0",
-                "selectionBackground": "#202122",
-                "red": "#FF0000"
-            }"##,
+        toml::from_str(
+            r##"
+                name = "test"
+                foreground = "#010203"
+                background = "#101112"
+                cursor_color = "#A0B0C0"
+                selection_background = "#202122"
+                red = "#FF0000"
+            "##,
         )
         .expect("scheme")
     }
@@ -263,7 +268,7 @@ mod tests {
         // A program's OSC 4 is gone too: the file is the user's answer.
         table.set(2, TextColor::rgb(1, 1, 1));
 
-        let bare: Scheme = serde_json::from_str(r#"{"name": "bare"}"#).expect("scheme");
+        let bare: Scheme = toml::from_str("name = \"bare\"").expect("scheme");
         bare.apply(&mut table);
 
         assert_eq!(table.get(1), Some(TextColor::rgb(0xC5, 0x0F, 0x1F)));
