@@ -67,4 +67,5 @@ Rules:
 | [036](036-control-connection-events.md) | The connection is a trait, the control owns the terminal, the widget owns the viewport; an exit closes the tab | Accepted |
 | [037](037-registry-settings.md) | The console's registry settings are a portable schema; the Win32 reads belong to the server layer | Accepted |
 | [038](038-shell-modules.md) | The egui shell is `app`, `config`, `terminal_widget`, `window` and `icon`; settings, themes and a wgpu pass have no counterpart | Accepted |
-| [039](039-native-windows-ui.md) | Native UI means a Windows-looking window: a drawn caption on the existing winit window, one `win32` module for what the toolkit cannot express | Proposed |
+| [039](039-native-windows-ui.md) | Native UI means a Windows-looking window: a drawn caption on the existing winit window, one `win32` module for what the toolkit cannot express | Superseded by 040 |
+| [040](040-winui-windows-shell.md) | The Windows shell is WinUI 3 through `windows-reactor`; egui keeps Linux and macOS; the terminal content stays `renderer`'s | Accepted |

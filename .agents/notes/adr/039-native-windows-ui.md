@@ -1,6 +1,6 @@
 # ADR 039 — Native UI starts with the Windows window, not a new toolkit
 
-- Status: Proposed
+- Status: Superseded by ADR 040
 - Date: 2026-11-22
 - Related: `crates/winterm/src/{app,terminal_widget,config,window,icon}.rs`,
   `crates/winterm/Cargo.toml`; ADRs 007, 009, 016, 018, 038
