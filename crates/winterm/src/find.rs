@@ -6,6 +6,7 @@
 //! own bar and the WinUI pane draws a `TextBox`, but both ask the same questions.
 
 use buffer::TextMatch;
+#[cfg(any(windows, test))]
 use utils::{Point, PointSpan};
 
 use crate::term_control::Control;
@@ -87,6 +88,10 @@ pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> O
 ///
 /// `history` and `scroll` place the screen in the document, and `current`
 /// names the match whose span is reported as the focused one.
+///
+/// Only the WinUI pane hands these spans to a renderer; the egui pane paints
+/// its own rows. On the other platforms the function exists for its tests.
+#[cfg(any(windows, test))]
 pub(crate) fn highlight_spans(
     matches: &[TextMatch],
     current: Option<usize>,

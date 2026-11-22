@@ -44,6 +44,10 @@ pub mod term_connection;
 pub mod term_control;
 pub mod term_events;
 pub mod term_settings;
+// The renderer's view of a live terminal is the WinUI pane's: the egui pane
+// paints through `grid` instead. Its tests run on every platform, which is why
+// `test` is part of the condition rather than `windows` alone.
+#[cfg(any(windows, test))]
 pub mod terminal_render;
 pub mod terminal_widget;
 pub mod view;

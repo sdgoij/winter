@@ -167,16 +167,24 @@ mod tests {
 
     #[test]
     fn a_pwsh_profile_is_hooked_the_same_way() {
-        for program in [
-            "pwsh",
-            "pwsh.exe",
-            "PWSH.EXE",
-            r"C:\Program Files\PowerShell\7\pwsh.exe",
-        ] {
+        for program in ["pwsh", "pwsh.exe", "PWSH.EXE"] {
             let hooked = attach(PtyCommand::new(program), Some(&script()));
             assert_eq!(hooked.program(), program);
             assert_eq!(arguments(hooked)[0], "-NoExit", "{program}");
         }
+    }
+
+    #[test]
+    fn a_shell_named_by_an_absolute_path_is_still_a_pwsh() {
+        // `Path::file_name` reads the host's separator, so the path has to be
+        // one the host would actually use to start a shell.
+        #[cfg(windows)]
+        let installed = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        #[cfg(unix)]
+        let installed = "/usr/bin/pwsh";
+
+        let hooked = attach(PtyCommand::new(installed), Some(&script()));
+        assert_eq!(arguments(hooked).first().map(String::as_str), Some("-NoExit"));
     }
 
     #[test]
