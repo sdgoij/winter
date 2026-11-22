@@ -20,7 +20,9 @@
 //! - [`screen_info`] — `ScreenInformation`, one screen's buffer, viewport and
 //!   console modes
 //! - [`settings`] — `Settings`, the console's configurable values
+//! - [`alias`] — the `doskey`-style command aliases and their expansion
 
+pub mod alias;
 pub mod console_information;
 pub mod history;
 pub mod input_buffer;

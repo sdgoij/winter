@@ -23,9 +23,9 @@ runnable yet because the host and server layers are still landing.
 | [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Complete for Phase 4 |
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
-| [`crates/host`](crates/host) | Command history, input buffer, cooked read, input engine, console, screen and settings state | Phase 6 under way |
+| [`crates/host`](crates/host) | Command history, input buffer, cooked read, input engine, console, screen, settings and aliases | Phase 6 under way |
 
-1190 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1206 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
