@@ -9,12 +9,13 @@
 //! previews, search-hover dashes and the soft-font range are the pieces still
 //! to be wired in the paint path.
 
-use buffer::TextBufferCellIterator;
+use buffer::{OutputCell, TextBufferCellIterator};
 use types::color_table::SELECTION_BACKGROUND;
-use types::{TextAttribute, UnderlineStyle};
+use types::{TextAttribute, UnderlineStyle, codepoint_width};
 use utils::{Color, InclusiveRect, Point, Rect};
 
 use crate::cluster::Cluster;
+use crate::composition::Composition;
 use crate::render_data::RenderData;
 use crate::render_engine::{RenderEngine, RenderResult, StartPaint};
 use crate::render_frame_info::{GridLineSet, GridLines, RenderFrameInfo};
@@ -229,6 +230,9 @@ fn paint_buffer_output(
 
     let viewport = data.viewport();
     let buffer = data.text_buffer();
+    let composition = data.active_composition();
+    let composition_origin = data.composition_origin();
+    let composition_active = composition_origin.is_some() && !composition.text.is_empty();
 
     let result = (|| {
         for rect in &dirty {
@@ -255,20 +259,33 @@ fn paint_buffer_output(
             for screen_row in top..bottom {
                 let buffer_row = viewport.top() + screen_row;
                 let screen_line = InclusiveRect::new(buffer_left, buffer_row, buffer_right, buffer_row);
+                let target = Point::new(left_screen, screen_row);
 
-                if let Some(iterator) =
-                    TextBufferCellIterator::with_bounds(buffer, Point::new(buffer_left, buffer_row), screen_line)
+                if TextBufferCellIterator::with_bounds(buffer, Point::new(buffer_left, buffer_row), screen_line)
+                    .is_some()
                 {
                     let rendition = buffer.get_line_rendition(buffer_row);
                     engine.prepare_line_transform(rendition, screen_row, viewport.left())?;
-                    paint_line(
-                        engine,
-                        data,
-                        settings,
-                        iterator,
-                        Point::new(left_screen, screen_row),
-                        hovered_hyperlink_id,
-                    )?;
+
+                    if composition_active && composition_origin.is_some_and(|origin| origin.y() == buffer_row) {
+                        paint_composition_row(
+                            engine,
+                            data,
+                            settings,
+                            buffer_row,
+                            buffer_left,
+                            buffer_right,
+                            composition_origin.expect("checked above"),
+                            composition,
+                            target,
+                            hovered_hyperlink_id,
+                        )?;
+                    } else if let Some(iterator) =
+                        TextBufferCellIterator::with_bounds(buffer, Point::new(buffer_left, buffer_row), screen_line)
+                    {
+                        let cells: Vec<&OutputCell> = iterator.collect();
+                        paint_cells(engine, data, settings, &cells, target, hovered_hyperlink_id)?;
+                    }
                 }
 
                 if let Some(image) = buffer
@@ -288,26 +305,143 @@ fn paint_buffer_output(
     result
 }
 
-/// Paints one dirty row, grouping consecutive cells into attribute runs.
-fn paint_line(
+/// Paints a row with the active IME composition overlaid on it.
+#[allow(clippy::too_many_arguments)]
+fn paint_composition_row(
     engine: &mut dyn RenderEngine,
     data: &impl RenderData,
     settings: &RenderSettings,
-    mut iterator: TextBufferCellIterator<'_>,
+    buffer_row: i32,
+    buffer_left: i32,
+    buffer_right: i32,
+    origin: Point,
+    composition: &Composition,
     target: Point,
     hovered_hyperlink_id: u16,
 ) -> RenderResult<()> {
+    let buffer = data.text_buffer();
+    let Some(row) = buffer.get_row_at_screen_line(buffer_row) else {
+        return Ok(());
+    };
+
+    let source: Vec<OutputCell> = (0..buffer.screen_width())
+        .map(|column| row.get_cell(column).clone())
+        .collect();
+    let overlay = apply_composition(&source, origin.x(), composition);
+    let cells: Vec<&OutputCell> = (buffer_left..=buffer_right)
+        .filter_map(|column| overlay.get(column.max(0) as usize))
+        .collect();
+
+    paint_cells(engine, data, settings, &cells, target, hovered_hyperlink_id)
+}
+
+/// Overwrites the cells at `origin_x` with the composition and pushes the
+/// overwritten non-space text to the right, absorbing whitespace.
+///
+/// Ported from `Renderer::_PaintBufferOutputComposition`. This works on a copy
+/// of the row rather than mutating the buffer, so the composition never leaks
+/// into the terminal's content.
+fn apply_composition(source: &[OutputCell], origin_x: i32, composition: &Composition) -> Vec<OutputCell> {
+    let mut result = source.to_vec();
+    if origin_x < 0 || origin_x as usize >= source.len() {
+        return result;
+    }
+
+    let origin = origin_x as usize;
+    let base = *source[origin].get_attributes();
+
+    let mut column = origin;
+    let mut offset = 0usize;
+    for range in &composition.attributes {
+        let text: String = composition.text.chars().skip(offset).take(range.len).collect();
+
+        let mut attr = range.attr;
+        if attr.get_background().is_default() {
+            attr.set_background(base.get_background());
+        }
+        if attr.get_foreground().is_default() {
+            attr.set_foreground(base.get_foreground());
+        }
+
+        for ch in text.chars() {
+            if column >= result.len() {
+                break;
+            }
+            let width = usize::from(codepoint_width(ch as u32).max(1));
+            let mut cell = OutputCell::from_char(ch);
+            cell.set_attributes(attr);
+            result[column] = cell;
+            for trailing in 1..width {
+                if column + trailing < result.len() {
+                    result[column + trailing] = OutputCell::new();
+                }
+            }
+            column += width;
+        }
+
+        offset += range.len;
+    }
+
+    let composition_width = column.saturating_sub(origin);
+    if composition_width > 0 && column < source.len() {
+        let mut src = origin;
+        let mut dst = column;
+        let mut remaining = composition_width;
+
+        while src < source.len() && dst < result.len() {
+            // Whitespace in the overwritten text is absorbed by the composition.
+            while src < source.len() && source[src].is_whitespace() && remaining > 0 {
+                remaining -= 1;
+                src += 1;
+            }
+            if remaining == 0 {
+                break;
+            }
+
+            let span_start = src;
+            while src < source.len() && !source[src].is_whitespace() {
+                src += 1;
+            }
+            let span_len = src - span_start;
+            if span_len == 0 {
+                break;
+            }
+
+            for index in 0..span_len {
+                if dst + index >= result.len() {
+                    break;
+                }
+                result[dst + index] = source[span_start + index].clone();
+            }
+            dst += span_len;
+        }
+    }
+
+    result
+}
+
+/// Paints cells, grouping consecutive cells into attribute runs.
+fn paint_cells<'a>(
+    engine: &mut dyn RenderEngine,
+    data: &impl RenderData,
+    settings: &RenderSettings,
+    cells: &[&'a OutputCell],
+    target: Point,
+    hovered_hyperlink_id: u16,
+) -> RenderResult<()> {
+    let mut index = 0usize;
     let mut screen_x = target.x();
 
-    while iterator.cell().is_some() {
-        let first = iterator.cell().expect("checked above");
+    while index < cells.len() {
+        let first: &'a OutputCell = cells[index];
         let run_attr = *first.get_attributes();
         let using_soft_font = uses_soft_font(data, first.chars());
 
-        let mut clusters: Vec<Cluster<'_>> = Vec::new();
+        let mut clusters: Vec<Cluster<'a>> = Vec::new();
         let mut columns = 0i32;
 
-        while let Some(cell) = iterator.cell() {
+        while index < cells.len() {
+            let cell: &'a OutputCell = cells[index];
             if *cell.get_attributes() != run_attr || uses_soft_font(data, cell.chars()) != using_soft_font {
                 break;
             }
@@ -316,12 +450,13 @@ fn paint_line(
             // walk would never end.
             let width = i32::from(cell.column_width()).max(1);
             clusters.push(Cluster::new(cell.chars(), width));
-            iterator.advance(width as isize);
+            index += usize::try_from(width).unwrap_or(1);
             columns += width;
         }
 
         if clusters.is_empty() {
-            break;
+            index += 1;
+            continue;
         }
 
         engine.update_drawing_brushes(&run_attr, settings, data, using_soft_font, false)?;
@@ -409,10 +544,10 @@ mod tests {
     use std::time::Duration;
 
     use buffer::{ImageSlice, OutputCell, TextBuffer};
-    use types::{LineRendition, TextAttribute, UnderlineStyle};
+    use types::{LineRendition, TextAttribute, TextColor, UnderlineStyle};
     use utils::{PointSpan, Size};
 
-    use crate::composition::Composition;
+    use crate::composition::{Composition, CompositionRange};
     use crate::cursor_options::CursorOptions;
     use crate::font_info::FontInfo;
     use crate::font_info_desired::FontInfoDesired;
@@ -614,6 +749,7 @@ mod tests {
         title: String,
         tsf: Composition,
         snippet: Composition,
+        composition_origin: Option<Point>,
     }
 
     impl TestData {
@@ -628,6 +764,7 @@ mod tests {
                 title: "winterm".to_string(),
                 tsf: Composition::default(),
                 snippet: Composition::default(),
+                composition_origin: None,
             }
         }
 
@@ -711,6 +848,9 @@ mod tests {
         }
         fn snippet_preview(&self) -> &Composition {
             &self.snippet
+        }
+        fn composition_origin(&self) -> Option<Point> {
+            self.composition_origin
         }
     }
 
@@ -855,6 +995,67 @@ mod tests {
         assert_eq!(log.grid_lines.len(), 1);
         assert!(log.grid_lines[0].contains(GridLines::HyperlinkUnderline));
         assert!(!log.grid_lines[0].contains(GridLines::Underline));
+    }
+
+    fn row_from(text: &str) -> Vec<OutputCell> {
+        text.chars().map(OutputCell::from_char).collect()
+    }
+
+    fn composition(text: &str, len: usize, attr: TextAttribute) -> Composition {
+        Composition {
+            text: text.to_string(),
+            attributes: vec![CompositionRange { len, attr }],
+            cursor_pos: 0,
+        }
+    }
+
+    #[test]
+    fn a_composition_overwrites_the_origin_and_pushes_text_right() {
+        let source = row_from("abcd");
+        let result = apply_composition(&source, 1, &composition("XY", 2, TextAttribute::default()));
+
+        let text: String = result.iter().map(|cell| cell.chars()).collect();
+        assert_eq!(text, "aXYb");
+    }
+
+    #[test]
+    fn a_composition_absorbs_overwritten_whitespace() {
+        let source = row_from("a  cd");
+        let result = apply_composition(&source, 1, &composition("XY", 2, TextAttribute::default()));
+
+        let text: String = result.iter().map(|cell| cell.chars()).collect();
+        assert_eq!(text, "aXYcd");
+    }
+
+    #[test]
+    fn a_default_composition_colour_inherits_the_cell_colour() {
+        let mut base = TextAttribute::default();
+        base.set_foreground(TextColor::index16(2));
+        let mut cell = OutputCell::from_char('a');
+        cell.set_attributes(base);
+
+        let mut run = TextAttribute::default();
+        run.set_background(TextColor::index16(4));
+
+        let result = apply_composition(&[cell], 0, &composition("X", 1, run));
+        let attrs = result[0].get_attributes();
+        assert_eq!(attrs.get_foreground(), TextColor::index16(2));
+        assert_eq!(attrs.get_background(), TextColor::index16(4));
+    }
+
+    #[test]
+    fn a_frame_paints_the_composition_over_the_row() {
+        let mut data = TestData::new(4, 1);
+        data.write(0, "abcd");
+        data.tsf = composition("XY", 2, TextAttribute::default());
+        data.composition_origin = Some(Point::new(1, 0));
+
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut renderer = Renderer::new(data, RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), vec![screen_rect(4, 1)])));
+
+        renderer.paint_frame().expect("frame");
+        assert_eq!(log.borrow().lines, vec![("aXYb".to_string(), Point::new(0, 0))]);
     }
 
     #[test]

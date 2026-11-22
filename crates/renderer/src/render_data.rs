@@ -111,6 +111,11 @@ pub trait RenderData {
     fn soft_font_range(&self) -> Option<(usize, usize)> {
         None
     }
+
+    /// Returns where the active composition is anchored in buffer coordinates.
+    fn composition_origin(&self) -> Option<Point> {
+        None
+    }
 }
 
 #[cfg(test)]
