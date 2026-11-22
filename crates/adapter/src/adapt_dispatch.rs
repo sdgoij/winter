@@ -197,6 +197,8 @@ pub struct AdaptDispatch {
     /// Kitty keyboard protocol flags and their push stack (input state).
     kitty_flags: u8,
     kitty_stack: Vec<u8>,
+    /// A presentation state parsed by DECRSPS, waiting to be applied.
+    pending_presentation: Arc<Mutex<Option<PendingPresentation>>>,
 }
 
 /// A MIDI note requested by DECPS.
@@ -208,6 +210,143 @@ pub struct MidiNote {
     pub velocity: u8,
     /// Duration in microseconds.
     pub duration_micros: u32,
+}
+
+/// A parsed DECCIR cursor information report.
+#[derive(Debug, Clone, Default)]
+struct CursorInformation {
+    row: VTInt,
+    column: VTInt,
+    page: VTInt,
+    sgr: u8,
+    attributes: u8,
+    flags: u8,
+    gl: usize,
+    gr: usize,
+    sizes: u8,
+    charsets: [Option<VTID>; 4],
+}
+
+/// A presentation state waiting to be applied after its DCS string ends.
+#[derive(Debug, Clone)]
+enum PendingPresentation {
+    Cursor(CursorInformation),
+    TabStops { width: VTInt, columns: Vec<VTInt> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorField {
+    Row,
+    Column,
+    Page,
+    Sgr,
+    Attr,
+    Flags,
+    Gl,
+    Gr,
+    Sizes,
+    G0,
+    G1,
+    G2,
+    G3,
+}
+
+impl CursorField {
+    const fn next(self) -> Self {
+        match self {
+            Self::Row => Self::Column,
+            Self::Column => Self::Page,
+            Self::Page => Self::Sgr,
+            Self::Sgr => Self::Attr,
+            Self::Attr => Self::Flags,
+            Self::Flags => Self::Gl,
+            Self::Gl => Self::Gr,
+            Self::Gr => Self::Sizes,
+            Self::Sizes => Self::G0,
+            Self::G0 => Self::G1,
+            Self::G1 => Self::G2,
+            Self::G2 => Self::G3,
+            Self::G3 => Self::G3,
+        }
+    }
+}
+
+/// Parses the DECCIR report that DECRSPS feeds back.
+#[derive(Debug)]
+struct CursorInformationParser {
+    field: CursorField,
+    value: VTInt,
+    builder: VTID,
+    info: CursorInformation,
+}
+
+impl Default for CursorInformationParser {
+    fn default() -> Self {
+        Self {
+            field: CursorField::Row,
+            value: 0,
+            builder: VTID::new(),
+            info: CursorInformation::default(),
+        }
+    }
+}
+
+impl CursorInformationParser {
+    fn push(&mut self, ch: u8) -> Option<CursorInformation> {
+        let is_esc = ch == 0x1B;
+
+        match self.field {
+            CursorField::Row | CursorField::Column | CursorField::Page | CursorField::Gl | CursorField::Gr => {
+                if ch.is_ascii_digit() {
+                    self.value = (self.value * 10 + VTInt::from(ch - b'0')).min(65535);
+                } else if ch == b';' || is_esc {
+                    match self.field {
+                        CursorField::Row => self.info.row = self.value,
+                        CursorField::Column => self.info.column = self.value,
+                        CursorField::Page => self.info.page = self.value,
+                        CursorField::Gl => self.info.gl = self.value.clamp(0, 3) as usize,
+                        CursorField::Gr => self.info.gr = self.value.clamp(0, 3) as usize,
+                        _ => {}
+                    }
+                    self.value = 0;
+                    self.field = self.field.next();
+                }
+            }
+            CursorField::Sgr | CursorField::Attr | CursorField::Flags | CursorField::Sizes => {
+                if (0x40..=0x7E).contains(&ch) && self.value == 0 {
+                    self.value = VTInt::from(ch);
+                    match self.field {
+                        CursorField::Sgr => self.info.sgr = ch,
+                        CursorField::Attr => self.info.attributes = ch,
+                        CursorField::Flags => self.info.flags = ch,
+                        CursorField::Sizes => self.info.sizes = ch,
+                        _ => {}
+                    }
+                } else if ch == b';' {
+                    self.value = 0;
+                    self.field = self.field.next();
+                }
+            }
+            CursorField::G0 | CursorField::G1 | CursorField::G2 | CursorField::G3 => {
+                if (0x20..=0x2F).contains(&ch) {
+                    self.builder = self.builder.with_intermediate(ch);
+                } else if (0x30..=0x7E).contains(&ch) {
+                    let id = self.builder.finalize_with(ch);
+                    let index = match self.field {
+                        CursorField::G0 => 0,
+                        CursorField::G1 => 1,
+                        CursorField::G2 => 2,
+                        _ => 3,
+                    };
+                    self.info.charsets[index] = Some(id);
+                    self.builder = VTID::new();
+                    self.field = self.field.next();
+                }
+            }
+        }
+
+        is_esc.then(|| self.info.clone())
+    }
 }
 
 impl AdaptDispatch {
@@ -254,21 +393,210 @@ impl AdaptDispatch {
             pending_c1_controls: None,
             kitty_flags: 0,
             kitty_stack: Vec::new(),
+            pending_presentation: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Initializes the default tab stops for a buffer `width` wide.
     fn ensure_tab_stops(&mut self, width: VTInt) {
-        if self.tab_stops.len() == width as usize {
+        // Upstream supports at least 132 columns even when the page is narrower,
+        // and growing the table never discards stored stops.
+        let width = width.max(132) as usize;
+        if self.tab_stops.len() >= width {
             return;
         }
-        let mut stops = vec![false; width.max(0) as usize];
-        for column in (0..width).step_by(8) {
-            if let Some(stop) = stops.get_mut(column as usize) {
-                *stop = true;
+
+        let initial = self.tab_stops.len();
+        self.tab_stops.resize(width, false);
+        if initial == 0 {
+            for column in (0..width).step_by(8) {
+                self.tab_stops[column] = true;
             }
         }
-        self.tab_stops = stops;
+    }
+
+    /// Applies a presentation state parsed by DECRSPS.
+    ///
+    /// The adapter cannot mutate itself from inside a DCS handler, so the
+    /// handler records the parsed report and [`Terminal`] calls this after the
+    /// sequence ends.
+    pub fn apply_pending_presentation_state(&mut self) {
+        let pending = self
+            .pending_presentation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+
+        match pending {
+            Some(PendingPresentation::Cursor(info)) => self.apply_cursor_information(info),
+            Some(PendingPresentation::TabStops { width, columns }) => self.apply_tab_stops(width, columns),
+            None => {}
+        }
+    }
+
+    fn apply_cursor_information(&mut self, info: CursorInformation) {
+        self.page_position_absolute(info.page.max(1));
+
+        {
+            let page = self.page_manager.active_page();
+            let mut attributes = page.attributes();
+            attributes.set_intense(info.sgr & 1 != 0);
+            attributes.set_underline_style(if info.sgr & 2 != 0 {
+                UnderlineStyle::SinglyUnderlined
+            } else {
+                UnderlineStyle::NoUnderline
+            });
+            attributes.set_blinking(info.sgr & 4 != 0);
+            attributes.set_reverse_video(info.sgr & 8 != 0);
+            attributes.set_invisible(info.sgr & 16 != 0);
+            attributes.set_protected(info.attributes & 1 != 0);
+            page.set_attributes(attributes);
+        }
+
+        // The origin mode must be in place before the position is interpreted.
+        self.set_mode_flag(ModeFlags::DECOM, info.flags & 1 != 0);
+        self.cursor_position(info.row.max(1), info.column.max(1));
+
+        let single_shift = if info.flags & 4 != 0 {
+            3
+        } else if info.flags & 2 != 0 {
+            2
+        } else {
+            0
+        };
+        self.term_output
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .single_shift(single_shift);
+
+        if info.flags & 8 != 0 {
+            let buffer = self.page_manager.active_page().buffer();
+            buffer
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .cursor_mut()
+                .delay_eol_wrap();
+        }
+
+        self.locking_shift(info.gl as VTInt);
+        self.locking_shift_right(info.gr as VTInt);
+
+        for (gset, charset) in info.charsets.iter().enumerate() {
+            let Some(charset) = charset else {
+                continue;
+            };
+            if info.sizes & (1 << gset) != 0 {
+                self.designate_96_charset(gset as VTInt, *charset);
+            } else {
+                self.designate_94_charset(gset as VTInt, *charset);
+            }
+        }
+    }
+
+    fn apply_tab_stops(&mut self, width: VTInt, columns: Vec<VTInt>) {
+        let width = width.max(132);
+        self.tab_stops = vec![false; width as usize];
+        if let Some(stop) = self.tab_stops.first_mut() {
+            *stop = true;
+        }
+        for column in columns {
+            if column > 1 && column <= width {
+                self.tab_stops[column as usize - 1] = true;
+            }
+        }
+    }
+
+    fn report_cursor_information(&mut self) {
+        let (mut row, mut column) = self.active_cursor_position();
+        let (page_width, page_height) = self.page_size();
+        let (top_margin, _) = self.effective_vertical_margins(page_height);
+        let (left_margin, _) = self.effective_horizontal_margins(page_width);
+
+        if self.modes.contains(ModeFlags::DECOM) {
+            row -= top_margin;
+            column -= left_margin;
+        }
+        row += 1;
+        column += 1;
+
+        let (page_number, attributes, delayed_wrap) = {
+            let page = self.page_manager.active_page();
+            let number = page.number();
+            let attributes = page.attributes();
+            let buffer = page.buffer();
+            let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+            (number, attributes, buffer.cursor().delayed_eol_wrap().is_some())
+        };
+
+        let mut rendition = b'@';
+        rendition += u8::from(attributes.is_intense());
+        rendition += 2 * u8::from(attributes.get_underline_style() != UnderlineStyle::NoUnderline);
+        rendition += 4 * u8::from(attributes.is_blinking());
+        rendition += 8 * u8::from(attributes.is_reverse_video());
+        rendition += 16 * u8::from(attributes.is_invisible());
+
+        let character_attributes = if attributes.is_protected() { b'A' } else { b'@' };
+
+        let (flags, sizes, charsets, left_set, right_set) = {
+            let output = self.term_output.lock().unwrap_or_else(|e| e.into_inner());
+            let mut flags = b'@';
+            flags += u8::from(self.modes.contains(ModeFlags::DECOM));
+            flags += 2 * u8::from(output.is_single_shift_pending(2));
+            flags += 4 * u8::from(output.is_single_shift_pending(3));
+            flags += 8 * u8::from(delayed_wrap);
+
+            let mut sizes = b'@';
+            let mut charsets = [String::new(), String::new(), String::new(), String::new()];
+            for (gset, slot) in charsets.iter_mut().enumerate() {
+                if output.get_charset_size(gset) == 96 {
+                    sizes += 1u8 << gset;
+                }
+                *slot = output.get_charset_id(gset).to_string();
+            }
+            (
+                flags,
+                sizes,
+                charsets,
+                output.get_left_set_number(),
+                output.get_right_set_number(),
+            )
+        };
+
+        let body = format!(
+            "1$u{};{};{};{};{};{};{};{};{};{}{}{}{}",
+            row,
+            column,
+            page_number,
+            rendition as char,
+            character_attributes as char,
+            flags as char,
+            left_set,
+            right_set,
+            sizes as char,
+            charsets[0],
+            charsets[1],
+            charsets[2],
+            charsets[3]
+        );
+        self.push_dcs(&body);
+    }
+
+    fn report_tab_stops(&mut self) {
+        let (page_width, _) = self.page_size();
+        self.ensure_tab_stops(page_width);
+
+        let mut body = String::from("2$u");
+        let mut need_separator = false;
+        for column in 0..page_width.max(0) as usize {
+            if self.tab_stops.get(column).copied().unwrap_or(false) {
+                if need_separator {
+                    body.push('/');
+                }
+                body.push_str(&(column + 1).to_string());
+                need_separator = true;
+            }
+        }
+        self.push_dcs(&body);
     }
 
     /// The index of the saved-cursor slot for the buffer in use.
@@ -2546,6 +2874,63 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn request_presentation_state_report(&mut self, format: PresentationReportFormat) {
+        match format {
+            PresentationReportFormat::CursorInformationReport => self.report_cursor_information(),
+            PresentationReportFormat::TabulationStopReport => self.report_tab_stops(),
+        }
+    }
+
+    fn restore_presentation_state(
+        &mut self,
+        format: PresentationReportFormat,
+    ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        let pending = Arc::clone(&self.pending_presentation);
+
+        match format {
+            PresentationReportFormat::CursorInformationReport => {
+                let mut parser = CursorInformationParser::default();
+                Some(Box::new(move |ch| {
+                    if let Some(info) = parser.push(ch as u8) {
+                        *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingPresentation::Cursor(info));
+                        return false;
+                    }
+                    true
+                }))
+            }
+            PresentationReportFormat::TabulationStopReport => {
+                let (page_width, _) = self.page_size();
+                let width = page_width.max(132);
+                let mut column: u32 = 0;
+                let mut columns = Vec::new();
+                Some(Box::new(move |ch| match ch as u8 {
+                    b'0'..=b'9' => {
+                        column = (column * 10 + u32::from(ch as u8 - b'0')).min(65535);
+                        true
+                    }
+                    b'/' => {
+                        if column > 1 && column <= width as u32 {
+                            columns.push(column as VTInt);
+                        }
+                        column = 0;
+                        true
+                    }
+                    0x1B => {
+                        if column > 1 && column <= width as u32 {
+                            columns.push(column as VTInt);
+                        }
+                        *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingPresentation::TabStops {
+                            width,
+                            columns: std::mem::take(&mut columns),
+                        });
+                        false
+                    }
+                    _ => false,
+                }))
+            }
+        }
+    }
+
     fn restore_terminal_state(&mut self, format: ReportFormat) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
         match format {
             ReportFormat::ColorTableReport => Some(self.restore_color_table_handler()),
@@ -3115,6 +3500,10 @@ mod tests {
         dispatch.next_page(1);
         dispatch.preceding_page(1);
         dispatch.request_displayed_extent();
+        dispatch.request_presentation_state_report(PresentationReportFormat::CursorInformationReport);
+        dispatch.request_presentation_state_report(PresentationReportFormat::TabulationStopReport);
+        drop(dispatch.restore_presentation_state(PresentationReportFormat::CursorInformationReport));
+        drop(dispatch.restore_presentation_state(PresentationReportFormat::TabulationStopReport));
         dispatch.set_ansi_mode(true);
         dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
         dispatch.enquire_answerback();
@@ -3284,6 +3673,69 @@ mod tests {
         assert_eq!(cell_text(&mut dispatch, 0, 0), "E");
         assert_eq!(cell_text(&mut dispatch, 23, 79), "E");
         assert_eq!(dispatch.active_cursor_position(), (0, 0));
+    }
+
+    #[test]
+    fn decrqpsr_reports_the_cursor_information() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(4, 6);
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1]));
+        dispatch.request_presentation_state_report(PresentationReportFormat::CursorInformationReport);
+
+        assert_eq!(
+            dispatch.take_responses(),
+            vec!["\x1bP1$u4;6;1;A;@;@;0;2;@;BBBB\x1b\\".to_string()]
+        );
+    }
+
+    #[test]
+    fn decrqpsr_cursor_report_round_trips_through_decrsps() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(4, 6);
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1]));
+        dispatch.request_presentation_state_report(PresentationReportFormat::CursorInformationReport);
+        let response = dispatch.take_responses().remove(0);
+
+        // Move the cursor and attributes away, then restore the report.
+        dispatch.cursor_position(1, 1);
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![22]));
+
+        let body = response
+            .strip_prefix("\x1bP1$u")
+            .unwrap()
+            .strip_suffix("\x1b\\")
+            .unwrap();
+        let mut handler = dispatch
+            .restore_presentation_state(PresentationReportFormat::CursorInformationReport)
+            .unwrap();
+        for ch in body.chars() {
+            handler(ch);
+        }
+        handler('\x1b');
+        dispatch.apply_pending_presentation_state();
+
+        assert_eq!(dispatch.active_cursor_position(), (3, 5));
+        assert!(page_attributes(&mut dispatch).is_intense());
+    }
+
+    #[test]
+    fn decrsps_restores_tabulation_stops() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.tab_clear(TabClearType::ClearAllColumns);
+
+        let mut handler = dispatch
+            .restore_presentation_state(PresentationReportFormat::TabulationStopReport)
+            .unwrap();
+        for ch in "1/9/17".chars() {
+            handler(ch);
+        }
+        handler('\x1b');
+        dispatch.apply_pending_presentation_state();
+
+        dispatch.forward_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 8));
+        dispatch.forward_tab(1);
+        assert_eq!(dispatch.active_cursor_position(), (0, 16));
     }
 
     #[test]

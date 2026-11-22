@@ -17,6 +17,10 @@ pub struct TerminalOutput {
     gset_translation_tables: [&'static [u8]; 4],
     /// Gset IDs (G0-G3).
     gset_ids: [VTID; 4],
+    /// Whether each Gset is a 96-character set.
+    gset_sizes_96: [bool; 4],
+    /// Whether the user preference charset is a 96-character set.
+    upss_size_96: bool,
     /// GL set number (currently active).
     gl_set_number: usize,
     /// GR set number (currently active).
@@ -42,7 +46,9 @@ impl TerminalOutput {
             upss_id: VTID::new(),
             upss_translation_table: charsets::ASCII,
             gset_translation_tables: [charsets::ASCII, charsets::ASCII, charsets::ASCII, charsets::ASCII],
-            gset_ids: [VTID::new(); 4],
+            gset_ids: [VTID::from_byte(b'B'); 4],
+            gset_sizes_96: [false; 4],
+            upss_size_96: false,
             gl_set_number: 0,
             gr_set_number: 2,
             gl_translation_table: charsets::ASCII,
@@ -57,8 +63,10 @@ impl TerminalOutput {
     /// Performs a soft reset.
     pub fn soft_reset(&mut self) {
         self.upss_id = VTID::new();
+        self.upss_size_96 = false;
         self.upss_translation_table = charsets::ASCII;
-        self.gset_ids = [VTID::new(); 4];
+        self.gset_ids = [VTID::from_byte(b'B'); 4];
+        self.gset_sizes_96 = [false; 4];
         self.gset_translation_tables = [charsets::ASCII, charsets::ASCII, charsets::ASCII, charsets::ASCII];
         self.gl_set_number = 0;
         self.gr_set_number = 2;
@@ -76,6 +84,8 @@ impl TerminalOutput {
         self.upss_translation_table = saved.upss_translation_table;
         self.gset_translation_tables = saved.gset_translation_tables;
         self.gset_ids = saved.gset_ids;
+        self.gset_sizes_96 = saved.gset_sizes_96;
+        self.upss_size_96 = saved.upss_size_96;
         self.gl_set_number = saved.gl_set_number;
         self.gr_set_number = saved.gr_set_number;
         self.gl_translation_table = saved.gl_translation_table;
@@ -89,6 +99,7 @@ impl TerminalOutput {
     /// Assigns user preference charset.
     pub fn assign_user_preference_charset(&mut self, charset_id: VTID, size_96: bool) {
         self.upss_id = charset_id;
+        self.upss_size_96 = size_96;
         let table = if size_96 {
             self.lookup_translation_table_96(&charset_id)
         } else {
@@ -104,7 +115,7 @@ impl TerminalOutput {
 
     /// Returns the user preference charset size.
     pub fn get_user_preference_charset_size(&self) -> usize {
-        if self.upss_id.is_empty() { 94 } else { 96 }
+        if self.upss_size_96 { 96 } else { 94 }
     }
 
     /// Translates a key character.
@@ -136,6 +147,7 @@ impl TerminalOutput {
             return;
         }
         self.gset_ids[gset_number] = charset_id;
+        self.gset_sizes_96[gset_number] = false;
         self.gset_translation_tables[gset_number] = self.lookup_translation_table_94(&charset_id);
     }
 
@@ -145,6 +157,7 @@ impl TerminalOutput {
             return;
         }
         self.gset_ids[gset_number] = charset_id;
+        self.gset_sizes_96[gset_number] = true;
         self.gset_translation_tables[gset_number] = self.lookup_translation_table_96(&charset_id);
     }
 
@@ -175,8 +188,7 @@ impl TerminalOutput {
         if gset_number >= 4 {
             return 94;
         }
-        let id = self.gset_ids[gset_number];
-        if id.is_empty() { 94 } else { 96 }
+        if self.gset_sizes_96[gset_number] { 96 } else { 94 }
     }
 
     /// Performs a locking shift.

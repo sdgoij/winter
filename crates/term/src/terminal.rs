@@ -42,6 +42,7 @@ impl Terminal {
             if let Some(enabled) = self.dispatch_mut().take_c1_controls_change() {
                 self.state.set_parser_mode(ParserMode::AcceptC1, enabled);
             }
+            self.dispatch_mut().apply_pending_presentation_state();
         }
     }
 
@@ -233,6 +234,19 @@ mod tests {
         let buffer = buffer.read().unwrap();
         let cell = buffer.get_cell_data_at(0, 0).unwrap();
         assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+    }
+
+    #[test]
+    fn decrsps_applies_a_cursor_report_from_a_dcs_string() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b[4;6H\x1b[1m");
+        terminal.process_str("\x1bP1$t4;6;1;A;@;@;0;2;@;BBBB\x1b\\");
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert_eq!(buffer.cursor().position(), (3, 5));
+        drop(buffer);
+        assert!(terminal.page_manager_mut().active_page().attributes().is_intense());
     }
 
     #[test]
