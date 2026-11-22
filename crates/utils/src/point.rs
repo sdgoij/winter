@@ -280,6 +280,78 @@ pub fn new_point(x: CoordType, y: CoordType) -> Point {
     Point::new(x, y)
 }
 
+/// An inclusive span between two points, used for selections and search hits.
+///
+/// Ported from `til::point_span`. The coordinates are inclusive on both ends;
+/// [`PointSpan::iterate_rows_exclusive`] provides the right-exclusive form some
+/// callers want.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct PointSpan {
+    /// The first point in the span.
+    pub start: Point,
+    /// The last point in the span.
+    pub end: Point,
+}
+
+impl PointSpan {
+    /// Creates a span from `start` to `end`, inclusive.
+    pub const fn new(start: Point, end: Point) -> Self {
+        Self { start, end }
+    }
+
+    /// Calls `func(row, left, right)` for every row in the span, with inclusive
+    /// columns clamped to `0..width`.
+    pub fn iterate_rows(&self, width: CoordType, mut func: impl FnMut(CoordType, CoordType, CoordType)) {
+        if width <= 0 {
+            return;
+        }
+
+        let last_column = width - 1;
+        let left = self.start.x().clamp(0, last_column);
+        let top = self.start.y();
+        let right = self.end.x().clamp(0, last_column);
+        let bottom = self.end.y();
+
+        for row in top..=bottom {
+            let row_left = if row != top { 0 } else { left };
+            let row_right = if row != bottom { last_column } else { right };
+            func(row, row_left, row_right);
+        }
+    }
+
+    /// Calls `func(row, left, right)` for every row, with an exclusive right
+    /// bound that may equal `width`.
+    ///
+    /// A start at the right-exclusive edge moves to the next row's left edge; an
+    /// end at column zero moves to the previous row's right edge.
+    pub fn iterate_rows_exclusive(&self, width: CoordType, mut func: impl FnMut(CoordType, CoordType, CoordType)) {
+        if width <= 0 {
+            return;
+        }
+
+        let mut left = self.start.x().clamp(0, width);
+        let mut top = self.start.y();
+        let mut right = self.end.x().clamp(0, width);
+        let mut bottom = self.end.y();
+
+        if left == width {
+            top += 1;
+            left = 0;
+        }
+        if right == 0 {
+            bottom -= 1;
+            right = width;
+        }
+
+        for row in top..=bottom {
+            let row_left = if row != top { 0 } else { left };
+            let row_right = if row != bottom { width } else { right };
+            func(row, row_left, row_right);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,6 +476,41 @@ mod tests {
     fn test_display() {
         let p = Point::new(5, 10);
         assert_eq!(format!("{}", p), "(X:5, Y:10)");
+    }
+
+    #[test]
+    fn point_span_iterates_each_row() {
+        let span = PointSpan::new(Point::new(8, 0), Point::new(4, 2));
+        let mut rows = Vec::new();
+        span.iterate_rows(16, |row, left, right| rows.push((row, left, right)));
+
+        assert_eq!(rows, vec![(0, 8, 15), (1, 0, 15), (2, 0, 4)]);
+    }
+
+    #[test]
+    fn point_span_clamps_columns_to_the_width() {
+        let span = PointSpan::new(Point::new(-5, 0), Point::new(100, 0));
+        let mut rows = Vec::new();
+        span.iterate_rows(16, |row, left, right| rows.push((row, left, right)));
+
+        assert_eq!(rows, vec![(0, 0, 15)]);
+    }
+
+    #[test]
+    fn point_span_with_zero_width_emits_nothing() {
+        let span = PointSpan::new(Point::new(0, 0), Point::new(4, 2));
+        let mut count = 0;
+        span.iterate_rows(0, |_, _, _| count += 1);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn point_span_exclusive_moves_edge_points_to_neighbouring_rows() {
+        let span = PointSpan::new(Point::new(16, 0), Point::new(0, 2));
+        let mut rows = Vec::new();
+        span.iterate_rows_exclusive(16, |row, left, right| rows.push((row, left, right)));
+
+        assert_eq!(rows, vec![(1, 0, 16)]);
     }
 }
 

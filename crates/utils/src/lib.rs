@@ -71,7 +71,7 @@ pub use math::checked_add;
 pub use math::checked_div;
 pub use math::checked_mul;
 pub use math::checked_sub;
-pub use point::{CoordType, Point};
+pub use point::{CoordType, Point, PointSpan};
 pub use rect::Rect;
 pub use size::Size;
 pub use small_vec::SmallVec;
