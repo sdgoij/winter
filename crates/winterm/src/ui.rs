@@ -17,6 +17,7 @@ use term::input::{
     WheelAxis,
 };
 use types::CursorType;
+use types::TextAttribute;
 use types::UnderlineStyle;
 use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGROUND as SELECTION_SLOT};
 use types::text_color::{ColorType, TextColor};
@@ -434,8 +435,7 @@ impl Pane {
         for (index, row) in screen.rows.iter().enumerate() {
             let top = area.min.y + index as f32 * cell.y;
             for run in &row.runs {
-                let run_background = resolve(run.attribute.get_background(), &table, ColorAlias::DefaultBackground)
-                    .unwrap_or(pane_background);
+                let (_, run_background) = attribute_colors(&run.attribute, &table);
                 if run_background == pane_background {
                     continue;
                 }
@@ -487,13 +487,7 @@ impl Pane {
 
                 let left = area.min.x + run.column as f32 * cell.x;
                 let width = cell.x * run.cells as f32;
-                let background = resolve(attribute.get_background(), &table, ColorAlias::DefaultBackground)
-                    .unwrap_or(FALLBACK_BACKGROUND);
-                let mut foreground = resolve(attribute.get_foreground(), &table, ColorAlias::DefaultForeground)
-                    .unwrap_or(FALLBACK_FOREGROUND);
-                if attribute.is_faint() {
-                    foreground = fade(foreground, background);
-                }
+                let (foreground, _) = attribute_colors(&attribute, &table);
 
                 painter.text(
                     egui::pos2(left, top),
@@ -1151,14 +1145,36 @@ fn command_title(command: &PtyCommand) -> String {
         .to_string()
 }
 
-/// Blends a colour halfway towards the background, which is what faint text
-/// looks like without a separate font weight.
-fn fade(foreground: egui::Color32, background: egui::Color32) -> egui::Color32 {
-    let blend = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
-    egui::Color32::from_rgb(
-        blend(foreground.r(), background.r()),
-        blend(foreground.g(), background.g()),
-        blend(foreground.b(), background.b()),
+/// Resolves a cell's foreground and background the way the renderer does.
+fn attribute_colors(attribute: &TextAttribute, table: &ColorTable) -> (egui::Color32, egui::Color32) {
+    // Mirrors `RenderSettings::get_attribute_colors` (`render_settings.rs`):
+    // intense legacy colours take their bright entry (`intenseIsBright`), faint
+    // halves each component, reverse video swaps the pair, and invisible text
+    // takes the background. The shell paints with egui, so the rule runs
+    // against the adapter's live table instead of the renderer's copy.
+    let default_fg = table.alias_index(ColorAlias::DefaultForeground);
+    let default_bg = table.alias_index(ColorAlias::DefaultBackground);
+
+    let mut foreground = TextColor::from_colorref(attribute.get_foreground().get_color(
+        table,
+        default_fg,
+        attribute.is_intense(),
+    ));
+    let mut background = TextColor::from_colorref(attribute.get_background().get_color(table, default_bg, false));
+
+    if attribute.is_faint() {
+        foreground = TextColor::from_colorref((foreground.get_colorref() >> 1) & 0x007F_7F7F);
+    }
+    if attribute.is_reverse_video() {
+        std::mem::swap(&mut foreground, &mut background);
+    }
+    if attribute.is_invisible() {
+        foreground = background;
+    }
+
+    (
+        egui_color(foreground).unwrap_or(FALLBACK_FOREGROUND),
+        egui_color(background).unwrap_or(FALLBACK_BACKGROUND),
     )
 }
 
@@ -1521,14 +1537,44 @@ mod tests {
     }
 
     #[test]
-    fn faint_text_blends_halfway_to_the_background() {
+    fn reverse_video_swaps_the_attribute_colours() {
+        let table = ColorTable::new();
+        let mut attribute = TextAttribute::new();
+        attribute.set_foreground(TextColor::rgb(1, 2, 3));
+        attribute.set_background(TextColor::rgb(4, 5, 6));
+        attribute.set_reverse_video(true);
+
         assert_eq!(
-            fade(egui::Color32::BLACK, egui::Color32::WHITE),
-            egui::Color32::from_rgb(127, 127, 127)
+            attribute_colors(&attribute, &table),
+            (egui::Color32::from_rgb(4, 5, 6), egui::Color32::from_rgb(1, 2, 3))
         );
+    }
+
+    #[test]
+    fn intense_brightens_a_legacy_colour() {
+        let table = ColorTable::new();
+        let mut attribute = TextAttribute::new();
+        attribute.set_indexed_foreground(1);
+        let normal = attribute_colors(&attribute, &table).0;
+        attribute.set_intense(true);
+
+        assert_eq!(normal, egui::Color32::from_rgb(0xC5, 0x0F, 0x1F));
         assert_eq!(
-            fade(egui::Color32::from_rgb(10, 20, 30), egui::Color32::from_rgb(10, 20, 30)),
-            egui::Color32::from_rgb(10, 20, 30)
+            attribute_colors(&attribute, &table).0,
+            egui::Color32::from_rgb(0xE7, 0x48, 0x56)
+        );
+    }
+
+    #[test]
+    fn faint_halves_the_foreground() {
+        let table = ColorTable::new();
+        let mut attribute = TextAttribute::new();
+        attribute.set_foreground(TextColor::rgb(200, 100, 50));
+        attribute.set_faint(true);
+
+        assert_eq!(
+            attribute_colors(&attribute, &table).0,
+            egui::Color32::from_rgb(100, 50, 25)
         );
     }
 
