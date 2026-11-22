@@ -55,3 +55,4 @@ Rules:
 | [024](024-colour-schemes.md) | Colour schemes are settings; `settings` may depend on `types` for the colour vocabulary | Accepted |
 | [025](025-settings-are-reloaded-by-polling.md) | A saved settings file is reloaded by polling its stamp; a bad save keeps the session | Accepted |
 | [026](026-settings-are-toml.md) | Settings are TOML with a schema `version`; a newer version is refused | Accepted |
+| [027](027-normalization-warns.md) | Normalization returns typed warnings; the window lists what it adjusted | Accepted |

@@ -14,14 +14,18 @@ mod keybindings;
 mod palette;
 mod parser;
 mod profiles;
+mod validation;
 mod watch;
 
 pub use actions::Action;
 pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
-pub use parser::{LoadError, Loaded, SettingsError, load, load_with_report, parse, settings_path, to_toml};
+pub use parser::{
+    LoadError, Loaded, SettingsError, load, load_with_report, parse, parse_with_warnings, settings_path, to_toml,
+};
 pub use profiles::{Profile, default_shell};
+pub use validation::Warning;
 pub use watch::{Stamp, stamp};
 
 use serde::{Deserialize, Serialize};
@@ -34,7 +38,7 @@ pub const CURRENT_VERSION: u32 = 1;
 
 /// The settings file's root.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default = "empty")]
 pub struct Settings {
     /// The schema version the document is written for.
     pub version: u32,
@@ -50,6 +54,23 @@ pub struct Settings {
     pub schemes: Vec<Scheme>,
     /// The grid's type.
     pub font: Font,
+}
+
+/// What an absent field holds before normalization.
+///
+/// This is deliberately *not* `Settings::default()`: a missing key must be
+/// distinguishable from a key the file wrote, or normalization would report a
+/// guess the file never asked for.
+fn empty() -> Settings {
+    Settings {
+        version: CURRENT_VERSION,
+        default_profile: None,
+        default_scheme: None,
+        profiles: Vec::new(),
+        keybindings: Vec::new(),
+        schemes: Vec::new(),
+        font: Font::default(),
+    }
 }
 
 impl Default for Settings {
@@ -96,19 +117,41 @@ impl Settings {
     /// chords are applied over the defaults, a scheme with no name is dropped
     /// because nothing can select it, and a font size outside the usable range
     /// is clamped.
-    pub(crate) fn normalize(mut self) -> Self {
+    ///
+    /// Returns what it changed so the window can show it; a warning never stops
+    /// a file from loading.
+    pub(crate) fn normalize(mut self) -> (Self, Vec<Warning>) {
+        let mut warnings = Vec::new();
+
         self.version = self.version.max(CURRENT_VERSION);
 
         if self.profiles.is_empty() {
             self.profiles.push(Profile::default());
         }
 
-        for profile in &mut self.profiles {
+        for (index, profile) in self.profiles.iter_mut().enumerate() {
             if profile.name.trim().is_empty() {
+                warnings.push(Warning::NamelessProfile { index });
                 profile.name = "default".to_string();
             }
             if profile.command.trim().is_empty() {
-                profile.command = profiles::default_shell();
+                let shell = profiles::default_shell();
+                warnings.push(Warning::MissingCommand {
+                    profile: profile.name.clone(),
+                    shell: shell.clone(),
+                });
+                profile.command = shell;
+            }
+        }
+
+        for (index, profile) in self.profiles.iter().enumerate() {
+            if self.profiles[..index]
+                .iter()
+                .any(|earlier| earlier.name == profile.name)
+            {
+                warnings.push(Warning::DuplicateProfileName {
+                    name: profile.name.clone(),
+                });
             }
         }
 
@@ -117,14 +160,53 @@ impl Settings {
             .as_deref()
             .is_some_and(|name| self.profiles.iter().any(|profile| profile.name == name));
         if !known {
-            self.default_profile = Some(self.profiles[0].name.clone());
+            let used = self.profiles[0].name.clone();
+            if let Some(name) = self.default_profile.take() {
+                warnings.push(Warning::UnknownDefaultProfile {
+                    name,
+                    used: used.clone(),
+                });
+            }
+            self.default_profile = Some(used);
         }
 
-        self.keybindings = keybindings::resolve(&self.keybindings);
-        self.schemes.retain(|scheme| !scheme.name.trim().is_empty());
-        self.font = self.font.normalize();
+        let (keybindings, chord_warnings) = keybindings::resolve_with_warnings(&self.keybindings);
+        self.keybindings = keybindings;
+        warnings.extend(chord_warnings);
 
-        self
+        let mut schemes = Vec::with_capacity(self.schemes.len());
+        for (index, scheme) in std::mem::take(&mut self.schemes).into_iter().enumerate() {
+            if scheme.name.trim().is_empty() {
+                warnings.push(Warning::NamelessScheme { index });
+            } else {
+                schemes.push(scheme);
+            }
+        }
+        for (index, scheme) in schemes.iter().enumerate() {
+            if schemes[..index].iter().any(|earlier| earlier.name == scheme.name) {
+                warnings.push(Warning::DuplicateSchemeName {
+                    name: scheme.name.clone(),
+                });
+            }
+        }
+        self.schemes = schemes;
+
+        if let Some(name) = &self.default_scheme
+            && !self.schemes.iter().any(|scheme| scheme.name == *name)
+        {
+            warnings.push(Warning::UnknownDefaultScheme { name: name.clone() });
+        }
+
+        let written = self.font.size;
+        self.font = self.font.normalize();
+        if self.font.size != written {
+            warnings.push(Warning::ClampedFontSize {
+                written,
+                used: self.font.size,
+            });
+        }
+
+        (self, warnings)
     }
 }
 
@@ -259,6 +341,89 @@ mod tests {
         assert!(text.starts_with("version = 1"), "{text}");
 
         assert_eq!(parse(&text).expect("parse"), settings);
+    }
+
+    #[test]
+    fn a_clean_document_has_no_warnings() {
+        let (_, warnings) = parse_with_warnings("[[profiles]]\nname = \"a\"\ncommand = \"sh\"\n").expect("parse");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn what_normalization_changed_is_reported() {
+        let toml = r##"
+            default_profile = "missing"
+            default_scheme = "missing"
+
+            [[profiles]]
+            command = "sh"
+
+            [[profiles]]
+            name = "one"
+            command = "   "
+
+            [[profiles]]
+            name = "one"
+            command = "sh"
+
+            [[keybindings]]
+            keys = "ctrl+alt+t"
+            action = "newTab"
+
+            [[keybindings]]
+            keys = "ctrl+alt+t"
+            action = "copy"
+
+            [[keybindings]]
+            keys = "ctrl+alt+q"
+            action = "unbound"
+
+            [[schemes]]
+            background = "#010203"
+
+            [[schemes]]
+            name = "s"
+
+            [[schemes]]
+            name = "s"
+
+            [font]
+            size = 500
+        "##;
+        let (settings, warnings) = parse_with_warnings(toml).expect("parse");
+
+        assert!(warnings.contains(&Warning::NamelessProfile { index: 0 }));
+        assert!(warnings.contains(&Warning::MissingCommand {
+            profile: "one".to_string(),
+            shell: default_shell(),
+        }));
+        assert!(warnings.contains(&Warning::DuplicateProfileName {
+            name: "one".to_string(),
+        }));
+        assert!(warnings.contains(&Warning::UnknownDefaultProfile {
+            name: "missing".to_string(),
+            used: "default".to_string(),
+        }));
+        assert!(warnings.contains(&Warning::DuplicateChord {
+            chord: Chord::parse("ctrl+alt+t").expect("chord"),
+        }));
+        assert!(warnings.contains(&Warning::UnboundMissingChord {
+            chord: Chord::parse("ctrl+alt+q").expect("chord"),
+        }));
+        assert!(warnings.contains(&Warning::NamelessScheme { index: 0 }));
+        assert!(warnings.contains(&Warning::DuplicateSchemeName { name: "s".to_string() }));
+        assert!(warnings.contains(&Warning::UnknownDefaultScheme {
+            name: "missing".to_string(),
+        }));
+        assert!(warnings.contains(&Warning::ClampedFontSize {
+            written: 500.0,
+            used: crate::fonts::MAX_SIZE,
+        }));
+
+        // The file still works.
+        assert_eq!(settings.profile().map(|profile| profile.name.as_str()), Some("default"));
+        assert_eq!(settings.font.size, crate::fonts::MAX_SIZE);
+        assert_eq!(settings.keybindings.len(), DEFAULT_KEYBINDINGS.len() + 1);
     }
 
     #[test]

@@ -875,6 +875,8 @@ struct App {
     settings_path: Option<PathBuf>,
     /// Why the file was not used, if it was not.
     settings_error: Option<String>,
+    /// What normalization had to decide for the file, in the window's words.
+    settings_warnings: Vec<String>,
     /// Whether the settings window is showing.
     settings_open: bool,
     /// The settings file's stamp when it was last read, so a save is noticed.
@@ -910,6 +912,7 @@ impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let loaded = settings::load_with_report();
         let settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
+        let settings_warnings = loaded.warnings.iter().map(ToString::to_string).collect();
         let settings = loaded.settings;
         let scheme = settings.scheme().cloned();
         let font_size = settings.font.size;
@@ -923,6 +926,7 @@ impl App {
             font_size,
             settings_path: loaded.path,
             settings_error: loaded.error.map(|error| error.to_string()),
+            settings_warnings,
             settings_open: false,
             settings_stamp,
             sides: ModifierSides::default(),
@@ -1024,6 +1028,14 @@ impl App {
 
                 ui.separator();
                 ui.label("Changes are picked up when the file is saved.");
+
+                if !self.settings_warnings.is_empty() {
+                    ui.separator();
+                    ui.strong("Adjusted on load");
+                    for warning in &self.settings_warnings {
+                        ui.label(warning);
+                    }
+                }
             });
         self.settings_open = open;
     }
@@ -1077,6 +1089,7 @@ impl App {
         self.settings = loaded.settings;
         self.settings_path = loaded.path;
         self.settings_error = None;
+        self.settings_warnings = loaded.warnings.iter().map(ToString::to_string).collect();
         self.font_size = self.settings.font.size;
         self.scheme = self.settings.scheme().cloned();
 

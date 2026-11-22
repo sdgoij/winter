@@ -13,6 +13,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::actions::Action;
+use crate::validation::Warning;
 
 /// The modifiers a chord carries.
 ///
@@ -259,16 +260,34 @@ const fn chord(key: Key, ctrl: bool, shift: bool, alt: bool) -> Chord {
 /// earlier one is removed first. `unbound` removes a chord and is not itself
 /// kept.
 pub fn resolve(user: &[Keybinding]) -> Vec<Keybinding> {
-    let mut resolved = DEFAULT_KEYBINDINGS.to_vec();
+    resolve_with_warnings(user).0
+}
 
-    for binding in user {
+/// Applies the user's bindings and reports what was odd about them.
+///
+/// A duplicate chord and an `unbound` that names nothing bound are not errors:
+/// the merge has a defined answer for both, and a file that is merely confused
+/// still starts the shell (ADR 022). The warnings are what the window shows.
+pub fn resolve_with_warnings(user: &[Keybinding]) -> (Vec<Keybinding>, Vec<Warning>) {
+    let mut resolved = DEFAULT_KEYBINDINGS.to_vec();
+    let mut warnings = Vec::new();
+
+    for (index, binding) in user.iter().enumerate() {
+        if user[..index].iter().any(|earlier| earlier.keys == binding.keys) {
+            warnings.push(Warning::DuplicateChord { chord: binding.keys });
+        }
+
+        let was_bound = resolved.iter().any(|existing| existing.keys == binding.keys);
         resolved.retain(|existing| existing.keys != binding.keys);
+
         if binding.action != Action::Unbound {
             resolved.push(binding.clone());
+        } else if !was_bound {
+            warnings.push(Warning::UnboundMissingChord { chord: binding.keys });
         }
     }
 
-    resolved
+    (resolved, warnings)
 }
 
 fn parse_key(part: &str) -> Option<Key> {
@@ -426,6 +445,47 @@ mod tests {
 
         let written = toml::to_string(&binding).expect("toml");
         assert_eq!(toml::from_str::<Keybinding>(&written).expect("binding"), binding);
+    }
+
+    #[test]
+    fn merging_reports_duplicate_and_missing_chords() {
+        let repeated = Chord::parse("ctrl+alt+t").expect("chord");
+        let never_bound = Chord::parse("ctrl+alt+q").expect("chord");
+        let user = [
+            Keybinding {
+                keys: repeated,
+                action: Action::NewTab,
+            },
+            Keybinding {
+                keys: repeated,
+                action: Action::Copy,
+            },
+            Keybinding {
+                keys: never_bound,
+                action: Action::Unbound,
+            },
+        ];
+
+        let (resolved, warnings) = resolve_with_warnings(&user);
+
+        assert!(warnings.contains(&Warning::DuplicateChord { chord: repeated }));
+        assert!(warnings.contains(&Warning::UnboundMissingChord { chord: never_bound }));
+        // The duplicate collapses into one binding, and the unbound one adds
+        // nothing.
+        assert_eq!(resolved.len(), DEFAULT_KEYBINDINGS.len() + 1);
+        assert_eq!(
+            resolved.last().expect("binding").action,
+            Action::Copy,
+            "the last duplicate wins"
+        );
+
+        // Unbinding a chord that is bound is not a warning.
+        let (unbound, quiet) = resolve_with_warnings(&[Keybinding {
+            keys: Chord::parse("ctrl+shift+c").expect("chord"),
+            action: Action::Unbound,
+        }]);
+        assert!(quiet.is_empty(), "{quiet:?}");
+        assert_eq!(unbound.len(), DEFAULT_KEYBINDINGS.len() - 1);
     }
 
     #[test]

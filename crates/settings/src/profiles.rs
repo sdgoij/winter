@@ -8,14 +8,20 @@
 use serde::{Deserialize, Serialize};
 
 /// A command a tab can start.
+///
+/// Every field defaults to absent rather than to a runnable value: a profile
+/// that omits its command is something normalization has to fill in, and the
+/// window should say so (ADR 027). `Profile::default()` is the runnable one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Profile {
     /// The name the default profile refers to.
+    #[serde(default)]
     pub name: String,
     /// The program to run.
+    #[serde(default)]
     pub command: String,
     /// Its arguments.
+    #[serde(default)]
     pub args: Vec<String>,
     /// The title to show instead of the program's name.
     pub title: Option<String>,

@@ -8,14 +8,22 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::validation::Warning;
 use crate::{CURRENT_VERSION, Settings};
 
 /// Parses a settings document, filling in what it leaves out.
 ///
+pub fn parse(text: &str) -> Result<Settings, SettingsError> {
+    parse_with_warnings(text).map(|(settings, _)| settings)
+}
+
+/// Parses a settings document and returns what normalization changed.
+///
 /// A document written for a newer schema is refused before it is normalized:
 /// the fields whose meaning changed are exactly the ones this build would
-/// misread (ADR 026).
-pub fn parse(text: &str) -> Result<Settings, SettingsError> {
+/// misread (ADR 026). The warnings are not errors: the file is used, and the
+/// window says what had to be decided for it (ADR 027).
+pub fn parse_with_warnings(text: &str) -> Result<(Settings, Vec<Warning>), SettingsError> {
     let settings: Settings = toml::from_str(text)?;
     if settings.version > CURRENT_VERSION {
         return Err(SettingsError::NewerVersion {
@@ -99,6 +107,8 @@ pub struct Loaded {
     pub path: Option<PathBuf>,
     /// Why the file was not used. A missing file is not an error.
     pub error: Option<LoadError>,
+    /// What normalization had to decide for a file that was used.
+    pub warnings: Vec<Warning>,
 }
 
 /// Why a settings file was not used.
@@ -141,6 +151,7 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
             settings: Settings::default(),
             path: None,
             error: None,
+            warnings: Vec::new(),
         };
     };
 
@@ -151,6 +162,7 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
                 settings: Settings::default(),
                 path: Some(path),
                 error: None,
+                warnings: Vec::new(),
             };
         }
         Err(error) => {
@@ -161,15 +173,17 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
                     path,
                     detail: error.to_string(),
                 }),
+                warnings: Vec::new(),
             };
         }
     };
 
-    match parse(&text) {
-        Ok(settings) => Loaded {
+    match parse_with_warnings(&text) {
+        Ok((settings, warnings)) => Loaded {
             settings,
             path: Some(path),
             error: None,
+            warnings,
         },
         Err(error) => Loaded {
             settings: Settings::default(),
@@ -178,6 +192,7 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
                 path,
                 detail: error.to_string(),
             }),
+            warnings: Vec::new(),
         },
     }
 }

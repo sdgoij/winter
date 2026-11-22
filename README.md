@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1440 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1444 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -99,7 +99,9 @@ float; a size outside that range is clamped. The face is not configurable yet:
 the shell uses one embedded monospace family.
 
 The settings window (Ctrl+, or the gear beside the tabs) shows the file that was
-read, whether it parsed, and what is in force. A saved file is picked up within
+read, whether it parsed, and what is in force, and lists what normalization had
+to adjust — an unknown `default_profile`, a blank command, a clamped size
+(ADR 027). A saved file is picked up within
 a second: chords, font size and colours apply at once, and a changed profile
 applies to the next tab. A save that does not parse leaves the running session
 alone and is reported in the window (ADR 025).

@@ -231,9 +231,10 @@ intense brightening and faint text, tabs (ADR 021),
 splittable panes (Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to
 resize, or drag a divider), a shell chosen by the profile, the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
-(ADRs 022–024), a settings window (Ctrl+,) that reports the file it loaded, and
-a poll that reloads the file when it is saved (ADR 025). Editing settings in the
-window and the native backends follow.
+(ADRs 022–024), a settings window (Ctrl+,) that reports the file it loaded and
+what normalization adjusted (ADR 027), and a poll that reloads the file when it
+is saved (ADR 025). Editing settings in the window and the native backends
+follow.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and
