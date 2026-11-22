@@ -16,10 +16,10 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
-| `host` | ~3.4k | 100 | Phase 6 under way: `CommandHistory` from `history.cpp`, `InputBuffer` from `inputBuffer.cpp`, `CookedReadData` from `readDataCooked.cpp`, and `InputStateMachineEngine` from `InputStateMachineEngine.cpp` (the VT input grammar, now the producer for `IInteractDispatch::write_input`) |
+| `host` | ~3.8k | 110 | Phase 6 under way: `CommandHistory` from `history.cpp`, `InputBuffer` from `inputBuffer.cpp`, `CookedReadData` from `readDataCooked.cpp`, `InputStateMachineEngine` from `InputStateMachineEngine.cpp`, and the portable `ConsoleInformation` state from `consoleInformation.cpp` |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1152 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
+1162 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
 7–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
@@ -824,17 +824,24 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 **Estimated effort:** 3.5 weeks (0.5 wks for tests)
 
-Order: `history`, `input_buffer`, `read_data_cooked` and
-`input_state_machine_engine` are done. `console_information` and `screen_info`
-are next, so the buffer and the input records have a console to belong to. Each
+Order: `history`, `input_buffer`, `read_data_cooked`,
+`input_state_machine_engine` and `console_information` are done. `screen_info`
+is next, so the buffer and the input records have a console to belong to. Each
 module lands with its tests and its declaration in `lib.rs`, as the porting
 skill requires.
 
 ### Core Console State
 
-- [ ] `winterm/crates/host/src/console_information.rs` — `ConsoleInformation`
-  - [ ] **Tests:** allocate/free console, set title, lock/unlock, VT mode toggle, cooked read, clipboard, bracketed paste
-  - [ ] **Property tests:** locking prevents concurrent access; releasing cooked read restores input buffer
+- [x] `winterm/crates/host/src/console_information.rs` — `ConsoleInformation`
+  - [x] Ported from `consoleInformation.cpp` and the class in `server.h`: the
+    recursive console lock, the input buffer, the per-application histories,
+    the flags, the titles and their prefix, bracketed paste, the pending
+    clipboard text, and the pending-cooked-read marker.
+  - [x] **Tests:** title composition, original and link titles, bracketed paste,
+    clipboard consumption, the popup marker, recursive locking, the input
+    buffer, keyed histories, and the flag bits
+  - Not ported: the screen buffers, VT I/O, MIDI, code pages, `AllocateConsole`
+    and `AsCharInfo`; they need `screenInfo.cpp`, the server layer and the UI
 - [ ] `winterm/crates/host/src/settings.rs` — `Settings`
 - [ ] `winterm/crates/host/src/screen_info.rs` — `ScreenBuffer`
   - [ ] **Tests:** creation/destruction, resize (traditional + reflow), buffer switching, viewport management, scroll bar state, cursor visibility, font updates

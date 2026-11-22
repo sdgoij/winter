@@ -8,6 +8,7 @@ publish.workspace = true
 description = "Console host — the input side the terminal feeds"
 
 [dependencies]
+bitflags.workspace = true
 types.workspace = true
 utils.workspace = true
 vt.workspace = true

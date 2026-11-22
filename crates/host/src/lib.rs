@@ -16,7 +16,9 @@
 //!   behind a cooked read
 //! - [`input_state_machine_engine`] — `InputStateMachineEngine`, the grammar
 //!   that turns an application's VT input into console records
+//! - [`console_information`] — `ConsoleInformation`, the console's shared state
 
+pub mod console_information;
 pub mod history;
 pub mod input_buffer;
 pub mod input_state_machine_engine;

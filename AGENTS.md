@@ -202,12 +202,12 @@ Do not add call sites under an allowance.
 ## Where the port stands
 
 Phases 1–5 are complete. Phase 6 (the console host) is under way:
-`history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model and
-`InputStateMachineEngine.cpp` are ported, so `IInteractDispatch::write_input` has
-its producer. `consoleInformation.cpp` and `screenInfo.cpp` are next, so the
-buffer and the records have a console to belong to. The read-data family's
-`IWaitRoutine` completion path, the cooked read's pager, and doskey aliases wait
-for the server and screen layers. Phases 7–14 are not started.
+`history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model,
+`InputStateMachineEngine.cpp` and the portable half of `consoleInformation.cpp`
+are ported, so `IInteractDispatch::write_input` has its producer and the records
+have a console. `screenInfo.cpp` is next. The read-data family's `IWaitRoutine`
+completion path, the cooked read's pager, and doskey aliases wait for the server
+and screen layers. Phases 7–14 are not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and
