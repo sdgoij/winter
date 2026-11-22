@@ -1,18 +1,20 @@
 //! User settings: the file, the default profile and the rules that make a
 //! partial file usable.
 //!
-//! The schema is the port's own (ADRs 022, 023, 024). Windows Terminal's
+//! The schema is the port's own (ADRs 022–024). Windows Terminal's
 //! `settings.json` is a large cascadia schema; this one holds what the
-//! application consumes — named profiles, keybindings and colour schemes — and
-//! grows one consumer at a time.
+//! application consumes — named profiles, keybindings, colour schemes and the
+//! font size — and grows one consumer at a time.
 
 mod actions;
+mod fonts;
 mod keybindings;
 mod palette;
 mod parser;
 mod profiles;
 
 pub use actions::Action;
+pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
 pub use parser::{load, parse, settings_path, to_json};
@@ -21,7 +23,7 @@ pub use profiles::{Profile, default_shell};
 use serde::{Deserialize, Serialize};
 
 /// The settings file's root.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// The named profiles this installation knows.
@@ -34,6 +36,8 @@ pub struct Settings {
     pub schemes: Vec<Scheme>,
     /// The scheme the window paints with, by name.
     pub default_scheme: Option<String>,
+    /// The grid's type.
+    pub font: Font,
 }
 
 impl Default for Settings {
@@ -45,6 +49,7 @@ impl Default for Settings {
             keybindings: DEFAULT_KEYBINDINGS.to_vec(),
             schemes: Vec::new(),
             default_scheme: None,
+            font: Font::default(),
         }
     }
 }
@@ -75,8 +80,8 @@ impl Settings {
     /// Called on every parse: an empty list gets the default profile, a blank
     /// command gets the platform shell, a default that names nothing falls
     /// back to the first profile, the user's chords are applied over the
-    /// defaults, and a scheme with no name is dropped because nothing can
-    /// select it.
+    /// defaults, a scheme with no name is dropped because nothing can select
+    /// it, and a font size outside the usable range is clamped.
     pub(crate) fn normalize(mut self) -> Self {
         if self.profiles.is_empty() {
             self.profiles.push(Profile::default());
@@ -101,6 +106,7 @@ impl Settings {
 
         self.keybindings = keybindings::resolve(&self.keybindings);
         self.schemes.retain(|scheme| !scheme.name.trim().is_empty());
+        self.font = self.font.normalize();
 
         self
     }
@@ -297,5 +303,19 @@ mod tests {
     #[test]
     fn a_broken_colour_rejects_the_file() {
         assert!(parse(r##"{"schemes": [{"name": "x", "red": "#12345"}]}"##).is_err());
+    }
+
+    #[test]
+    fn the_font_size_is_read_and_clamped() {
+        assert_eq!(Settings::default().font.size, 16.0);
+        assert_eq!(parse("{}").expect("parse").font.size, 16.0);
+
+        let settings = parse(r#"{"font": {"size": 20}}"#).expect("parse");
+        assert_eq!(settings.font.size, 20.0);
+
+        let settings = parse(r#"{"font": {"size": 500}}"#).expect("parse");
+        assert_eq!(settings.font.size, crate::fonts::MAX_SIZE);
+
+        assert!(parse(r#"{"font": {"size": "large"}}"#).is_err());
     }
 }

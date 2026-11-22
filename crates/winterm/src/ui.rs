@@ -24,9 +24,6 @@ use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
 use crate::{blink::Blink, grid, session::Session, tabs::Tabs, view::View};
-
-/// The font size the grid is measured and painted at.
-const FONT_SIZE: f32 = 16.0;
 /// The colour used when the palette has no default background.
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 /// The colour used when the palette has no default foreground.
@@ -445,7 +442,7 @@ impl Pane {
         }
     }
 
-    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool, font_size: f32) {
         let screen = self.snapshot();
         let painter = ui.painter().with_clip_rect(area);
 
@@ -460,7 +457,7 @@ impl Pane {
         let pane_background =
             resolve(TextColor::new(), &table, ColorAlias::DefaultBackground).unwrap_or(FALLBACK_BACKGROUND);
         painter.rect_filled(area, 0, pane_background);
-        let font = egui::FontId::monospace(FONT_SIZE);
+        let font = egui::FontId::monospace(font_size);
 
         // Backgrounds first, so the selection can cover them and the text can
         // be drawn over both.
@@ -767,14 +764,14 @@ impl Tab {
         self.focused_pane_mut().map(Pane::snapshot).unwrap_or_default()
     }
 
-    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool, font_size: f32) {
         let focused = self.focused;
         let multiple = self.panes.len() > 1;
 
         for (id, fraction) in self.layout.rects() {
             let rect = fraction_rect(fraction, area);
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
-                pane.paint(ui, rect, cell, cursor_on && id == focused);
+                pane.paint(ui, rect, cell, cursor_on && id == focused, font_size);
             }
 
             // With more than one pane the borders double as the focus cue.
@@ -853,6 +850,8 @@ struct App {
     settings: Settings,
     /// The scheme every pane starts with, if the file names one.
     scheme: Option<settings::Scheme>,
+    /// The grid's point size, from the settings file.
+    font_size: f32,
     /// The sides egui collapses but the encoder distinguishes.
     sides: ModifierSides,
     clipboard: Option<arboard::Clipboard>,
@@ -883,6 +882,7 @@ impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let settings = settings::load();
         let scheme = settings.scheme().cloned();
+        let font_size = settings.font.size;
         let (command, title) = profile_command(settings.profile());
         let tab = Tab::new(ctx, command, title, scheme.as_ref())?;
 
@@ -890,6 +890,7 @@ impl App {
             tabs: Tabs::new(tab),
             settings,
             scheme,
+            font_size,
             sides: ModifierSides::default(),
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
@@ -1047,7 +1048,7 @@ impl eframe::App for App {
         }
 
         let focused = ctx.input(|input| input.focused);
-        let font = egui::FontId::monospace(FONT_SIZE);
+        let font = egui::FontId::monospace(self.font_size);
         let cell = ctx.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
 
         let area = ui.available_rect_before_wrap();
@@ -1070,7 +1071,7 @@ impl eframe::App for App {
         if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
             ctx.request_repaint_after(delay);
         }
-        tab.paint(ui, area, cell, self.cursor_on);
+        tab.paint(ui, area, cell, self.cursor_on, self.font_size);
     }
 }
 
