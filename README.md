@@ -166,8 +166,16 @@ development binaries; `just dist` assembles a runnable release folder with that
 host beside `winterm.exe`, so an installed copy needs neither Windows Terminal
 nor a cached host (ADR 055).
 
+`just package` builds the release binary and wraps that folder in one archive
+named after the version and the target:
+`dist/winterm-<version>-<target>.zip` on Windows, `.tar.gz` elsewhere. Pushing a
+tag named `v<version>` publishes those archives as a GitHub release: the gate
+runs on all three platforms first, then each platform packages the binary it
+tested (`.github/workflows/release.yml`).
+
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
-Linux, Windows, and macOS. `cargo-deny` is required for `just deny`:
+Linux, Windows, and macOS, from the shared `gate.yml`. `cargo-deny` is required
+for `just deny`:
 
 ```sh
 cargo install cargo-deny --locked

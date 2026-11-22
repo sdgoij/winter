@@ -35,7 +35,10 @@ not Windows-specific belongs there, never in `winui`.
   Windows Terminal ships — or set `WINTERM_CONSOLE_HOST`. Without one the
   session runs on the inbox ConPTY and silently drops images (ADR 055).
   `just dist` assembles the release folder with the host, its `NOTICE.html` and
-  the Windows Terminal MIT licence beside `winterm.exe`.
+  the Windows Terminal MIT licence beside `winterm.exe`. `just package` builds
+  the same folder for any platform and wraps it in
+  `dist/winterm-<version>-<target>.zip` (Windows) or `.tar.gz`; that is what a
+  `v*` tag publishes.
 - The app's `%TEMP%` is not bash's. MSYS `$TEMP` is `/tmp`; the app and
   PowerShell use `%LOCALAPPDATA%\Temp`. A probe file written by the app is not
   in `$TEMP`.

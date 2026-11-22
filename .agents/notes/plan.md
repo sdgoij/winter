@@ -46,8 +46,8 @@ first start is written, the migration from the earlier JSON file and the table
 that names a scheme's colours; Phase
 11 has the bell and DECPS as tones and a flashing
 pane, with a sound sink on Windows only (ADR 033). Phase 12 is an ongoing
-test sweep, Phase 13 is not started, and Phase 14 has one pipeline on three
-platforms but no packaging yet.
+test sweep, Phase 13 is not started, and Phase 14 runs the gate on three
+platforms and publishes a versioned archive per platform for a `v*` tag.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1708,7 +1708,7 @@ state at a glance, with the owning crate's measured test count.
 | **11. Audio** | ✅ DONE | 7 tests; bell and DECPS tones (ADR 033) |
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
-| **14. CI/CD** | ⏳ PARTIAL | One gate on Linux, Windows and macOS; packaging and the matrix remain |
+| **14. CI/CD** | ✅ DONE | The gate on Linux, Windows and an Intel macOS host (`macos-15-intel`, `gate.yml`); a `v*` tag publishes a versioned archive per platform (`release.yml`, `just package`) |
 
 ## Test coverage
 

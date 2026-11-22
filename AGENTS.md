@@ -15,9 +15,10 @@ points at them.
 pass while one in a crate you never opened fails. Run what CI runs, all of it,
 before claiming anything is green.
 
-The `Justfile` is the one place to look for commands. `.github/workflows/ci.yml`
-is the truth; if the two disagree, CI wins. A pre-commit hook is a floor, not a
-substitute.
+The `Justfile` is the one place to look for commands. `.github/workflows/`
+is the truth; `ci.yml` and `release.yml` both call `gate.yml`, so the gate CI
+runs is one file. If the Justfile and that file disagree, CI wins. A
+pre-commit hook is a floor, not a substitute.
 
 ## Change workflow
 

@@ -1,0 +1,113 @@
+name: Release
+
+# A tag with a `v` prefix publishes a release. Nothing is built until the gate
+# has passed on all three platforms, nothing is published until every platform
+# has packaged, and the tag must name the version in Cargo.toml -- so a release
+# is either complete and correctly named or it does not happen.
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  # Fails before three runners are spent: the archives are named after the
+  # version, and the release is the tag, so the two disagreeing would publish
+  # files a user cannot match to a release.
+  preflight:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag names the version in Cargo.toml
+        run: |
+          set -eu
+          version=$(awk '/^\[workspace.package\]/ { found = 1 } found && /^version *=/ { gsub(/[^0-9.]/, "", $3); print $3; exit }' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error::no version under [workspace.package] in Cargo.toml"
+            exit 1
+          fi
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not name Cargo.toml's version v$version"
+            exit 1
+          fi
+
+  gate:
+    uses: ./.github/workflows/gate.yml
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: [preflight, gate]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same three hosts the gate ran on, so an archive is made by the
+        # platform that tested it. `macos-15-intel` is the Intel image GitHub
+        # offers for public repositories; Apple Silicon runs the result under
+        # Rosetta.
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v7
+      # `rustup show` reads rust-toolchain.toml, so the archive is built with
+      # the pinned toolchain.
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+        with:
+          just-version: "1.59.0"
+      # Windows packaging copies OpenConsole.exe from the installed Windows
+      # Terminal (scripts/console-host.ps1, ADR 055), which the runner image
+      # carries; without it the archive would lose image support silently.
+      - name: Build and package
+        run: just package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winterm-${{ matrix.os }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          (cd assets && sha256sum winterm-* > SHA256SUMS)
+          prerelease=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # A re-run after a partial upload replaces the assets instead of
+            # failing on the release that already exists.
+            gh release upload "$GITHUB_REF_NAME" assets/* --clobber
+          else
+            # shellcheck disable=SC2086 # the flag is deliberately word-split
+            gh release create "$GITHUB_REF_NAME" assets/* \
+              --title "winterm ${GITHUB_REF_NAME#v}" \
+              --generate-notes $prerelease
+          fi

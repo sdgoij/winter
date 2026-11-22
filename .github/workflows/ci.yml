@@ -1,9 +1,8 @@
 name: CI
 
-# One pipeline. The gate is the same `just gate` a contributor runs locally, on
-# every platform the emulator claims to support: the parsing and buffer code is
-# platform-independent, but the host and pty layers are not, and a Windows-only
-# regression is the one a single-OS pipeline never catches.
+# The gate, on every platform, for every push and pull request. The jobs live in
+# `gate.yml`, which `release.yml` calls too, so the two cannot disagree about
+# what "passing" means.
 on:
   push:
     branches: ["main"]
@@ -14,33 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_TERM_COLOR: always
-
 permissions:
   contents: read
 
 jobs:
   gate:
-    name: Gate (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v7
-      # `rustup show` reads rust-toolchain.toml, so the pin in the repository is
-      # the toolchain CI uses; there is no second version to keep in sync.
-      - name: Install the pinned toolchain
-        run: rustup show
-      - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v2
-        with:
-          just-version: "1.59.0"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny@0.20.2
-      - name: Run the gate
-        run: just gate
+    uses: ./.github/workflows/gate.yml
