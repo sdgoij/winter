@@ -2047,6 +2047,30 @@ impl ITermDispatch for AdaptDispatch {
             .set(table_index, colorref_to_text_color(color));
     }
 
+    fn assign_color(&mut self, item: ColorItem, fg_index: VTInt, bg_index: VTInt) {
+        // Negative indices cannot name a table slot; passing TABLE_SIZE makes
+        // the table ignore them, as it does for any other out-of-range index.
+        let fg = usize::try_from(fg_index).unwrap_or(TABLE_SIZE);
+        let bg = usize::try_from(bg_index).unwrap_or(TABLE_SIZE);
+
+        {
+            let mut table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+            match item {
+                ColorItem::NormalText => {
+                    table.set_alias_index(ColorAlias::DefaultForeground, fg);
+                    table.set_alias_index(ColorAlias::DefaultBackground, bg);
+                }
+                ColorItem::WindowFrame => {
+                    table.set_alias_index(ColorAlias::FrameForeground, fg);
+                    table.set_alias_index(ColorAlias::FrameBackground, bg);
+                }
+            }
+        }
+
+        // A colour alias change affects every cell, so the host must repaint.
+        self.redraw_requested = true;
+    }
+
     fn request_color_table_entry(&mut self, table_index: usize) {
         let color = self
             .color_table
@@ -2648,6 +2672,7 @@ mod tests {
         dispatch.set_xterm_color_resource(10, 0x00FF0000);
         dispatch.request_xterm_color_resource(10);
         dispatch.reset_xterm_color_resource(10);
+        dispatch.assign_color(ColorItem::NormalText, 0, 0);
         dispatch.request_terminal_state_report(ReportFormat::ColorTableReport, VTParameter::from(2));
         drop(dispatch.restore_terminal_state(ReportFormat::ColorTableReport));
         dispatch.cursor_save_state();
@@ -2670,9 +2695,10 @@ mod tests {
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.assign_color(ColorItem::NormalText, 0, 0);
+        // The terminal-specific action strings are the family still unported.
+        dispatch.do_conemu_action("");
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("assign_color"));
+        assert_eq!(dispatch.last_unhandled(), Some("do_conemu_action"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -3487,6 +3513,38 @@ mod tests {
             table.alias_index(ColorAlias::DefaultForeground),
             TextColor::DARK_WHITE.get_index() as usize
         );
+    }
+
+    #[test]
+    fn decac_moves_the_default_and_frame_aliases() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.assign_color(ColorItem::NormalText, 3, 5);
+        {
+            let table = dispatch.color_table();
+            let table = table.lock().unwrap();
+            assert_eq!(table.alias_index(ColorAlias::DefaultForeground), 3);
+            assert_eq!(table.alias_index(ColorAlias::DefaultBackground), 5);
+        }
+        assert!(dispatch.take_redraw_request());
+
+        dispatch.assign_color(ColorItem::WindowFrame, 7, 8);
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.alias_index(ColorAlias::FrameForeground), 7);
+        assert_eq!(table.alias_index(ColorAlias::FrameBackground), 8);
+    }
+
+    #[test]
+    fn decac_ignores_out_of_range_indices() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.assign_color(ColorItem::NormalText, 3, 4);
+        dispatch.assign_color(ColorItem::NormalText, -1, 9999);
+
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.alias_index(ColorAlias::DefaultForeground), 3);
+        assert_eq!(table.alias_index(ColorAlias::DefaultBackground), 4);
     }
 
     #[test]

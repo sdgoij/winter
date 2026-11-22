@@ -1019,6 +1019,7 @@ mod tests {
         ended_link: usize,
         sgr: Vec<VTInt>,
         charset: Option<(VTInt, Vec<u8>)>,
+        assigned: Option<(ColorItem, VTInt, VTInt)>,
         csi_unknown: usize,
     }
 
@@ -1081,6 +1082,10 @@ mod tests {
 
         fn designate_94_charset(&mut self, gset_number: VTInt, charset: VTID) {
             self.charset = Some((gset_number, charset.as_bytes().to_vec()));
+        }
+
+        fn assign_color(&mut self, item: ColorItem, fg_index: VTInt, bg_index: VTInt) {
+            self.assigned = Some((item, fg_index, bg_index));
         }
     }
 
@@ -1169,6 +1174,16 @@ mod tests {
         let mut machine = machine();
         machine.process_string(b"a\x1b[3b");
         assert_eq!(machine.engine().dispatch().printed, "aaaa");
+    }
+
+    #[test]
+    fn decac_reaches_the_dispatch() {
+        let mut machine = machine();
+        machine.process_string(b"\x1b[1;5;6,|");
+        assert_eq!(
+            machine.engine().dispatch().assigned,
+            Some((ColorItem::NormalText, 5, 6))
+        );
     }
 
     #[test]
