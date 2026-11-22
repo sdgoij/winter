@@ -34,6 +34,25 @@ pub struct ControlKeyState {
 }
 
 impl ControlKeyState {
+    /// Returns a state from the `dwControlKeyState` bits.
+    ///
+    /// The inverse of [`to_console_flags`](Self::to_console_flags); used where
+    /// a record's modifier word arrives from the wire, as win32-input-mode
+    /// carries it.
+    pub const fn from_console_flags(flags: u16) -> Self {
+        Self {
+            right_alt: flags & 0x0001 != 0,
+            left_alt: flags & 0x0002 != 0,
+            right_ctrl: flags & 0x0004 != 0,
+            left_ctrl: flags & 0x0008 != 0,
+            shift: flags & 0x0010 != 0,
+            num_lock: flags & 0x0020 != 0,
+            scroll_lock: flags & 0x0040 != 0,
+            caps_lock: flags & 0x0080 != 0,
+            enhanced: flags & 0x0100 != 0,
+        }
+    }
+
     /// Returns whether either Ctrl key is held.
     pub const fn ctrl(&self) -> bool {
         self.left_ctrl || self.right_ctrl
@@ -117,6 +136,8 @@ impl KeyEventRecord {
 pub struct MouseEventFlags(u8);
 
 impl MouseEventFlags {
+    /// No flags.
+    pub const NONE: Self = Self(0);
     /// The pointer moved.
     pub const MOVED: Self = Self(1 << 0);
     /// A button was double-clicked.
@@ -130,6 +151,30 @@ impl MouseEventFlags {
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
+
+    /// Returns the union of two flag sets.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Returns the raw bits.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+}
+
+/// The `dwButtonState` bits and wheel deltas of a mouse record.
+pub mod mouse_button {
+    /// The leftmost button.
+    pub const FROM_LEFT_1ST_BUTTON_PRESSED: u32 = 0x0001;
+    /// The rightmost button.
+    pub const RIGHTMOST_BUTTON_PRESSED: u32 = 0x0002;
+    /// The middle button.
+    pub const FROM_LEFT_2ND_BUTTON_PRESSED: u32 = 0x0004;
+    /// One wheel notch backwards, carried in the high word of `dwButtonState`.
+    pub const SCROLL_DELTA_BACKWARD: u32 = 0xFF80_0000;
+    /// One wheel notch forwards.
+    pub const SCROLL_DELTA_FORWARD: u32 = 0x0080_0000;
 }
 
 /// A `MOUSE_EVENT_RECORD`.

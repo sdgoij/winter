@@ -17,6 +17,7 @@ use types::dispatch_types::{
     ReportingPermission, SixelBackground, StatusType, TabClearType, TabSetType, VTID, VTInt, VTParameter, VTParameters,
     WindowManipulationType,
 };
+use utils::unicode::Utf8Decoder;
 use vt::{IStateMachineEngine, StringHandler};
 
 /// The sentinel an OSC colour query uses in place of a colour.
@@ -922,80 +923,6 @@ fn parse_hyperlink(string: &str) -> Option<(String, String)> {
     }
 
     Some((params, uri))
-}
-
-/// An incremental UTF-8 decoder with an explicit replacement policy.
-///
-/// The parser hands over bytes; this is the one place they become `char`s.
-/// Invalid sequences become U+FFFD, and a sequence interrupted by a control
-/// character becomes one replacement character when the engine flushes.
-struct Utf8Decoder {
-    pending: Vec<u8>,
-}
-
-impl Utf8Decoder {
-    const fn new() -> Self {
-        Self { pending: Vec::new() }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.pending.clear();
-    }
-
-    fn emit(&mut self, bytes: &[u8], mut print: impl FnMut(char)) {
-        for &byte in bytes {
-            self.pending.push(byte);
-
-            loop {
-                if self.pending.is_empty() {
-                    break;
-                }
-
-                match std::str::from_utf8(&self.pending) {
-                    Ok(text) => {
-                        for ch in text.chars() {
-                            print(ch);
-                        }
-                        self.pending.clear();
-                        break;
-                    }
-                    Err(error) => {
-                        let valid = error.valid_up_to();
-                        if valid > 0 {
-                            let text = std::str::from_utf8(&self.pending[..valid]).expect("valid prefix");
-                            for ch in text.chars() {
-                                print(ch);
-                            }
-                        }
-
-                        match error.error_len() {
-                            Some(length) => {
-                                print('\u{FFFD}');
-                                self.pending.drain(..valid + length);
-                            }
-                            None => {
-                                // Incomplete sequence; keep the tail waiting.
-                                if valid > 0 {
-                                    self.pending.drain(..valid);
-                                }
-                                // A UTF-8 character is at most four bytes, so a
-                                // longer tail cannot become valid.
-                                if self.pending.len() > 3 {
-                                    print('\u{FFFD}');
-                                    self.pending.clear();
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

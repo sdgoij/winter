@@ -23,7 +23,8 @@ publish = false
 #
 # `utils` sees nothing. `types` sees `utils`. `buffer` and `vt` see both and each
 # other not at all. `adapter` sees all three. `renderer` sees `utils`, `types`
-# and `buffer`, so `adapter` may later call into it. A crate that needs
+# and `buffer`, so `adapter` may later call into it. `host` sees `types`, `vt`
+# and `adapter`: it consumes the parser and the console interfaces. A crate that needs
 # something from a crate to its right is a design error, not a manifest to
 # edit; see .agents/notes/adr/001-workspace-layering.md.
 [workspace.dependencies]

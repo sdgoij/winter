@@ -95,6 +95,94 @@ pub fn is_grapheme_boundary(cp1: u32, cp2: u32) -> bool {
     true
 }
 
+/// An incremental UTF-8 decoder with an explicit replacement policy.
+///
+/// The parsers hand over bytes; this is the one place they become `char`s.
+/// Invalid sequences become U+FFFD, and a sequence interrupted by a control
+/// character becomes one replacement character when the owner calls
+/// [`clear`](Self::clear) and emits the replacement.
+pub struct Utf8Decoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8Decoder {
+    /// Creates a decoder with no pending bytes.
+    pub const fn new() -> Self {
+        Self { pending: Vec::new() }
+    }
+
+    /// Returns whether a partial sequence is waiting.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    /// Drops the pending bytes without emitting anything.
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
+
+    /// Feeds `bytes`, calling `print` for every complete character.
+    ///
+    /// An invalid sequence becomes U+FFFD; an incomplete tail stays pending
+    /// until more bytes arrive or the owner flushes it.
+    pub fn emit(&mut self, bytes: &[u8], mut print: impl FnMut(char)) {
+        for &byte in bytes {
+            self.pending.push(byte);
+
+            loop {
+                if self.pending.is_empty() {
+                    break;
+                }
+
+                match std::str::from_utf8(&self.pending) {
+                    Ok(text) => {
+                        for ch in text.chars() {
+                            print(ch);
+                        }
+                        self.pending.clear();
+                        break;
+                    }
+                    Err(error) => {
+                        let valid = error.valid_up_to();
+                        if valid > 0 {
+                            let text = std::str::from_utf8(&self.pending[..valid]).expect("valid prefix");
+                            for ch in text.chars() {
+                                print(ch);
+                            }
+                        }
+
+                        match error.error_len() {
+                            Some(length) => {
+                                print('\u{FFFD}');
+                                self.pending.drain(..valid + length);
+                            }
+                            None => {
+                                // Incomplete sequence; keep the tail waiting.
+                                if valid > 0 {
+                                    self.pending.drain(..valid);
+                                }
+                                // A UTF-8 character is at most four bytes, so a
+                                // longer tail cannot become valid.
+                                if self.pending.len() > 3 {
+                                    print('\u{FFFD}');
+                                    self.pending.clear();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Default for Utf8Decoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Returns whether a Unicode scalar value is a combining mark.
 fn is_combining_mark(cp: u32) -> bool {
     // General Category Mn (Nonspacing Mark), Mc (Spacing Combining Mark), Me (Enclosing Mark)
@@ -180,5 +268,44 @@ mod tests {
         assert!(is_grapheme_boundary('A' as u32, 'B' as u32));
         // Combining acute accent after 'A' should NOT be a boundary
         assert!(!is_grapheme_boundary('A' as u32, 0x0301u32));
+    }
+
+    #[test]
+    fn a_decoder_emits_a_whole_sequence_once() {
+        let mut decoder = Utf8Decoder::new();
+        let mut printed = String::new();
+        decoder.emit("é".as_bytes(), |ch| printed.push(ch));
+        assert_eq!(printed, "é");
+        assert!(decoder.is_empty());
+    }
+
+    #[test]
+    fn a_decoder_holds_an_incomplete_sequence() {
+        let mut decoder = Utf8Decoder::new();
+        let mut printed = String::new();
+        decoder.emit(&[0xE2, 0x82], |ch| printed.push(ch));
+        assert_eq!(printed, "");
+        assert!(!decoder.is_empty());
+
+        decoder.emit(&[0xAC], |ch| printed.push(ch));
+        assert_eq!(printed, "€");
+        assert!(decoder.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_sequence_becomes_one_replacement() {
+        let mut decoder = Utf8Decoder::new();
+        let mut printed = String::new();
+        decoder.emit(&[b'a', 0xFF, b'b'], |ch| printed.push(ch));
+        assert_eq!(printed, "a\u{FFFD}b");
+    }
+
+    #[test]
+    fn an_overlong_encoding_is_rejected_byte_by_byte() {
+        let mut decoder = Utf8Decoder::new();
+        let mut printed = String::new();
+        decoder.emit(&[0xF0, 0x80, 0x80, 0x80], |ch| printed.push(ch));
+        assert_eq!(printed, "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}");
+        assert!(decoder.is_empty());
     }
 }

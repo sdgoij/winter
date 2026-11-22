@@ -9,6 +9,12 @@ pub const VK_BACK: u16 = 0x08;
 pub const VK_TAB: u16 = 0x09;
 /// Enter.
 pub const VK_RETURN: u16 = 0x0D;
+/// Shift.
+pub const VK_SHIFT: u16 = 0x10;
+/// Control.
+pub const VK_CONTROL: u16 = 0x11;
+/// Alt.
+pub const VK_MENU: u16 = 0x12;
 /// Escape.
 pub const VK_ESCAPE: u16 = 0x1B;
 /// Page up.
@@ -51,3 +57,7 @@ pub const VK_F8: u16 = 0x77;
 pub const VK_F9: u16 = 0x78;
 /// The tenth function key.
 pub const VK_F10: u16 = 0x79;
+/// The eleventh function key.
+pub const VK_F11: u16 = 0x7A;
+/// The twelfth function key.
+pub const VK_F12: u16 = 0x7B;

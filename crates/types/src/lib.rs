@@ -24,6 +24,7 @@
 //! - [`theme_utils`] — Light/dark theme detection
 //! - [`color_table`] — 16-color palette management
 //! - [`virtual_key`] — the virtual-key codes a console input record carries
+//! - [`device_attributes`] — the DA1 attribute ids a response carries
 
 pub mod character_attrs;
 pub mod charsets;
@@ -31,6 +32,7 @@ pub mod codepoint_width;
 pub mod color_fix;
 pub mod color_table;
 pub mod cursor_type;
+pub mod device_attributes;
 pub mod dispatch_types;
 pub mod input_modes;
 pub mod input_record;
@@ -50,6 +52,7 @@ pub use character_attrs::CharacterAttributes;
 pub use codepoint_width::codepoint_width;
 pub use color_table::ColorTable;
 pub use cursor_type::CursorType;
+pub use device_attributes::DeviceAttributes;
 pub use dispatch_types::*;
 pub use input_modes::InputModes;
 pub use input_record::{

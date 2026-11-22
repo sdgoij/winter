@@ -10,6 +10,8 @@ description = "Console host — the input side the terminal feeds"
 [dependencies]
 types.workspace = true
 utils.workspace = true
+vt.workspace = true
+adapter.workspace = true
 
 [lints]
 workspace = true

@@ -23,9 +23,9 @@ runnable yet because the host and server layers are still landing.
 | [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Complete for Phase 4 |
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
-| [`crates/host`](crates/host) | Command history, input buffer, cooked read | Phase 6 under way |
+| [`crates/host`](crates/host) | Command history, input buffer, cooked read, input engine | Phase 6 under way |
 
-1122 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1152 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -63,7 +63,8 @@ crates/host       the console side: history, input buffer, cooked read, and the 
 
 The dependency ring starts at `utils → types → {buffer, vt} → adapter → term`.
 `renderer` sits on `utils`, `types` and `buffer` so the adapter may call it later;
-`host` sits on `types`. The ring is enforced by the manifests and described in
+`host` sits on `types`, `vt` and `adapter`, consuming the parser and the console
+interfaces. The ring is enforced by the manifests and described in
 [ADR 001](.agents/notes/adr/001-workspace-layering.md). Phases 7–14 add `server`,
 `input`, `settings`, and the application crate on top of it.
 

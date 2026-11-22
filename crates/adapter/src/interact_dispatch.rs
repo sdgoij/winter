@@ -6,7 +6,7 @@
 //! `INPUT_RECORD`; they live in `types` because the host's input buffer stores
 //! the same vocabulary (ADR 002, ADR 010).
 
-use types::InputRecord;
+use types::{DeviceAttributes, InputRecord};
 
 /// Interface for input state machine callbacks.
 /// When input events occur, they are dispatched to methods on this interface.
@@ -39,6 +39,12 @@ pub trait IInteractDispatch: std::fmt::Debug {
 
     /// Reports focus change.
     fn focus_changed(&self, focused: bool);
+
+    /// Records the DA1 device attributes a terminal reported.
+    ///
+    /// Only the input engine asks for this: it is the answer to the DA1
+    /// request a ConPTY-style host sends while starting up.
+    fn set_device_attributes(&self, _attributes: DeviceAttributes) {}
 }
 
 #[cfg(test)]

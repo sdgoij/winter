@@ -16,10 +16,10 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
-| `host` | ~2.3k | 76 | Phase 6 under way: `CommandHistory` and the process-wide list from `history.cpp`, `InputBuffer` from `inputBuffer.cpp`, and `CookedReadData` from `readDataCooked.cpp` (the edit line, grapheme and word movement, history recall, and the four history popups' state and input) |
+| `host` | ~3.4k | 100 | Phase 6 under way: `CommandHistory` from `history.cpp`, `InputBuffer` from `inputBuffer.cpp`, `CookedReadData` from `readDataCooked.cpp`, and `InputStateMachineEngine` from `InputStateMachineEngine.cpp` (the VT input grammar, now the producer for `IInteractDispatch::write_input`) |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1122 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
+1152 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
 7–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
@@ -565,11 +565,16 @@ The Windows Terminal codebase maps to these Rust module groups:
     wheel accumulation, hover and drag filtering, alternate scroll. UTF-8
     coordinates are written as UTF-8 characters, not UTF-16 units
   - [x] **Tests:** 16 cases covering every encoding and filter
-- [ ] `crates/host/src/input_state_machine_engine.rs` — `InputStateMachineEngine`
-  - Ported from `src/terminal/parser/InputStateMachineEngine.cpp`. Deferred from
-    `term` because it builds console input records for the host (ADR 010);
-    `types::InputRecord` and `host::InputBuffer` are now its vocabulary and its
-    first consumer
+- [x] `crates/host/src/input_state_machine_engine.rs` — `InputStateMachineEngine`
+  - [x] Ported from `src/terminal/parser/InputStateMachineEngine.cpp`: C0 and
+    ESC+key records, CSI arrows/Home/End/F1-F4, generic `~` keys, SS3, shift-tab,
+    focus, SGR mouse (buttons, drag, wheel, double click), win32-input-mode
+    records, the DA1 answer and the captured cursor position report, with the
+    VT-input passthrough rules.
+  - [x] **Tests:** every sequence family, modifier wrapping, Ctrl+C's control-key
+    path, UTF-8 text, mouse state across press/release/drag/wheel/double click,
+    DA1 once, the cursor report, and VT-input passthrough
+  - [x] Key synthesis uses the fixed US-layout table and scan code 0 (ADR 011)
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor
     events (1005/1015/1036)
@@ -819,11 +824,10 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 **Estimated effort:** 3.5 weeks (0.5 wks for tests)
 
-Order: `history`, `input_buffer` and `read_data_cooked` are done.
-`input_state_machine_engine` is next (ADR 010) — it is where
-`IInteractDispatch::write_input` gets a producer — and then
-`console_information` and `screen_info` give the buffer a console to belong to.
-Each module lands with its tests and its declaration in `lib.rs`, as the porting
+Order: `history`, `input_buffer`, `read_data_cooked` and
+`input_state_machine_engine` are done. `console_information` and `screen_info`
+are next, so the buffer and the input records have a console to belong to. Each
+module lands with its tests and its declaration in `lib.rs`, as the porting
 skill requires.
 
 ### Core Console State

@@ -9,6 +9,7 @@ description = "Parser-to-dispatch glue: the output state machine engine"
 
 [dependencies]
 types.workspace = true
+utils.workspace = true
 vt.workspace = true
 adapter.workspace = true
 

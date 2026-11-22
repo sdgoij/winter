@@ -39,3 +39,4 @@ Rules:
 | [008](008-font-discovery.md) | Fonts are found by scanning host-supplied directories, read with a small SFNT reader | Accepted |
 | [009](009-platform-neutral-input.md) | Input translation takes portable events and a mode snapshot | Accepted |
 | [010](010-input-parser-in-the-host.md) | The input parser is ported with the host layer | Accepted |
+| [011](011-input-keyboard-layout.md) | The input engine synthesizes keys from a fixed US layout | Accepted |

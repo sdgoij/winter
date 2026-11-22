@@ -14,7 +14,10 @@
 //!   yet read, their modes and their coalescing rules
 //! - [`read_data_cooked`] — `CookedReadData`, the edit line and history popups
 //!   behind a cooked read
+//! - [`input_state_machine_engine`] — `InputStateMachineEngine`, the grammar
+//!   that turns an application's VT input into console records
 
 pub mod history;
 pub mod input_buffer;
+pub mod input_state_machine_engine;
 pub mod read_data_cooked;

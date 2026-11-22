@@ -17,9 +17,9 @@ just test-crate adapter
 just test-long   # release, --include-ignored
 ```
 
-Report the observed result, not an impression: the exit code and the total line
-cargo prints (`test result: ok. 1076 passed; 0 failed; 2 ignored`). A gate that
-was not run in this session is not green, however likely it is.
+Report the observed result, not an impression: the exit code and the
+`test result:` line cargo prints, with its passed, failed and ignored counts. A
+gate that was not run in this session is not green, however likely it is.
 
 The gate is `fmt` → `clippy` → `deny` → `test` → `doc`. CI runs the same
 `just gate` on Linux, Windows and macOS, so a green local run does not prove a

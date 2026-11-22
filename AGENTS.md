@@ -156,7 +156,8 @@ tests pass.
 - **The dependency ring is the architecture** (ADR 001):
   `utils → types → {buffer, vt} → adapter → term`. An edge that points left is a
   design error, not a `Cargo.toml` edit. `renderer` sits on `utils`, `types` and
-  `buffer`; `host` sits on `types`.
+  `buffer`; `host` sits on `types`, `vt` and `adapter`, because it consumes the
+  parser and the console interfaces.
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
 - **`unsafe` is denied workspace-wide.** `utils` is the only crate that opts out,
@@ -201,9 +202,10 @@ Do not add call sites under an allowance.
 ## Where the port stands
 
 Phases 1–5 are complete. Phase 6 (the console host) is under way:
-`history.cpp`, `inputBuffer.cpp` and the `readDataCooked.cpp` edit model are
-ported, and `InputStateMachineEngine` (ADR 010) is next, which is where
-`IInteractDispatch::write_input` finally gets a producer. The read-data family's
+`history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model and
+`InputStateMachineEngine.cpp` are ported, so `IInteractDispatch::write_input` has
+its producer. `consoleInformation.cpp` and `screenInfo.cpp` are next, so the
+buffer and the records have a console to belong to. The read-data family's
 `IWaitRoutine` completion path, the cooked read's pager, and doskey aliases wait
 for the server and screen layers. Phases 7–14 are not started.
 
