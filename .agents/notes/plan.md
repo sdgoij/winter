@@ -10,14 +10,14 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~2.9k | 84 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table and the XParseColor spec parser |
+| `types` | ~3.3k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.1k | 188 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
 | `adapter` | ~9.9k | 142 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
 | `term` | ~1.5k | 13 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-676 tests, doc tests. Phases 5–14 are not started.
+679 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -529,8 +529,8 @@ The Windows Terminal codebase maps to these Rust module groups:
   - [x] **Tests:** C0, cursor, SGR, charset designation, save/restore,
     OSC title, hyperlink, clipboard, REP, unknown sequences, an incomplete
     UTF-8 prefix, and a sixel DCS end-to-end into the buffer
-  - [ ] **Gap:** the X11 colour-name table is not ported, so OSC 4/10-12
-    accept `rgb:` and `#` specs but not names such as `red`
+  - [x] Colour specs: `rgb:`/`#` forms and the X11 name and variant
+    tables, all in `types::color_table`
 - [ ] `crates/term/src/input_engine.rs` — `InputStateMachineEngine`
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor

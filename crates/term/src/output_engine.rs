@@ -5,13 +5,12 @@
 //! codes are byte strings rather than a parallel enum, so an arm reads exactly
 //! like the C++ case it ports.
 //!
-//! Not ported yet: OSC colour names from the X11 table and the terminal-specific
-//! action strings beyond the adapter's existing handlers. `rgb:` and `#` colour
-//! specs are parsed; an unknown name leaves the colour untouched.
+//! Not ported yet: the terminal-specific action strings beyond the adapter's
+//! existing handlers.
 
 use adapter::term_dispatch::ITermDispatch;
 use types::LineRendition;
-use types::color_table::color_from_xparse_color_spec;
+use types::color_table::color_from_xterm_color;
 use types::dispatch_types::{
     ChangeExtent, CharsetSize, ColorItem, CursorStyle, DrcsCellMatrix, DrcsEraseControl, DrcsFontSet, DrcsFontUsage,
     EraseType, LineFeedType, MacroDeleteControl, MacroEncoding, ModeParams, PresentationReportFormat, ReportFormat,
@@ -850,11 +849,6 @@ fn split_semicolons(string: &str) -> Vec<&str> {
         }
     }
     parts
-}
-
-fn color_from_xterm_color(spec: &str) -> Option<u32> {
-    // The X11 colour-name table is not ported yet, so a name is not a colour.
-    color_from_xparse_color_spec(spec)
 }
 
 fn parse_osc_set_color_table(string: &str) -> Option<Vec<(usize, u32)>> {
