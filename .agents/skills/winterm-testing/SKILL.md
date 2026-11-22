@@ -75,6 +75,12 @@ The corpus lives in `crates/term/tests/conformance/` and is one binary:
   back the visible screen, cursor and host responses.
 - A case feeds the bytes a program would write and asserts what a user would see
   or what the host owes the program (DSR reply, clipboard, title).
+- `generate.rs` is the one module that does not name a sequence. Its properties
+  feed arbitrary bytes and assert only that the terminal survives them: the
+  screen stays a rectangle, the cursor stays inside it, the same bytes twice
+  give the same screen, and a sequence cut off by the end of the input does not
+  swallow what follows. Extend it when a new parser gains a state the corpus
+  cannot enumerate.
 
 Expectations come from ECMA-48, DEC's manuals, xterm's documented behaviour, or
 the upstream C++ `ut_*` case — never from what this implementation prints. When
@@ -99,7 +105,9 @@ beside the code it constrains.
 
 - State an invariant, not today's output: reflow preserves characters, a
   selection rect stays inside the buffer, `hash` is deterministic for equal
-  values, a parsed parameter is never out of range.
+  values, a parsed parameter is never out of range, run-length encoding expands
+  back to its values, a generational token is valid exactly while nothing was
+  written after it.
 - A failure is a bug in the code until proven otherwise. Do not weaken the
   generator, add `prop_assume!` filters, or shrink the domain to make it pass.
 - Keep cases bounded (`1..=40` rows, not `0..=usize::MAX`); a property test that

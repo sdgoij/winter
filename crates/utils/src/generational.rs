@@ -98,6 +98,8 @@ impl<T> std::ops::DerefMut for Generational<T> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -144,5 +146,27 @@ mod tests {
     fn test_default() {
         let r#gen: Generational<i32> = Generational::default();
         assert_eq!(*r#gen.get(), 0);
+    }
+
+    proptest! {
+        /// A token is valid exactly while no write follows it, and the value it
+        /// guards is the last one written.
+        #[test]
+        fn a_token_survives_exactly_the_writes_it_saw(writes in 0usize..512) {
+            let mut cache = Generational::new(0u32);
+            let token = cache.generation();
+
+            for value in 0..writes {
+                *cache.write() = u32::try_from(value).expect("small");
+            }
+
+            prop_assert_eq!(cache.is_valid(token), writes == 0);
+            prop_assert_eq!(cache.generation().value(), writes as u32);
+            let expected = if writes == 0 { 0 } else { writes as u32 - 1 };
+            prop_assert_eq!(*cache.get(), expected);
+
+            // The token after the writes is the one that is valid now.
+            prop_assert!(cache.is_valid(cache.generation()));
+        }
     }
 }

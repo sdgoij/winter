@@ -3397,6 +3397,7 @@ version = "0.1.0"
 dependencies = [
  "adapter",
  "buffer",
+ "proptest",
  "types",
  "utils",
  "vt",

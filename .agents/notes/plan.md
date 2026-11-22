@@ -9,12 +9,12 @@ Verified by running the gate, not by reading the previous status:
 
 | Crate | Lines | Tests | State |
 |---|---|---|---|
-| `utils` | ~6.5k | 211 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
+| `utils` | ~6.6k | 213 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
 | `types` | ~6.0k | 121 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor, the X11 colour-name tables, `InputModes`, the console `InputRecord` vocabulary and `FilterStringForPaste` |
 | `buffer` | ~7.3k | 221 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), document rows for copies that cross history (ADR 020), and `find_text`, the `search.cpp` logical-line search that reports every match in document coordinates |
 | `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
-| `adapter` | ~9.7k | 182 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~5.5k | 186 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
+| `adapter` | ~9.7k | 183 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
+| `term` | ~5.6k | 189 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
 | `renderer` | ~6.4k | 123 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
 | `host` | ~9.6k | 258 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, the registry schema that layers a key over them (ADR 037), `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio` waits for the server's API surface; `handle` and `tracing` have no counterpart here (a lock with no ctrl-event queue, and ETW) |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
@@ -24,7 +24,7 @@ Verified by running the gate, not by reading the previous status:
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1571 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1576 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1528,211 +1528,81 @@ editor, and migration follows.
 
 ## Phase 12: Comprehensive Testing & Validation
 
-**Estimated effort:** 4 weeks (significantly expanded)
+**Estimated effort:** an audit, not a build — see below.
 
-### A. Unit Test Suite (per-crate)
+This section was written as a checklist of filenames and counts ("50+ unit tests
+for `Point`", one test file per crate). The suite that exists is inline in the
+module that owns each rule, 1,576 tests across twelve crates, and the status
+table above is its breakdown. What a coverage review needs is not a count but an
+answer to "what failure would this layer catch that the one below cannot" — the
+question the `winterm-testing` skill asks. The audit kept the invariants the
+corpus could not enumerate and retired the rows that would have added no layer.
 
-- [ ] `winterm/crates/utils/src/unit_tests/point_tests.rs` — 50+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/size_tests.rs` — 40+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/rect_tests.rs` — 60+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/color_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/small_vec_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/enum_set_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/hash_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/ticket_lock_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/atomic_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/throttled_tests.rs` — 10+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/unicode_tests.rs` — 40+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/math_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/utils/src/unit_tests/spsc_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/types/src/text_color_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/types/src/character_attrs_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/types/src/viewport_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/buffer/src/output_cell_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/buffer/src/row_tests.rs` — 50+ unit tests
-- [ ] `winterm/crates/buffer/src/text_buffer_tests.rs` — 80+ unit tests
-- [ ] `winterm/crates/buffer/src/cursor_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/buffer/src/search_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/buffer/src/marks_tests.rs` — 25+ unit tests
-- [ ] `winterm/crates/buffer/src/reflow_tests.rs` — 40+ unit tests
-- [ ] `winterm/crates/buffer/src/hyperlinks_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/buffer/src/selection_tests.rs` — 35+ unit tests
-- [ ] `winterm/crates/vt/src/state_machine_tests.rs` — 60+ unit tests
-- [ ] `winterm/crates/vt/src/output_engine_tests.rs` — 80+ unit tests
-- [ ] `winterm/crates/vt/src/input_engine_tests.rs` — 50+ unit tests
-- [ ] `winterm/crates/vt/src/parameter_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/vt/src/base64_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/adapter/src/page_manager_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/adapter/src/sixel_parser_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/renderer/src/font_cache_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/renderer/src/rect_packer_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/renderer/src/text_analysis_tests.rs` — 40+ unit tests
-- [ ] `winterm/crates/host/src/console_info_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/host/src/screen_info_tests.rs` — 40+ unit tests
-- [ ] `winterm/crates/host/src/scroll_history_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/host/src/cooked_read_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/server/src/wait_queue_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/server/src/process_list_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/input/src/keyboard_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/input/src/mouse_tests.rs` — 25+ unit tests
-- [ ] `winterm/crates/input/src/kitty_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/winterm/src/keybindings_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/winterm/src/actions_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/winterm/src/pane_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/settings/src/parser_tests.rs` — 30+ unit tests
-- [ ] `winterm/crates/settings/src/profiles_tests.rs` — 20+ unit tests
-- [ ] `winterm/crates/settings/src/migration_tests.rs` — 15+ unit tests
-- [ ] `winterm/crates/audio/src/visual_bell_tests.rs` — 10+ unit tests
+### Added: the invariants the corpus could not enumerate
 
-### B. Property-Based Tests (proptest)
+- [x] `crates/term/tests/conformance/generate.rs` — the parser never panics.
+  Two properties over generated input: any bytes at all leave the screen a
+  rectangle with the cursor inside it and the same bytes twice give the same
+  screen; and a sequence cut off by the end of the input does not swallow what
+  follows. This is the iron rule the corpus cannot enumerate: truncated UTF-8,
+  absurd parameter counts, a DCS string that never ends.
+- [x] `crates/adapter/src/sixel_parser.rs` — any sixel stream decodes without a
+  panic, and an image that comes out is a rectangle (`width <= stride`, whole
+  rows of pixels).
+- [x] `crates/utils/src/rle.rs` — any value sequence round-trips, the run count
+  is the number of transitions, `at` agrees with the sequence, and `compact`
+  leaves an encoded sequence alone.
+- [x] `crates/utils/src/generational.rs` — a token is valid exactly while no
+  write follows it, and the value it guards is the last one written.
 
-- [ ] `winterm/tests/properties/point_props.rs` — Arithmetic invariants, comparison properties
-- [ ] `winterm/tests/properties/size_props.rs` — Scale, area, overflow properties
-- [ ] `winterm/tests/properties/rect_props.rs` — Union/intersection/difference invariants
-- [ ] `winterm/tests/properties/color_props.rs` — Alpha blend commutativity, hex roundtrip
-- [ ] `winterm/tests/properties/enum_set_props.rs` — Bitflag algebra properties
-- [ ] `winterm/tests/properties/rle_props.rs` — Encode/decode roundtrip
-- [ ] `winterm/tests/properties/small_vec_props.rs` — Iterator equivalence, push/pop order
-- [ ] `winterm/tests/properties/spsc_props.rs` — FIFO ordering
-- [ ] `winterm/tests/properties/generational_props.rs` — Index validity
-- [ ] `winterm/tests/properties/reflow_props.rs` — Character preservation, width constraints
-- [ ] `winterm/tests/properties/iterator_props.rs` — Forward/backward symmetry, distance
-- [ ] `winterm/tests/properties/vt_params_props.rs` — Parameter serialization roundtrip
-- [ ] `winterm/tests/properties/vt_state_machine_props.rs` — Stateless transitions, recovery from corruption
-- [ ] `winterm/tests/properties/unicode_props.rs` — Grapheme boundary spec compliance
-- [ ] `winterm/tests/properties/text_attribute_props.rs` — Equality reflexivity/symmetry/transitivity
+### Retired rows
 
-### C. Integration Tests
+**A. Per-crate `src/*_tests.rs` files.** Every crate's tests are inline in the
+module that owns the rule, as the porting skill requires; moving them into
+`src/unit_tests/` would restructure the suite without adding an assertion, and
+the counts in this section were targets rather than cases. Three rows name
+crates that do not exist: `crates/input` (the encoders live in `term`, ADR 017),
+`crates/audio/src/visual_bell.rs` (the flash is `winterm::visual_bell`), and
+`server`'s `wait_queue` and `process_list` (the driver protocol is deliberately
+not ported, ADR 015).
 
-- [ ] `winterm/tests/integration/vt_output.rs` — Full VT output pipeline: write sequences → verify buffer state
-- [ ] `winterm/tests/integration/vt_input.rs` — Full VT input pipeline: generate sequences → verify decoded events
-- [ ] `winterm/tests/integration/buffer_operations.rs` — Write text → reflow → scroll → select → copy → verify
-- [ ] `winterm/tests/integration/pty_process.rs` — Start PTY process → write input → read output → verify
-- [ ] `winterm/tests/integration/console_host.rs` — Allocate console → write → read → resize → verify
-- [ ] `winterm/tests/integration/terminal_app.rs` — Create app → open tab → write → render → verify UI elements
-- [ ] `winterm/tests/integration/tab_pane.rs` — Create tab → split → resize → focus → close → verify
-- [ ] `winterm/tests/integration/settings.rs` — Write settings file → load → validate → migrate → verify
-- [ ] `winterm/tests/integration/keybindings.rs` — Configure bindings → simulate input → verify action dispatch
-- [ ] `winterm/tests/integration/clipboard.rs` — Copy text → paste → verify roundtrip
-- [ ] `winterm/tests/integration/theme.rs` — Switch light/dark → verify colors update
-- [ ] `winterm/tests/integration/font_rendering.rs` — Change font → verify rendering matches
-- [ ] `winterm/tests/integration/search.rs` — Search text → verify highlights → verify selection
-- [ ] `winterm/tests/integration/scrollback.rs` — Write 1000 lines → scroll up → verify visible content → scroll down → verify
-- [ ] `winterm/tests/integration/alternate_buffer.rs` — Switch to alt buffer → write → switch back → verify main buffer unchanged
+**B. The rest of the property tests.** `utils`, `types` and `buffer` already
+carry proptest modules — point, size, rect, color, enum_set, hash, small_vec,
+bytes and bit; character_attrs, codepoint_width and text_attribute; cell_width,
+cursor, hyperlinks, marks, the two cell iterators, row and text_buffer — plus
+`settings`' migration. What was genuinely missing is added above. The remaining
+row, `spsc`, has a thread schedule as its property, which its own tests cover.
 
-### D. VT Conformance Suite (against xterm/kitty/iterm2)
+**C and E. PNG snapshots (`insta`).** Not ported: a golden image pins the
+toolkit's rasteriser rather than this code, and re-baselining one is the
+"golden re-baseline" the testing skill forbids. The renderer's grid paint is
+tested by its own snapshot module; the shell paints through egui.
 
-The corpus drives the public `term::Terminal` API and reads the screen, so it
-lives in the crate that owns the parser-to-dispatch loop:
-`crates/term/tests/conformance/`, with one entry point declared in
-`crates/term/Cargo.toml`.
+**D. The conformance corpus** is done, with `generate.rs` added above as its
+last row.
 
-- [x] `crates/term/tests/conformance/csi/sgr.rs` — SGR colours, the attribute
-  pairs, the `:`-form underline styles and full reset
-- [x] `crates/term/tests/conformance/csi/cursor.rs` — CUP/HVP, CUU/CUD,
-  CUF/CUB, CHA/VPA, CNL/CPL, HPR/VPR, DECSC/DECRC, CSI s/u and 8-bit C1
-- [x] `crates/term/tests/conformance/csi/scroll.rs` — SU/SD, LF and CR+LF at the
-  bottom margin, DECSTBM and RI
-- [x] `crates/term/tests/conformance/csi/erase.rs` — EL 0/1/2, ED 0/1/2 and ECH
-- [x] `crates/term/tests/conformance/csi/insert_delete.rs` — IL/DL/ICH/DCH
-- [x] `crates/term/tests/conformance/osc.rs` — window title (0/2), working
-  directory (7), clipboard (52), palette set/reset (4/104)
-- [x] `crates/term/tests/conformance/dcs/sixel.rs` — an image's colour, its
-  starting row, cell coverage, the repeat count, unterminated input and the
-  erase-on-write rule (ADR 005)
-- [x] `crates/term/tests/conformance/private_modes.rs` — DECTCEM, DECAWM,
-  the alternate buffer and DECRQM (set, reset and unsupported)
-- [x] `crates/term/tests/conformance/mouse.rs` — modes 1000, 1002, 1006 and
-  1007, alternate scroll, and the X11 modifier bits
-- [x] `crates/term/tests/conformance/kitty_keyboard.rs` — the query, set, push
-  and pop forms of the kitty flags and their effect on encoding
-- [x] `crates/term/tests/conformance/bracketed_paste.rs` — the wrapper, the
-  paste filter (control codes, line endings, a pasted end marker) and the
-  mode report
-- [x] `crates/term/tests/conformance/win32_input_mode.rs` — mode 9001 records
-  and the kitty protocol's precedence
-- [x] `crates/term/tests/conformance/escape.rs` — DECSC/DECRC, IND/NEL/RI,
-  line rendition, tab stops and character-set designation
-- [x] `crates/term/tests/conformance/vt52.rs` — DECANM, the cursor moves,
-  `ESC Y` addressing, erase, reverse index, identify, the graphics set and
-  the return to ANSI
-- [x] `crates/term/tests/conformance/hyperlink.rs` — OSC 8 hyperlinks
-- [ ] `crates/term/tests/conformance/generate.rs` — Fuzz-generated sequences against reference
+**F. Criterion benchmarks.** Not ported: `criterion` is not a dependency, there
+is no performance budget to regress against, and a benchmark outside the gate
+does not catch a failure. `just test-long` already covers the host-font cases.
 
-### E. Snapshot Tests (insta)
+**G. Fuzzing (honggfuzz / afl.rs).** Not ported: both need a nightly toolchain
+and a separate target, and the invariant they would chase — "the parser never
+panics" — is the proptest in `generate.rs`, which runs in the gate on all three
+platforms instead of only where the fuzzer is installed.
 
-- [ ] `winterm/tests/snapshots/ascii_text.png` — Render "Hello World 123!" at various sizes
-- [ ] `winterm/tests/snapshots/cjk_text.png` — Render CJK characters
-- [ ] `winterm/tests/snapshots/emoji_text.png` — Render emoji (ZWJ sequences, skin tones)
-- [ ] `winterm/tests/snapshots/mixed_width_text.png` — Mixed ASCII/CJK/emoji
-- [ ] `winterm/tests/snapshots/large_buffer.png` — Render 1000 lines scrollback
-- [ ] `winterm/tests/snapshots/color_palette.png` — Render 16-color + 256-color + RGB
-- [ ] `winterm/tests/snapshots/sgr_styles.png` — Render all SGR styles
-- [ ] `winterm/tests/snapshots/selection_rendering.png` — Render selections
-- [ ] `winterm/tests/snapshots/cursor_rendering.png` — Render all cursor types
-- [ ] `winterm/tests/snapshots/reflow_ascii.png` — Reflow ASCII paragraph
-- [ ] `winterm/tests/snapshots/reflow_cjk.png` — Reflow CJK paragraph
-- [ ] `winterm/tests/snapshots/reflow_emoji.png` — Reflow emoji paragraph
-- [ ] `winterm/tests/snapshots/sixel_image.png` — Render known Sixel image
-- [ ] `winterm/tests/snapshots/dark_theme.png` — Render with dark theme
-- [ ] `winterm/tests/snapshots/light_theme.png` — Render with light theme
+**H. Platform window, clipboard and DPI tests.** Not ported: they would test
+winit, arboard and the window manager, not this code. The pty layer has its own
+tests (`session`, and `server`'s two backends), and the clipboard paths are
+exercised through `host`'s selection tests.
 
-### F. Performance Benchmarks (criterion)
+**I. End-to-end application tests.** Not ported: they need a window and a
+desktop, which the gate does not have. The evidence is the live check each
+user-visible change carries — a probe that launches the app, drives it and reads
+the screen — recorded in the commit.
 
-- [ ] `winterm/benches/buffer_write.rs` — Write throughput (cells/sec)
-- [ ] `winterm/benches/buffer_scroll.rs` — Scroll throughput
-- [ ] `winterm/benches/reflow.rs` — Reflow performance at various buffer sizes
-- [ ] `winterm/benches/vt_parse.rs` — VT sequence parsing throughput
-- [ ] `winterm/benches/vt_dispatch.rs` — VT sequence dispatch latency
-- [ ] `winterm/benches/iterator.rs` — Cell/text iteration performance
-- [ ] `winterm/benches/search.rs` — Text search performance
-- [ ] `winterm/benches/hyperlink_map.rs` — Hyperlink lookup/add/remove
-- [ ] `winterm/benches/row_write.rs` — Per-row cell write performance
-- [ ] `winterm/benches/small_vec.rs` — small_vector vs Vec comparison
-- [ ] `winterm/benches/ticket_lock.rs` — Ticket lock vs parking_lot comparison
-- [ ] `winterm/benches/rect_ops.rs` — Rectangle union/intersection/difference
-
-### G. Fuzzing
-
-- [ ] `winterm/fuzz/vt_parser.rs` — Fuzz VT escape sequence parser (honggfuzz)
-- [ ] `winterm/fuzz/sixel_parser.rs` — Fuzz Sixel image parser (honggfuzz)
-- [ ] `winterm/fuzz/cell_iterator.rs` — Fuzz cell iterator bounds (afl.rs)
-- [ ] `winterm/fuzz/reflow.rs` — Fuzz reflow with random text (honggfuzz)
-- [ ] `winterm/fuzz/parameter_parsing.rs` — Fuzz VT parameter parsing (afl.rs)
-- [ ] `winterm/fuzz/unicode_width.rs` — Fuzz Unicode width detection (honggfuzz)
-
-### H. Platform-Specific Tests
-
-- [ ] `winterm/tests/platform/win32/window.rs` — Win32 window create/destroy/resize
-- [ ] `winterm/tests/platform/win32/clipboard.rs` — Windows clipboard
-- [ ] `winterm/tests/platform/win32/dpi.rs` — DPI awareness (scaling)
-- [ ] `winterm/tests/platform/win32/conpty.rs` — ConPTY process management
-- [ ] `winterm/tests/platform/wayland/window.rs` — Wayland surface/presentation
-- [ ] `winterm/tests/platform/wayland/input.rs` — Wayland input events
-- [ ] `winterm/tests/platform/x11/window.rs` — X11 window management
-- [ ] `winterm/tests/platform/x11/clipboard.rs` — X11 clipboard
-- [ ] `winterm/tests/platform/macos/window.rs` — Cocoa window management
-- [ ] `winterm/tests/platform/macos/clipboard.rs` — macOS clipboard
-- [ ] `winterm/tests/platform/macos/dpi.rs` — HiDPI rendering
-
-### I. End-to-End Application Tests
-
-- [ ] `winterm/tests/e2e/startup.rs` — Launch app → verify window → load settings
-- [ ] `winterm/tests/e2e/new_tab.rs` — New tab → verify creation → close
-- [ ] `winterm/tests/e2e/split_pane.rs` — Split → verify two panes → merge
-- [ ] `winterm/tests/e2e/command_palette.rs` — Open palette → search → execute command
-- [ ] `winterm/tests/e2e/settings_change.rs` — Modify settings → hot-reload → verify
-- [ ] `winterm/tests/e2e/theme_switch.rs` — Switch theme → verify colors update
-- [ ] `winterm/tests/e2e/long_running.rs` — Run for 1 hour → check memory leaks
-- [ ] `winterm/tests/e2e/crash_recovery.rs` — Kill subprocess → verify console host survives
-
-### J. Cross-Platform Matrix Tests
-
-- [ ] `winterm/tests/xplat/ansi_output.rs` — Same VT sequences → verify same buffer state on all platforms
-- [ ] `winterm/tests/xplat/keyboard_input.rs` — Same key events → verify same decoded events
-- [ ] `winterm/tests/xplat/clipboard.rs` — Copy/paste text → verify roundtrip
-- [ ] `winterm/tests/xplat/dpi.rs` — Same content at 100%/125%/150%/200% DPI → verify scaling
-- [ ] `winterm/tests/xplat/window_resize.rs` — Same resize sequence → verify same buffer state
+**J. Cross-platform matrix.** Redundant: every portable crate's tests already
+run on ubuntu, windows and macos in the same gate (`.github/workflows/ci.yml`),
+so "the same sequences give the same buffer on every platform" is the gate.
 
 ---
 

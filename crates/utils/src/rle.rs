@@ -143,6 +143,8 @@ impl<V: PartialEq + Clone> Default for BasicRle<V> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -181,5 +183,42 @@ mod tests {
         rle.compact();
         assert_eq!(rle.run_count(), 2);
         assert_eq!(rle.total_length(), 9);
+    }
+
+    /// The number of runs a plain sequence encodes to.
+    fn runs_of(values: &[u8]) -> usize {
+        let mut runs = 0;
+        let mut previous = None;
+        for value in values {
+            if previous != Some(*value) {
+                runs += 1;
+                previous = Some(*value);
+            }
+        }
+        runs
+    }
+
+    proptest! {
+        /// Whatever the values are, encoding and expanding them is the
+        /// identity, and no run claims length the values do not have.
+        #[test]
+        fn any_values_round_trip(values in prop::collection::vec(0u8..4, 0..512)) {
+            let rle = BasicRle::from_values(&values);
+
+            prop_assert_eq!(rle.total_length(), values.len());
+            prop_assert_eq!(rle.run_count(), runs_of(&values));
+            prop_assert_eq!(rle.expand(), values.clone());
+
+            for (position, value) in values.iter().enumerate() {
+                prop_assert_eq!(rle.at(position), Some(value), "at {}", position);
+            }
+            prop_assert_eq!(rle.at(values.len()), None);
+
+            // An encoding of runs is already compact, and stays that way.
+            let mut compact = BasicRle::from_values(&values);
+            compact.compact();
+            prop_assert_eq!(compact.run_count(), rle.run_count());
+            prop_assert_eq!(compact.total_length(), rle.total_length());
+        }
     }
 }

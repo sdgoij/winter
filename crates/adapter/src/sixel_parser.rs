@@ -628,7 +628,32 @@ impl Default for SixelParser {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
+
+    proptest! {
+        /// Whatever a sixel stream holds — repeated columns, colour commands the
+        /// palette does not have, a `$` at the end — decoding it never panics,
+        /// and an image that comes out is a rectangle.
+        #[test]
+        fn any_sixel_stream_leaves_a_well_formed_image(payload in "[ -~
+    ]{0,1024}") {
+            if let Some(image) = decode(&payload) {
+                prop_assert!(image.stride >= 0, "stride {}", image.stride);
+                prop_assert!(image.width >= 0, "width {}", image.width);
+                prop_assert!(image.width <= image.stride, "{} of {}", image.width, image.stride);
+                prop_assert!(image.height >= 0, "height {}", image.height);
+                if image.stride > 0 {
+                    prop_assert_eq!(
+                        image.pixels.len() % image.stride as usize,
+                        0,
+                        "the pixels are whole rows",
+                    );
+                }
+            }
+        }
+    }
 
     fn decode(payload: &str) -> Option<DecodedImage> {
         decode_with(payload, SixelBackground::Opaque)

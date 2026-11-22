@@ -12,6 +12,7 @@ mod bracketed_paste;
 mod csi;
 mod dcs;
 mod escape;
+mod generate;
 mod hyperlink;
 mod kitty_keyboard;
 mod mouse;
