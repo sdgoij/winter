@@ -40,8 +40,9 @@ pub mod render_settings;
 pub mod renderer;
 
 pub use atlas::common::{
-    Bitmap, CursorSettings, FontDecorationPosition, FontId, FontMapping, FontRelevantAttributes, GlyphOffset,
-    GridLineRange, MiscellaneousSettings, ShapedGlyph, ShapedRow,
+    AntialiasingMode, Bitmap, CursorSettings, FontDecorationPosition, FontId, FontMapping, FontRelevantAttributes,
+    FontSettings, GlyphOffset, GridLineRange, IBackend, MiscellaneousSettings, RenderingPayload, Settings, ShapedGlyph,
+    ShapedRow, TargetSettings,
 };
 pub use atlas::shaping::{CellShaping, ShapingBackend};
 pub use cluster::Cluster;

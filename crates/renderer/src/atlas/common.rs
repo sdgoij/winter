@@ -79,7 +79,7 @@ impl Default for CursorSettings {
 }
 
 /// Colours and the retro-effect shader paths.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MiscellaneousSettings {
     /// The default background, as a `COLORREF`.
     pub background_color: u32,
@@ -95,6 +95,12 @@ pub struct MiscellaneousSettings {
     pub custom_pixel_shader_image_path: String,
     /// Whether the retro-terminal shader is enabled.
     pub use_retro_terminal_effect: bool,
+}
+
+impl Default for MiscellaneousSettings {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MiscellaneousSettings {
@@ -270,6 +276,201 @@ impl ShapedRow {
     }
 }
 
+/// The text antialiasing mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AntialiasingMode {
+    /// Subpixel (ClearType) rendering.
+    #[default]
+    ClearType,
+    /// Grayscale antialiasing.
+    Grayscale,
+    /// No antialiasing.
+    Aliased,
+}
+
+/// Target settings that are not device-specific.
+///
+/// Device and surface selection belongs to the concrete backend; only the
+/// cross-platform transparency flag lives here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TargetSettings {
+    /// Whether the surface is rendered with an alpha channel.
+    pub use_alpha: bool,
+}
+
+/// The metrics and decorations the atlas draws text with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontSettings {
+    /// The face the backend loaded.
+    pub font: FontId,
+    /// The face name, for diagnostics.
+    pub font_name: String,
+    /// The font size in points.
+    pub font_size: f32,
+    /// The cell size in pixels.
+    pub cell_size: (u16, u16),
+    /// The font weight.
+    pub font_weight: u16,
+    /// The advance width of `0` in pixels.
+    pub advance_width: u16,
+    /// The baseline offset from the cell top.
+    pub baseline: u16,
+    /// The descender depth in pixels.
+    pub descender: u16,
+    /// The thickness of a thin line (grid, underline).
+    pub thin_line_width: u16,
+    /// The top grid line.
+    pub grid_top: FontDecorationPosition,
+    /// The bottom grid line.
+    pub grid_bottom: FontDecorationPosition,
+    /// The left grid line.
+    pub grid_left: FontDecorationPosition,
+    /// The right grid line.
+    pub grid_right: FontDecorationPosition,
+    /// The underline.
+    pub underline: FontDecorationPosition,
+    /// The strikethrough.
+    pub strikethrough: FontDecorationPosition,
+    /// The two lines of a double underline.
+    pub double_underline: [FontDecorationPosition; 2],
+    /// The overline.
+    pub overline: FontDecorationPosition,
+    /// The DPI.
+    pub dpi: u16,
+    /// The antialiasing mode.
+    pub antialiasing_mode: AntialiasingMode,
+    /// Whether built-in box-drawing glyphs are enabled.
+    pub builtin_glyphs: bool,
+    /// Whether colour glyphs are enabled.
+    pub color_glyphs: bool,
+    /// The DECDLD soft-font bit pattern, if any.
+    pub soft_font_pattern: Vec<u16>,
+    /// The DECDLD soft-font cell size.
+    pub soft_font_cell_size: (i32, i32),
+}
+
+impl Default for FontSettings {
+    fn default() -> Self {
+        Self {
+            font: FontId(0),
+            font_name: String::new(),
+            font_size: 0.0,
+            cell_size: (0, 0),
+            font_weight: 0,
+            advance_width: 0,
+            baseline: 0,
+            descender: 0,
+            thin_line_width: 0,
+            grid_top: FontDecorationPosition::default(),
+            grid_bottom: FontDecorationPosition::default(),
+            grid_left: FontDecorationPosition::default(),
+            grid_right: FontDecorationPosition::default(),
+            underline: FontDecorationPosition::default(),
+            strikethrough: FontDecorationPosition::default(),
+            double_underline: [FontDecorationPosition::default(); 2],
+            overline: FontDecorationPosition::default(),
+            dpi: 96,
+            antialiasing_mode: AntialiasingMode::ClearType,
+            builtin_glyphs: false,
+            color_glyphs: true,
+            soft_font_pattern: Vec::new(),
+            soft_font_cell_size: (0, 0),
+        }
+    }
+}
+
+/// The settings the atlas engine reads each frame.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settings {
+    /// Target transparency.
+    pub target: TargetSettings,
+    /// Font metrics and decorations.
+    pub font: FontSettings,
+    /// Cursor colour and shape.
+    pub cursor: CursorSettings,
+    /// Colours and shader paths.
+    pub misc: MiscellaneousSettings,
+    /// The target size in pixels.
+    pub target_size: (u16, u16),
+    /// The viewport size in cells.
+    pub viewport_cell_count: (u16, u16),
+}
+
+/// The per-frame data a backend renders.
+///
+/// Ported from `common.h`'s `RenderingPayload` without its D3D/DXGI handles;
+/// those belong to the concrete backend. The colour bitmap holds three stacked
+/// images (background, foreground and underline colours).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderingPayload {
+    /// The settings for this frame.
+    pub settings: Settings,
+    /// The shaped rows, ordered from row 0.
+    pub rows: Vec<ShapedRow>,
+    /// The three colour bitmaps, back to back.
+    pub color_bitmap: Vec<u32>,
+    /// The bitmap stride in `u32` items.
+    pub color_bitmap_row_stride: usize,
+    /// The distance between the start of each of the three bitmaps.
+    pub color_bitmap_depth_stride: usize,
+    /// One generation per colour bitmap; one means "redraw it".
+    pub color_bitmap_generations: [u64; 3],
+    /// The cursor rectangle, in columns and rows.
+    pub cursor_rect: (i32, i32, i32, i32),
+    /// The dirty viewport area in pixels; may extend past the target.
+    pub dirty_rect_in_px: (i32, i32, i32, i32),
+    /// The invalidated rows, as a half-open range.
+    pub invalidated_rows: (u16, u16),
+    /// The horizontal scroll offset in columns.
+    pub scroll_offset_x: i32,
+    /// The vertical scroll delta in pixels.
+    pub scroll_delta_y: i16,
+}
+
+impl Default for RenderingPayload {
+    fn default() -> Self {
+        Self {
+            settings: Settings::default(),
+            rows: Vec::new(),
+            color_bitmap: Vec::new(),
+            color_bitmap_row_stride: 0,
+            color_bitmap_depth_stride: 0,
+            // A generation of 1 forces the first Present to upload the bitmaps.
+            color_bitmap_generations: [1, 1, 1],
+            cursor_rect: (0, 0, 0, 0),
+            dirty_rect_in_px: (0, 0, 0, 0),
+            invalidated_rows: (0, 0),
+            scroll_offset_x: 0,
+            scroll_delta_y: 0,
+        }
+    }
+}
+
+impl RenderingPayload {
+    /// Marks the whole target and every row dirty and clears the scroll delta.
+    pub fn mark_all_as_dirty(&mut self) {
+        let (width, height) = self.settings.target_size;
+        self.dirty_rect_in_px = (0, 0, i32::from(width), i32::from(height));
+        self.invalidated_rows = (0, self.settings.viewport_cell_count.1);
+        self.scroll_delta_y = 0;
+    }
+}
+
+/// A graphics backend for the atlas engine.
+///
+/// Ported from `common.h`'s `IBackend`. The backend owns its device and surface;
+/// this trait only hands it the per-frame [`RenderingPayload`].
+pub trait IBackend {
+    /// Releases device and surface resources.
+    fn release_resources(&mut self);
+
+    /// Renders one frame.
+    fn render(&mut self, payload: &mut RenderingPayload);
+
+    /// Returns whether the backend needs an immediate second frame.
+    fn requires_continuous_redraw(&mut self) -> bool;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +588,76 @@ mod tests {
         assert_eq!(row.mappings[0].glyphs_to, 1);
         assert_eq!(row.mappings[1].glyphs_from, 1);
         assert_eq!(row.mappings[1].glyphs_to, 2);
+    }
+
+    #[test]
+    fn font_settings_defaults_match_upstream() {
+        let font = FontSettings::default();
+        assert_eq!(font.dpi, 96);
+        assert!(font.color_glyphs);
+        assert!(!font.builtin_glyphs);
+        assert_eq!(font.antialiasing_mode, AntialiasingMode::ClearType);
+        assert!(font.soft_font_pattern.is_empty());
+    }
+
+    #[test]
+    fn settings_default_carries_the_misc_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.misc.selection_color, 0xFFFF_FFFF);
+        assert_eq!(settings.misc.selection_foreground, 0xFF00_0000);
+        assert_eq!(settings.font.dpi, 96);
+        assert_eq!(settings.target_size, (0, 0));
+    }
+
+    #[test]
+    fn a_payload_starts_asking_for_a_bitmap_upload() {
+        let payload = RenderingPayload::default();
+        assert_eq!(payload.color_bitmap_generations, [1, 1, 1]);
+        assert!(payload.rows.is_empty());
+    }
+
+    #[test]
+    fn marking_all_dirty_covers_the_target_and_clears_the_scroll() {
+        let mut payload = RenderingPayload::default();
+        payload.settings.target_size = (120, 30);
+        payload.settings.viewport_cell_count = (15, 3);
+        payload.scroll_delta_y = -7;
+
+        payload.mark_all_as_dirty();
+
+        assert_eq!(payload.dirty_rect_in_px, (0, 0, 120, 30));
+        assert_eq!(payload.invalidated_rows, (0, 3));
+        assert_eq!(payload.scroll_delta_y, 0);
+    }
+
+    struct MockBackend {
+        renders: usize,
+        released: bool,
+    }
+
+    impl IBackend for MockBackend {
+        fn release_resources(&mut self) {
+            self.released = true;
+        }
+        fn render(&mut self, _payload: &mut RenderingPayload) {
+            self.renders += 1;
+        }
+        fn requires_continuous_redraw(&mut self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn the_backend_trait_is_object_safe() {
+        let mut backend: Box<dyn IBackend> = Box::new(MockBackend {
+            renders: 0,
+            released: false,
+        });
+        let mut payload = RenderingPayload::default();
+
+        backend.render(&mut payload);
+        backend.release_resources();
+
+        assert!(!backend.requires_continuous_redraw());
     }
 }
