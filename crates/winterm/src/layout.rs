@@ -39,6 +39,10 @@ pub struct Fraction {
     pub height: f32,
 }
 
+/// A split node addressed by child indices from the root: `0` is a first
+/// child, `1` a second one.
+pub type SplitPath = Vec<usize>;
+
 impl Fraction {
     /// The whole area.
     pub const FULL: Self = Self {
@@ -222,6 +226,62 @@ impl Layout {
                 first.collect_rects(first_rect, rects);
                 second.collect_rects(second_rect, rects);
             }
+        }
+    }
+
+    /// Returns every split with its path, axis, area and ratio.
+    ///
+    /// Pre-order: a parent comes before its children, so a caller that walks
+    /// backwards takes the deepest split first. The area is the space the split
+    /// divides, which is what places its divider on screen.
+    pub fn splits(&self) -> Vec<(SplitPath, Axis, Fraction, f32)> {
+        let mut splits = Vec::new();
+        self.collect_splits(Fraction::FULL, &mut Vec::new(), &mut splits);
+        splits
+    }
+
+    fn collect_splits(&self, rect: Fraction, path: &mut SplitPath, splits: &mut Vec<(SplitPath, Axis, Fraction, f32)>) {
+        let Self::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return;
+        };
+
+        splits.push((path.clone(), *axis, rect, *ratio));
+        let (first_rect, second_rect) = divide(rect, *axis, *ratio);
+
+        path.push(0);
+        first.collect_splits(first_rect, path, splits);
+        path.pop();
+
+        path.push(1);
+        second.collect_splits(second_rect, path, splits);
+        path.pop();
+    }
+
+    /// Moves the divider at `path`, clamped like a keyboard resize.
+    ///
+    /// Returns `false` when the path does not name a split.
+    pub fn set_ratio(&mut self, path: &[usize], value: f32) -> bool {
+        let Some((index, rest)) = path.split_first() else {
+            let Self::Split { ratio, .. } = self else {
+                return false;
+            };
+            *ratio = value.clamp(MIN_RATIO, MAX_RATIO);
+            return true;
+        };
+
+        let Self::Split { first, second, .. } = self else {
+            return false;
+        };
+        match index {
+            0 => first.set_ratio(rest, value),
+            1 => second.set_ratio(rest, value),
+            _ => false,
         }
     }
 }
@@ -509,6 +569,48 @@ mod tests {
 
         assert!(layout.resize(PaneId(1), Direction::Left, 5.0));
         assert!(close(layout.rects()[0].1.width, MIN_RATIO));
+    }
+
+    #[test]
+    fn splits_are_addressed_by_their_child_indices() {
+        let layout = grid();
+        let splits = layout.splits();
+
+        assert_eq!(splits.len(), 3);
+        assert_eq!(splits[0].0, SplitPath::new());
+        assert_eq!(splits[0].1, Axis::Horizontal);
+        assert_eq!(splits[0].2, Fraction::FULL);
+        assert_eq!(splits[1].0, vec![0]);
+        assert_eq!(splits[1].1, Axis::Vertical);
+        assert_eq!(splits[2].0, vec![1]);
+        assert_eq!(splits[2].1, Axis::Vertical);
+    }
+
+    #[test]
+    fn setting_a_ratio_moves_only_the_split_it_addresses() {
+        let mut layout = grid();
+        // `[0]` is the left half's vertical split, so it divides heights.
+        assert!(layout.set_ratio(&[0], 0.25));
+
+        let rects = layout.rects();
+        assert!(close(rects[0].1.height, 0.25));
+        assert!(close(rects[1].1.y, 0.25));
+        assert!(close(rects[1].1.height, 0.75));
+        // The widths still come from the root's 50/50 divider.
+        assert!(close(rects[1].1.width, 0.5));
+        assert!(close(layout.splits()[0].3, 0.5));
+    }
+
+    #[test]
+    fn setting_a_ratio_clamps_and_rejects_a_bad_path() {
+        let mut layout = grid();
+
+        assert!(layout.set_ratio(&[], 5.0));
+        assert!(close(layout.splits()[0].3, MAX_RATIO));
+
+        // A leaf has no ratio, and 2 is not a child index.
+        assert!(!layout.set_ratio(&[0, 0, 0], 0.5));
+        assert!(!layout.set_ratio(&[2], 0.5));
     }
 
     #[test]

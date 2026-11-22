@@ -35,6 +35,8 @@ const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204
 const FALLBACK_SELECTION: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
 /// The line between panes.
 const DIVIDER: egui::Color32 = egui::Color32::from_rgb(60, 60, 60);
+/// How close to a divider a press has to be, in pixels, to grab it.
+const DIVIDER_GRAB: f32 = 4.0;
 /// The line around the focused pane.
 const FOCUS_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 140, 200);
 
@@ -545,11 +547,21 @@ impl Pane {
     }
 }
 
+/// A divider the pointer is dragging.
+struct DividerDrag {
+    path: layout::SplitPath,
+    axis: Axis,
+    /// The split's area when the drag began, for turning pixels into a ratio.
+    rect: egui::Rect,
+}
+
 /// One tab: a pane tree, its focused pane and a title.
 struct Tab {
     panes: Vec<Pane>,
     layout: Layout,
     focused: PaneId,
+    /// The divider under the pointer, while it is being dragged.
+    divider: Option<DividerDrag>,
     /// The title to show until a pane's shell sets one.
     fallback_title: String,
     next_id: u64,
@@ -567,6 +579,7 @@ impl Tab {
             panes: vec![Pane::new(ctx, id, command, scheme)?],
             layout: Layout::leaf(id),
             focused: id,
+            divider: None,
             fallback_title,
             next_id: 1,
         })
@@ -660,10 +673,37 @@ impl Tab {
     }
 
     /// Routes the pointer to the pane under it, focusing that pane on a press.
+    ///
+    /// A divider under the pointer takes precedence: it is grabbed on a press,
+    /// dragged while the button is down, and consumes the pointer so a resize
+    /// never starts a selection in the pane beneath it.
     fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2, sides: ModifierSides) {
+        if self.divider.is_some() && !ctx.input(|input| input.pointer.primary_down()) {
+            self.divider = None;
+        }
+
         let Some(position) = ctx.input(|input| input.pointer.hover_pos()) else {
             return;
         };
+
+        if let Some(drag) = &self.divider {
+            let ratio = match drag.axis {
+                Axis::Horizontal => (position.x - drag.rect.min.x) / drag.rect.width(),
+                Axis::Vertical => (position.y - drag.rect.min.y) / drag.rect.height(),
+            };
+            self.layout.set_ratio(&drag.path, ratio);
+            ctx.set_cursor_icon(divider_cursor(drag.axis));
+            return;
+        }
+
+        if let Some((path, axis, rect)) = divider_at(&self.layout, position, area) {
+            ctx.set_cursor_icon(divider_cursor(axis));
+            if ctx.input(|input| input.pointer.primary_pressed()) {
+                self.divider = Some(DividerDrag { path, axis, rect });
+            }
+            return;
+        }
+
         let pressed = ctx.input(|input| input.pointer.primary_pressed());
 
         let hit = self.layout.rects().into_iter().find_map(|(id, fraction)| {
@@ -736,6 +776,45 @@ fn fraction_rect(fraction: Fraction, area: egui::Rect) -> egui::Rect {
         ),
         egui::vec2(fraction.width * area.width(), fraction.height * area.height()),
     )
+}
+
+/// The split whose divider is under `position`, deepest first.
+///
+/// A divider is the edge two children share; a point within `DIVIDER_GRAB`
+/// pixels of it, inside the split's own area, grabs that split. Walking
+/// backwards prefers a nested divider over an ancestor's collinear one.
+fn divider_at(
+    layout: &Layout,
+    position: egui::Pos2,
+    area: egui::Rect,
+) -> Option<(layout::SplitPath, Axis, egui::Rect)> {
+    layout
+        .splits()
+        .into_iter()
+        .rev()
+        .find_map(|(path, axis, fraction, ratio)| {
+            let rect = fraction_rect(fraction, area);
+            let (distance, on_span) = match axis {
+                Axis::Horizontal => (
+                    (position.x - (rect.min.x + rect.width() * ratio)).abs(),
+                    rect.min.y <= position.y && position.y <= rect.max.y,
+                ),
+                Axis::Vertical => (
+                    (position.y - (rect.min.y + rect.height() * ratio)).abs(),
+                    rect.min.x <= position.x && position.x <= rect.max.x,
+                ),
+            };
+
+            (on_span && distance <= DIVIDER_GRAB).then_some((path, axis, rect))
+        })
+}
+
+/// The pointer shape that says a divider can be dragged.
+const fn divider_cursor(axis: Axis) -> egui::CursorIcon {
+    match axis {
+        Axis::Horizontal => egui::CursorIcon::ResizeHorizontal,
+        Axis::Vertical => egui::CursorIcon::ResizeVertical,
+    }
 }
 
 /// The window: a tab strip and the active tab.
@@ -950,6 +1029,9 @@ impl eframe::App for App {
 
         tab.fit_panes(area, cell);
         tab.handle_pointer(&ctx, area, cell, sides);
+        // A drag moved a divider; size the panes to the new rectangles now
+        // rather than a frame later.
+        tab.fit_panes(area, cell);
         tab.handle_events(forwarded, &mut self.sides);
 
         let screen = tab.focused_snapshot();
@@ -1758,6 +1840,45 @@ mod tests {
         assert_eq!(chord_key(egui::Key::F5), Some(settings::Key::Function(5)));
         assert_eq!(chord_key(egui::Key::PageDown), Some(settings::Key::PageDown));
         assert_eq!(chord_key(egui::Key::BrowserBack), None);
+    }
+
+    #[test]
+    fn a_pointer_near_a_divider_names_that_split() {
+        let mut layout = Layout::leaf(PaneId(0));
+        assert!(layout.split(PaneId(0), Axis::Horizontal, PaneId(1)));
+        assert!(layout.split(PaneId(1), Axis::Vertical, PaneId(2)));
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
+
+        // The root's divider is the vertical line at x = 100.
+        let (path, axis, _) = divider_at(&layout, egui::pos2(102.0, 20.0), area).expect("divider");
+        assert_eq!(path, layout::SplitPath::new());
+        assert_eq!(axis, Axis::Horizontal);
+
+        // The nested divider is the horizontal line at y = 50, on the right.
+        let (path, axis, _) = divider_at(&layout, egui::pos2(150.0, 52.0), area).expect("divider");
+        assert_eq!(path, vec![1]);
+        assert_eq!(axis, Axis::Vertical);
+
+        // Away from both, the point belongs to a pane; a point past the grab
+        // distance is a pane's too, and so is one beside a nested divider's
+        // span.
+        assert_eq!(divider_at(&layout, egui::pos2(40.0, 20.0), area), None);
+        assert_eq!(divider_at(&layout, egui::pos2(110.0, 20.0), area), None);
+        assert_eq!(divider_at(&layout, egui::pos2(50.0, 51.0), area), None);
+    }
+
+    #[test]
+    fn where_a_divider_meets_another_the_deeper_one_wins() {
+        let mut layout = Layout::leaf(PaneId(0));
+        assert!(layout.split(PaneId(0), Axis::Horizontal, PaneId(1)));
+        assert!(layout.split(PaneId(1), Axis::Vertical, PaneId(2)));
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
+
+        // A pixel from the T-junction: both the root's vertical divider and the
+        // nested horizontal one are close.
+        let (path, axis, _) = divider_at(&layout, egui::pos2(101.0, 51.0), area).expect("divider");
+        assert_eq!(path, vec![1]);
+        assert_eq!(axis, Axis::Vertical);
     }
 
     #[test]
