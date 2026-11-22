@@ -491,7 +491,7 @@ impl AdaptDispatch {
                 // Only act on the delayed wrap if the cursor has not moved since
                 // it was marked; a CUP in between cancels it.
                 if wrap_at_eol && delayed == (row, col) {
-                    line_feed_in_region(&mut buffer, top, bottom, left, right);
+                    do_line_feed(&mut buffer, top, bottom, left, right, true, true);
                     (row, col) = buffer.cursor().position();
                 }
             }
@@ -539,16 +539,32 @@ impl AdaptDispatch {
 }
 
 /// Ported from the non-scrolling and margin-scrolling arms of `_DoLineFeed`:
-/// move down one row with an optional return to the left margin, or scroll the
-/// region up when already on the bottom margin.
-fn line_feed_in_region(buffer: &mut buffer::TextBuffer, top: VTInt, bottom: VTInt, left: VTInt, right: VTInt) {
+/// Ported from `_DoLineFeed`: move down one row with an optional return to the
+/// left margin, or scroll the region up when already on the bottom margin.
+///
+/// `wrap_forced` records on the row that it was broken by a wrap rather than by
+/// an explicit line feed; reflow will read it.
+fn do_line_feed(
+    buffer: &mut buffer::TextBuffer,
+    top: VTInt,
+    bottom: VTInt,
+    left: VTInt,
+    right: VTInt,
+    with_return: bool,
+    wrap_forced: bool,
+) {
     let (row, column) = buffer.cursor().position();
     let height = buffer.screen_height();
 
-    let new_column = if row >= top && row <= bottom && column >= left {
-        left
+    if let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) {
+        buffer_row.set_wrap(wrap_forced);
+    }
+
+    let new_column = if with_return {
+        let clamp_to_margin = row >= top && row <= bottom && column >= left;
+        if clamp_to_margin { left } else { 0 }
     } else {
-        0
+        column
     };
 
     if row != bottom || new_column < left || new_column > right {
@@ -621,6 +637,76 @@ impl ITermDispatch for AdaptDispatch {
         let current = self.page_manager.active_page().attributes();
         let restored = self.sgr_stack.pop(current);
         self.page_manager.active_page().set_attributes(restored);
+    }
+
+    fn carriage_return(&mut self) {
+        self.move_cursor(Offset::unchanged(), Offset::absolute(1), true);
+    }
+
+    fn line_feed(&mut self, line_feed_type: LineFeedType) {
+        let with_return = match line_feed_type {
+            LineFeedType::DependsOnMode => self.modes.contains(ModeFlags::LNM),
+            LineFeedType::WithReturn => true,
+            LineFeedType::WithoutReturn => false,
+        };
+
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        do_line_feed(&mut buffer, top, bottom, left, right, with_return, false);
+    }
+
+    fn reverse_line_feed(&mut self) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+
+        if row == top && column >= left && column <= right {
+            // At the top of the region there is nowhere to go, so the content is
+            // pushed down instead: an inserted line at the margin.
+            buffer.scroll_region_down(top, bottom);
+        } else if row > 0 {
+            buffer.cursor_mut().set_position(row - 1, column);
+        }
+    }
+
+    fn back_index(&mut self) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+
+        if column == left && row >= top && row <= bottom {
+            buffer.scroll_region_right(top, bottom, left, right);
+        } else if column > 0 {
+            buffer.cursor_mut().set_position(row, column - 1);
+        }
+    }
+
+    fn forward_index(&mut self) {
+        let (page_width, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        let (left, right) = self.effective_horizontal_margins(page_width);
+
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+
+        if column == right && row >= top && row <= bottom {
+            buffer.scroll_region_left(top, bottom, left, right);
+        } else if column < page_width - 1 {
+            buffer.cursor_mut().set_position(row, column + 1);
+        }
     }
 
     fn cursor_up(&mut self, distance: VTInt) {
@@ -904,6 +990,11 @@ mod tests {
         dispatch.set_character_protection_attribute(&VTParameters::default());
         dispatch.push_graphics_rendition(&VTParameters::default());
         dispatch.pop_graphics_rendition();
+        dispatch.carriage_return();
+        dispatch.line_feed(LineFeedType::WithoutReturn);
+        dispatch.reverse_line_feed();
+        dispatch.back_index();
+        dispatch.forward_index();
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
@@ -949,6 +1040,92 @@ mod tests {
 
         dispatch.pop_graphics_rendition();
         assert!(page_attributes(&mut dispatch).is_intense());
+    }
+
+    #[test]
+    fn line_feed_moves_down_without_returning() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 6);
+        dispatch.line_feed(LineFeedType::WithoutReturn);
+        assert_eq!(dispatch.active_cursor_position(), (1, 5));
+    }
+
+    #[test]
+    fn line_feed_with_lnm_returns_to_the_margin() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 6);
+        dispatch.set_mode(ModeFlags::LNM, true);
+        dispatch.line_feed(LineFeedType::DependsOnMode);
+        assert_eq!(dispatch.active_cursor_position(), (1, 0));
+    }
+
+    #[test]
+    fn line_feed_at_the_bottom_scrolls_the_region() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(2, 1);
+        dispatch.print('B');
+        dispatch.cursor_position(24, 1);
+        dispatch.line_feed(LineFeedType::WithoutReturn);
+
+        assert_eq!(dispatch.active_cursor_position(), (23, 0));
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "B");
+        assert_eq!(cell_text(&mut dispatch, 23, 0), " ");
+    }
+
+    // RI at the top margin has nowhere to go, so it inserts a line instead.
+    #[test]
+    fn reverse_line_feed_at_the_top_inserts_a_line() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('A');
+        dispatch.cursor_position(1, 1);
+        dispatch.reverse_line_feed();
+
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "A");
+    }
+
+    #[test]
+    fn reverse_line_feed_moves_up_otherwise() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(5, 3);
+        dispatch.reverse_line_feed();
+        assert_eq!(dispatch.active_cursor_position(), (3, 2));
+    }
+
+    #[test]
+    fn carriage_return_respects_the_left_margin() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_left_right_scrolling_margins(5, 75);
+        dispatch.cursor_position(1, 10);
+        dispatch.carriage_return();
+
+        assert_eq!(dispatch.active_cursor_position(), (0, 4));
+    }
+
+    #[test]
+    fn back_index_scrolls_right_at_the_left_margin() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print('A');
+        dispatch.print('B');
+        dispatch.cursor_position(1, 1);
+        dispatch.back_index();
+
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "A");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), "B");
+    }
+
+    #[test]
+    fn forward_index_scrolls_left_at_the_right_margin() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 2);
+        dispatch.print('A');
+        dispatch.cursor_position(1, 80);
+        dispatch.forward_index();
+
+        assert_eq!(dispatch.active_cursor_position(), (0, 79));
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "A");
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {

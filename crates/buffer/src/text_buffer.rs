@@ -395,6 +395,60 @@ impl TextBuffer {
         self.mutation_id += 1;
     }
 
+    /// Scrolls the rows in `top..=bottom` down by one, clearing the top row.
+    ///
+    /// The reverse of [`TextBuffer::scroll_region_up`], used by RI when the
+    /// cursor is already at the top margin.
+    pub fn scroll_region_down(&mut self, top: i32, bottom: i32) {
+        if bottom <= top || top < 0 || bottom >= self.screen_height {
+            return;
+        }
+        for row in (top + 1..=bottom).rev() {
+            self.copy_row(row, row - 1);
+        }
+        let blank = OutputCell::from_char(' ');
+        self.fill_rect(top, 0, top, self.screen_width - 1, &blank);
+        self.mutation_id += 1;
+    }
+
+    /// Shifts the cells in `left..=right` one column left on every row of the
+    /// region, blanking the rightmost column (DECFI).
+    pub fn scroll_region_left(&mut self, top: i32, bottom: i32, left: i32, right: i32) {
+        if right <= left {
+            return;
+        }
+        for row_index in top..=bottom {
+            let Some(source) = self.get_row_at_screen_line(row_index).cloned() else {
+                continue;
+            };
+            let Some(destination) = self.get_row_at_screen_line_mut(row_index) else {
+                continue;
+            };
+            destination.copy_text_from(left, &source, left + 1, right - left);
+            destination.write_cell(right, OutputCell::from_char(' '));
+        }
+        self.mutation_id += 1;
+    }
+
+    /// Shifts the cells in `left..=right` one column right on every row of the
+    /// region, blanking the leftmost column (DECBI).
+    pub fn scroll_region_right(&mut self, top: i32, bottom: i32, left: i32, right: i32) {
+        if right <= left {
+            return;
+        }
+        for row_index in top..=bottom {
+            let Some(source) = self.get_row_at_screen_line(row_index).cloned() else {
+                continue;
+            };
+            let Some(destination) = self.get_row_at_screen_line_mut(row_index) else {
+                continue;
+            };
+            destination.copy_text_from(left + 1, &source, left, right - left);
+            destination.write_cell(left, OutputCell::from_char(' '));
+        }
+        self.mutation_id += 1;
+    }
+
     /// Scrolls rows up by the given count.
     pub fn scroll_rows_up(&mut self, count: i32) {
         if count <= 0 {
@@ -588,6 +642,55 @@ impl std::fmt::Display for TextBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_text_at(buffer: &mut TextBuffer, row: i32, column: i32, text: &str) {
+        for (offset, ch) in text.chars().enumerate() {
+            if let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) {
+                buffer_row.write_char(column + offset as i32, ch, false);
+            }
+        }
+    }
+
+    fn text_at(buffer: &TextBuffer, row: i32, column: i32) -> String {
+        buffer.get_text_data_at(row, column).unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn scroll_region_down_moves_rows_and_blanks_the_top() {
+        let mut buffer = TextBuffer::with_dimensions(10, 4, 0);
+        write_text_at(&mut buffer, 0, 0, "top");
+        write_text_at(&mut buffer, 1, 0, "mid");
+
+        buffer.scroll_region_down(0, 3);
+
+        assert_eq!(text_at(&buffer, 1, 0), "t");
+        assert_eq!(text_at(&buffer, 2, 0), "m");
+        assert_eq!(text_at(&buffer, 0, 0), " ");
+    }
+
+    #[test]
+    fn scroll_region_left_shifts_cells_and_blanks_the_right_column() {
+        let mut buffer = TextBuffer::with_dimensions(4, 1, 0);
+        write_text_at(&mut buffer, 0, 0, "abcd");
+
+        buffer.scroll_region_left(0, 0, 0, 3);
+
+        assert_eq!(text_at(&buffer, 0, 0), "b");
+        assert_eq!(text_at(&buffer, 0, 2), "d");
+        assert_eq!(text_at(&buffer, 0, 3), " ");
+    }
+
+    #[test]
+    fn scroll_region_right_shifts_cells_and_blanks_the_left_column() {
+        let mut buffer = TextBuffer::with_dimensions(4, 1, 0);
+        write_text_at(&mut buffer, 0, 0, "abcd");
+
+        buffer.scroll_region_right(0, 0, 0, 3);
+
+        assert_eq!(text_at(&buffer, 0, 0), " ");
+        assert_eq!(text_at(&buffer, 0, 1), "a");
+        assert_eq!(text_at(&buffer, 0, 3), "c");
+    }
 
     #[test]
     fn test_new_buffer() {

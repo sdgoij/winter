@@ -11,12 +11,12 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
 | `types` | ~1.9k | 78 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
-| `buffer` | ~4.6k | 175 | Phase 2 partial — no `resize`/`reflow` |
+| `buffer` | ~4.8k | 178 | Phase 2 partial — no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~5.4k | 72 | Phase 4 state and interfaces; print, SGR, cursor and margin handlers ported |
+| `adapter` | ~5.7k | 80 | Phase 4 state and interfaces; print, SGR, cursor, margin and line-feed handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-585 tests, doc tests. Phases 5–14 are not started.
+596 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -36,10 +36,11 @@ settled.
    styles, faint/blink/intense/inverse/italic/crossed-out/invisible/overline,
    and XTPUSHSGR/XTPOPSGR through `types::SgrStack`), DECSCA protection, cursor
    positioning (CUU, CUD, CUF, CUB, CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and
-   the scrolling margins (DECSTBM, DECSLRM behind DECLRMM). Everything else falls
-   through to the trait default, which `AdaptDispatch::unhandled` records; the
-   ratchet test in `adapt_dispatch.rs` names the ported set and must grow with
-   each family. Next in dependency order: line feed and index, erase, modes.
+   the scrolling margins (DECSTBM, DECSLRM behind DECLRMM), and the line controls
+   (CR, LF/IND/NEL with LNM, RI, DECBI, DECFI). Everything else falls through to
+   the trait default, which `AdaptDispatch::unhandled` records; the ratchet test
+   in `adapt_dispatch.rs` names the ported set and must grow with each family.
+   Next in dependency order: erase, modes, device reports.
 
 2. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
    deliverable and `TextBuffer` has no method for it. This is the most expensive
