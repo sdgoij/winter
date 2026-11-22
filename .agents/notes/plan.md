@@ -13,10 +13,10 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~2.6k | 85 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables, `SgrStack` and the colour table |
 | `buffer` | ~6.2k | 200 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~9.7k | 140 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, save-restore and tab handlers ported |
+| `adapter` | ~9.9k | 142 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-685 tests, doc tests. Phases 5–14 are not started.
+687 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -48,11 +48,12 @@ settled.
    clipboard), macros (DECDMAC text/hex with repeats, DECINVM, DECMSR,
    DECCKSR), window manipulation (CSI 1/2/3/7/8/14/16/18 t, with the
    reports answered from the visible page), and the colour table (OSC
-   4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report).
+   from the visible page), the colour table (OSC
+   4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report), and
+   sixel (DCS `q`, decoded into row bands; see the sixel entry below).
    Still ported nowhere: DECAC colour assignment, presentation state
-   (DECRQPSR/DECRSPS), sixel/DCS and DRCS (storage exists per ADR 005; the
-   decoders are the next step), and the ConEmu/iTerm2/FinalTerm/VS
-   Code/WT action strings.
+   (DECRQPSR/DECRSPS), DRCS (storage exists per ADR 005; the decoder is the
+   next step), and the ConEmu/iTerm2/FinalTerm/VS Code/WT action strings.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -69,7 +70,7 @@ settled.
   `copy_row` and the vertical scroll move the band, horizontal scroll leaves it
   alone (as upstream does), reflow keeps the first row's band on the first
   destination row, and DECCRA copies bands across pages from a snapshot. The
-  sixel and DRCS decoders are the remaining step and now have
+  DRCS decoder is the remaining step and now has
   `ImageSlice::mutable_pixels` to write through.
 
 - **The colour table and its reports are ported.** `types::ColorTable` is the
@@ -96,18 +97,37 @@ settled.
   directly: its column count is terminal state, while the window size belongs
   to the host.
 
-- **Macros are ported; sixel/DCS is blocked.** `MacroBuffer` now carries
-  upstream's definition parser (text and hex-pair encodings, `!count;…;`
-  repeats, the 64 macro ids and 256 KiB shared budget), its checksum and its
-  reset semantics. DECDMAC returns the handler, DECINVM queues the sequence, and
-  DECMSR/DECCKSR answer from the buffer. Upstream injects an invoked macro into
-  its own state machine; with no parser here the bytes go to the application
-  through `take_macro_input`, so the re-entrancy guard is the application's job.
+- **Macros are ported; sixel is ported; DRCS is next.** `MacroBuffer` now
+  carries upstream's definition parser (text and hex-pair encodings,
+  `!count;…;` repeats, the 64 macro ids and 256 KiB shared budget), its
+  checksum and its reset semantics. DECDMAC returns the handler, DECINVM
+  queues the sequence, and DECMSR/DECCKSR answer from the buffer. Upstream
+  injects an invoked macro into its own state machine; with no parser here the
+  bytes go to the application through `take_macro_input`, so the re-entrancy
+  guard is the application's job.
 
-  Sixel and DRCS have no handler yet: the storage now exists (see the image
-  entry above), so the next step is the decoder itself, writing through
-  `ImageSlice::mutable_pixels` and creating one band per affected row. The
-  renderer is still required before any of it can be seen.
+  `define_sixel_image` now returns the DCS handler. `SixelParser` is the real
+  decoder: the `#` colour, `!` repeat, `$` carriage return, `-` next line, `+`
+  home and level-3 raster-attribute commands; the VT340 palette for 0–15 and
+  the xterm cube and greys for 16–255; colour-number mapping with the VT240
+  nearest-colour fallback; the aspect ratio from the DCS parameter and raster
+  attributes; six-pixel columns honoured through the aspect ratio; and an
+  opaque or transparent background. At ESC the decoded image is painted into
+  the starting row's band and the rows below it, growing each band to whole
+  cells. The cursor is hidden for the duration and restored afterwards.
+
+  Two upstream deviations, both cosmetic to an application:
+
+  - The image is decoded whole and painted at ESC. Upstream flushes it
+    periodically so palette animation is visible mid-image; no host here can
+    display it before the DCS ends.
+  - With display mode reset, upstream pans and clips at the page margins.
+    This scrolls the page to make room and clamps at the bottom, which is the
+    same visible result for images that fit on one screen.
+
+  DRCS has no handler yet: the storage exists (see the image entry above), so
+  the next step is its decoder, writing through `ImageSlice::mutable_pixels`.
+  The renderer is still required before any of it can be seen.
 
 - **Hyperlinks and OSC 0/2, 7 and 52 are ported.** OSC 8 allocates a numeric id
   (`TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`, which every upstream
@@ -574,12 +594,13 @@ The Windows Terminal codebase maps to these Rust module groups:
   - Methods: get(), active_page(), visible_page(), move_to(), move_relative(), make_active_page_visible()
   - activate_alternate()/deactivate_alternate() for screen buffer switching
   - 7 unit tests including: main→alternate, alternate→main, relative moves, invalid page validation
-- [x] `winterm/crates/adapter/src/sixel_parser.rs` — Sixel parsing
-  - SixelParser with state machine (Normal/Attributes/Color/Repeat states)
-  - Color table management (256 colors), image buffer, dimensions tracking
-  - Static methods: cell_size_for_level(), max_colors_for_level()
-  - Command/parameter parsing, soft reset, display mode control
-  - 8 unit tests passing
+- [x] `winterm/crates/adapter/src/sixel_parser.rs` — Sixel decoding
+  - SixelParser state machine (Normal/Attributes/Color/Repeat) and command
+    dispatch for `#`, `!`, `$`, `-`, `+`, `"` and ESC
+  - VT340 palette, xterm cube and greys, colour mapping, VT240 fallback
+  - Aspect-ratio-aware sixel columns, opaque/transparent background filling
+  - DecodedImage handed to the adapter, which paints row bands
+  - 9 decoder tests plus an adapter-level paint test
 - [x] `winterm/crates/adapter/src/terminal_output.rs` — Character set translation
   - TerminalOutput for GL/GR character set translation management
   - Methods: designate_94_charset(), designate_96_charset(), translate_key(), locking_shift()
@@ -601,7 +622,8 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] Page management — covered in page_manager.rs tests (buffer switching, state restoration)
 - [x] Macro operations — covered in macro_buffer.rs tests (define/invoke/delete)
 - [x] Font operations — covered in font_buffer.rs tests (add/duplicate/clear)
-- [x] Sixel parsing — covered in sixel_parser.rs tests (state transitions, parameters)
+- [x] Sixel parsing — covered in sixel_parser.rs tests (commands, palette,
+  aspect ratio, background) and adapt_dispatch.rs (payload paints a row band)
 - [x] Charset translation — covered in terminal_output.rs and charsets.rs tests
 
 ### Implementation Notes

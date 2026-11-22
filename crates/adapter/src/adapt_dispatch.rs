@@ -9,7 +9,7 @@
 //! `AdaptDispatch::unhandled` records.
 
 use crate::dispatch_types::*;
-use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
+use crate::sixel_parser::{DecodedImage, SIXEL_DEFAULT_CONFORMANCE};
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
 use types::color_table::{
@@ -130,7 +130,7 @@ pub struct AdaptDispatch {
     /// Terminal output state.
     term_output: TerminalOutput,
     /// Sixel parser.
-    sixel_parser: SixelParser,
+    sixel_parser: std::sync::Arc<std::sync::Mutex<SixelParser>>,
     /// Font buffer.
     font_buffer: FontBuffer,
     /// Macro buffer.
@@ -194,7 +194,7 @@ impl AdaptDispatch {
         Self {
             page_manager: PageManager::new(),
             term_output: TerminalOutput::new(false),
-            sixel_parser: SixelParser::new(SIXEL_DEFAULT_CONFORMANCE),
+            sixel_parser: std::sync::Arc::new(std::sync::Mutex::new(SixelParser::new(SIXEL_DEFAULT_CONFORMANCE))),
             font_buffer: FontBuffer::new(),
             macro_buffer: std::sync::Arc::new(std::sync::Mutex::new(MacroBuffer::new())),
             color_table: std::sync::Arc::new(std::sync::Mutex::new(ColorTable::new())),
@@ -458,13 +458,8 @@ impl AdaptDispatch {
     }
 
     /// Returns the sixel parser.
-    pub fn sixel_parser(&self) -> &SixelParser {
-        &self.sixel_parser
-    }
-
-    /// Returns the sixel parser mutably.
-    pub fn sixel_parser_mut(&mut self) -> &mut SixelParser {
-        &mut self.sixel_parser
+    pub fn sixel_parser(&self) -> std::sync::Arc<std::sync::Mutex<SixelParser>> {
+        std::sync::Arc::clone(&self.sixel_parser)
     }
 
     /// Returns the macro buffer.
@@ -536,7 +531,7 @@ impl AdaptDispatch {
         self.scroll_left_margin = 0;
         self.scroll_right_margin = 0;
         self.term_output.soft_reset();
-        self.sixel_parser.soft_reset();
+        self.sixel_parser.lock().unwrap_or_else(|e| e.into_inner()).soft_reset();
     }
 
     /// Hard resets the adapter.
@@ -1107,6 +1102,105 @@ fn xterm_color_mapping(resource: usize) -> Option<(usize, Option<ColorAlias>)> {
 /// Decodes upstream's `COLORREF` packing (`0x00BBGGRR`).
 fn colorref_to_text_color(color: u32) -> TextColor {
     TextColor::rgb(color as u8, (color >> 8) as u8, (color >> 16) as u8)
+}
+
+/// Paints a decoded sixel image into the buffer's row image bands (ADR 005).
+///
+/// Display mode set clamps the image at the bottom of the page, as the VT240
+/// does; with it reset the page scrolls to make room. Returns the text cursor
+/// row the image ends on.
+fn paint_sixel_image(
+    buffer: &mut buffer::TextBuffer,
+    start: (i32, i32),
+    image: &DecodedImage,
+    display_mode: bool,
+) -> i32 {
+    let (cell_width, cell_height) = image.cell_size;
+    let page_width = buffer.screen_width();
+    let page_height = buffer.screen_height();
+    if cell_width <= 0 || cell_height <= 0 || start.1 >= page_width {
+        return start.0;
+    }
+
+    let available_columns = page_width - start.1;
+    let cells_wide = ((image.width + cell_width - 1) / cell_width).min(available_columns);
+    if cells_wide <= 0 {
+        return start.0;
+    }
+    let band_width = cells_wide * cell_width;
+    if band_width > image.stride {
+        return start.0;
+    }
+
+    let rows = (image.height + cell_height - 1) / cell_height;
+    let mut scrolled = 0;
+    let mut last_row = start.0;
+
+    for cell_row in 0..rows {
+        let mut dest = start.0 + cell_row - scrolled;
+        while dest >= page_height {
+            if display_mode {
+                return last_row;
+            }
+            buffer.scroll_region_up(0, page_height - 1);
+            scrolled += 1;
+            dest -= 1;
+        }
+        if dest < 0 {
+            continue;
+        }
+
+        let top = cell_row * cell_height;
+        let mut band_pixels = vec![0u32; (band_width * cell_height) as usize];
+        let mut any_visible = false;
+        for py in 0..cell_height {
+            let source_y = top + py;
+            if source_y >= image.height {
+                break;
+            }
+            for px in 0..band_width {
+                let value = image.pixels[(source_y * image.stride + px) as usize];
+                any_visible |= value != 0;
+                band_pixels[(py * band_width + px) as usize] = value;
+            }
+        }
+        if !any_visible {
+            continue;
+        }
+
+        let Some(row) = buffer.get_row_at_screen_line_mut(dest) else {
+            continue;
+        };
+        if row.image_slice().is_none() {
+            row.set_image_slice(Some(buffer::ImageSlice::new((cell_width, cell_height))));
+        }
+        let Some(slice) = row.image_slice_mut() else {
+            continue;
+        };
+
+        let band_begin = start.1;
+        let band_end = start.1 + cells_wide;
+        slice.mutable_pixels(band_begin, band_end);
+        let offset = (band_begin - slice.column_begin()) * cell_width;
+        let pixel_width = slice.pixel_width();
+        let pixels = slice.mutable_pixels(band_begin, band_end);
+        for py in 0..cell_height {
+            let source_start = (py * band_width) as usize;
+            let dest_start = (py * pixel_width + offset) as usize;
+            if dest_start + band_width as usize <= pixels.len() {
+                pixels[dest_start..dest_start + band_width as usize]
+                    .copy_from_slice(&band_pixels[source_start..source_start + band_width as usize]);
+            }
+        }
+        last_row = dest;
+    }
+
+    if display_mode {
+        start.0
+    } else {
+        let final_row = start.0 + image.final_row_top / cell_height - scrolled;
+        final_row.clamp(0, page_height - 1)
+    }
 }
 
 /// Fills a half-open rectangle (`bottom`/`right` exclusive) with `ch` and
@@ -1748,6 +1842,70 @@ impl ITermDispatch for AdaptDispatch {
             StatusType::MemoryChecksum => unreachable!(),
         };
         self.push_csi(&body);
+    }
+
+    fn define_sixel_image(
+        &mut self,
+        macro_parameter: VTInt,
+        background_select: SixelBackground,
+        background_color: VTParameter,
+    ) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        let parser = std::sync::Arc::clone(&self.sixel_parser);
+        let (page_width, page_height) = self.page_size();
+        let display_mode = self.modes.contains(ModeFlags::SIXEL_DISPLAY);
+
+        let ready = {
+            let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
+            parser.set_display_mode(display_mode);
+            let cell_size = SixelParser::cell_size_for_level(parser.conformance_level());
+            parser.define_image(
+                macro_parameter,
+                background_select,
+                background_color,
+                page_width * cell_size.0,
+                page_height * cell_size.1,
+            )
+        };
+        if !ready {
+            return None;
+        }
+
+        let buffer = self.page_manager.active_page().buffer();
+        let (start, was_visible) = {
+            let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+            (buffer.cursor().position(), buffer.cursor().is_visible())
+        };
+        if was_visible {
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            buffer.cursor_mut().set_visible(false);
+        }
+
+        Some(Box::new(move |ch| {
+            let finished = {
+                let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
+                !parser.parse_char(ch)
+            };
+            if !finished {
+                return true;
+            }
+
+            let image = {
+                let mut parser = parser.lock().unwrap_or_else(|e| e.into_inner());
+                parser.take_image()
+            };
+
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(image) = image {
+                let final_row = paint_sixel_image(&mut buffer, start, &image, display_mode);
+                if !display_mode {
+                    buffer.cursor_mut().set_position(final_row, start.1);
+                }
+            }
+            if was_visible {
+                buffer.cursor_mut().set_visible(true);
+            }
+            false
+        }))
     }
 
     fn define_macro(
@@ -3219,10 +3377,65 @@ mod tests {
             dispatch.take_responses(),
             vec![
                 "\x1b[8;24;80t".to_string(),
-                "\x1b[6;13;6t".to_string(),
-                "\x1b[4;312;480t".to_string(),
+                "\x1b[6;20;10t".to_string(),
+                "\x1b[4;480;800t".to_string(),
             ]
         );
+    }
+
+    // A sixel payload flows through the DCS handler into the page's row bands,
+    // which ADR 005 makes the single home for image content.
+    #[test]
+    fn a_sixel_payload_paints_into_the_page() {
+        let mut dispatch = AdaptDispatch::new();
+        let initial_visibility = {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let buffer = buffer.read().unwrap();
+            buffer.cursor().is_visible()
+        };
+        let mut handler = dispatch
+            .define_sixel_image(0, SixelBackground::Transparent, VTParameter::default())
+            .expect("the default conformance level accepts sixel");
+
+        assert!(handler('#'), "the payload continues until ESC");
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let buffer = buffer.read().unwrap();
+            assert!(
+                !buffer.cursor().is_visible(),
+                "the cursor is hidden while the image draws"
+            );
+        }
+
+        for ch in "1;2;0;100;0~".chars() {
+            assert!(handler(ch), "the payload continues until ESC");
+        }
+        assert!(!handler('\x1b'), "ESC terminates the payload");
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let image = buffer
+            .get_row_at_screen_line(0)
+            .unwrap()
+            .image_slice()
+            .expect("the image lands in the first row's band");
+
+        // One sixel column at aspect ratio 2 covers 12 device rows; the band is
+        // grown to a whole cell, 10 by 20 pixels.
+        assert_eq!(image.cell_size(), (10, 20));
+        assert_eq!(image.column_begin(), 0);
+        assert_eq!(image.column_end(), 1);
+
+        let pixels = image.pixels();
+        for row in 0..12 {
+            assert_eq!(pixels[row * 10], 0xFF00_FF00, "row {row} is green");
+            assert_eq!(pixels[row * 10 + 1], 0, "row {row} stops after one column");
+        }
+        assert_eq!(pixels[12 * 10], 0, "the image ends at row 12");
+
+        // The cursor visibility is restored once the image is painted.
+        assert_eq!(buffer.cursor().is_visible(), initial_visibility);
+        assert_eq!(buffer.cursor().position(), (0, 0));
     }
 
     // OSC 4 takes a COLORREF (0x00BBGGRR) and reports the 16-bit xterm form.
