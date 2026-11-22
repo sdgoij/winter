@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1499 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1500 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -115,8 +115,11 @@ to adjust — an unknown `default_profile`, a blank command, a clamped size
 (ADR 027). It edits everything the file holds: the font size, the default
 profile and scheme, the profile list, the keybinding list (a chord that does not
 parse blocks **Save**) and the schemes (a text field and a swatch per colour;
-an empty field keeps the built-in colour). **Save** writes the file and reloads
-it, and **Revert** takes the file as it is. A saved file is also picked up
+an empty field keeps the built-in colour). A **Preview** section shows the exact
+document a save would write; a value that does not parse leaves it empty and
+the editor names the row that blocks the save. The window scrolls, so the
+buttons stay reachable however far the lists grow. **Save** writes the file and
+reloads it, and **Revert** takes the file as it is. A saved file is also picked up
 within a second when another program writes it: chords, font size and colours
 apply at once, and a changed profile applies to the next tab. A save that does
 not parse leaves the running session alone and is reported in the window

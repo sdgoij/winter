@@ -19,11 +19,11 @@ Verified by running the gate, not by reading the previous status:
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~1.8k | 53 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
-| `winterm` | ~5.8k | 97 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
-for a program's OSC 777, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
+| `winterm` | ~5.8k | 98 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
+for a program's OSC 777, and a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, font size and defaults — and previews the document a save writes |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1499 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1500 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1226,7 +1226,13 @@ profile by name. The rest of `src/cascadia` remains.
     (ADRs 028, 030–032). **Tests:** the draft's diff and document, the profile,
     chord and scheme round-trips, and the invalid chord and colour blocks, in
     `ui.rs`; directory creation and overwrite in `parser.rs`.
-  - [ ] A preview of the document as it will be written.
+  - [x] A preview of the document as it will be written.
+    Landed as the **Preview** collapsible in `ui.rs`: `Draft::preview` renders
+    the same document **Save** writes through `settings::to_toml`, and a value
+    that does not parse leaves it empty with a line naming the row that blocks
+    the save. The window itself now scrolls, because the editor had grown past
+    a screen's height and put **Save** below the bottom edge. **Tests:** the
+    preview is the document a save writes, and a broken colour leaves it empty.
 - [x] ~~`winterm/crates/winterm/src/search.rs`~~ — In-terminal search overlay
   - Landed as the find bar in `ui.rs`, on Ctrl+Shift+F (the `find` action) over
     `TextBuffer::find_text`: every match in the document, history included, is

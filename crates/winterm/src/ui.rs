@@ -1609,6 +1609,15 @@ impl Draft {
             .filter_map(|scheme| scheme.to_scheme().err())
             .collect()
     }
+
+    /// The file a save would write, as the window shows it.
+    ///
+    /// Nothing is shown while a value does not parse; the editor already says
+    /// which row blocks the save.
+    fn preview(&self, settings: &Settings) -> Option<String> {
+        let document = self.document(settings)?;
+        Some(settings::to_toml(&document))
+    }
 }
 
 /// The window: a tab strip and the active tab.
@@ -1933,41 +1942,48 @@ impl App {
         egui::Window::new("Settings")
             .open(&mut open)
             .default_width(520.0)
+            .default_height(560.0)
             .resizable(true)
             .show(ctx, |ui| {
-                egui::Grid::new("winterm-settings-rows")
-                    .num_columns(2)
-                    .spacing([16.0, 4.0])
-                    .show(ui, |ui| {
-                        for (label, value) in &rows {
-                            ui.strong(*label);
-                            ui.label(value);
-                            ui.end_row();
-                        }
-                    });
+                // The editor grew past a screen's height once profiles,
+                // keybindings, schemes and the preview were all here, and a
+                // window does not scroll itself: the Save button was below the
+                // bottom edge.
+                egui::ScrollArea::vertical().id_salt("winterm-settings").show(ui, |ui| {
+                    egui::Grid::new("winterm-settings-rows")
+                        .num_columns(2)
+                        .spacing([16.0, 4.0])
+                        .show(ui, |ui| {
+                            for (label, value) in &rows {
+                                ui.strong(*label);
+                                ui.label(value);
+                                ui.end_row();
+                            }
+                        });
 
-                ui.separator();
-                if let Some(draft) = self.draft.as_mut() {
-                    draft_editor(
-                        ui,
-                        draft,
-                        &self.settings,
-                        self.settings_conflict,
-                        &mut save,
-                        &mut revert,
-                    );
-                }
-
-                ui.separator();
-                ui.label("The file is also reloaded when another program saves it.");
-
-                if !self.settings_warnings.is_empty() {
                     ui.separator();
-                    ui.strong("Adjusted on load");
-                    for warning in &self.settings_warnings {
-                        ui.label(warning);
+                    if let Some(draft) = self.draft.as_mut() {
+                        draft_editor(
+                            ui,
+                            draft,
+                            &self.settings,
+                            self.settings_conflict,
+                            &mut save,
+                            &mut revert,
+                        );
                     }
-                }
+
+                    ui.separator();
+                    ui.label("The file is also reloaded when another program saves it.");
+
+                    if !self.settings_warnings.is_empty() {
+                        ui.separator();
+                        ui.strong("Adjusted on load");
+                        for warning in &self.settings_warnings {
+                            ui.label(warning);
+                        }
+                    }
+                });
             });
 
         self.settings_open = open;
@@ -2879,6 +2895,21 @@ fn draft_editor(
     }
 
     ui.separator();
+    egui::CollapsingHeader::new("Preview").show(ui, |ui| match draft.preview(settings) {
+        Some(text) => {
+            egui::ScrollArea::vertical()
+                .id_salt("winterm-preview")
+                .max_height(220.0)
+                .show(ui, |ui| {
+                    ui.monospace(text);
+                });
+        }
+        None => {
+            ui.label("The document cannot be written while a value does not parse.");
+        }
+    });
+
+    ui.separator();
     let valid = draft.document(settings).is_some();
     let dirty = draft.differs_from(settings);
     ui.horizontal(|ui| {
@@ -3642,6 +3673,23 @@ mod tests {
         draft.default_scheme = None;
         assert_eq!(draft.document(&settings).expect("document").default_scheme, None);
         assert!(draft.differs_from(&settings));
+    }
+
+    #[test]
+    fn the_preview_is_the_document_a_save_writes() {
+        let settings = settings::parse("[[profiles]]\nname = \"a\"\ncommand = \"sh\"\n").expect("settings");
+        let mut draft = Draft::from_settings(&settings);
+        draft.font_size = 22.0;
+
+        let preview = draft.preview(&settings).expect("a preview");
+        assert!(preview.contains("size = 22"), "{preview}");
+        assert!(preview.contains("command = \"sh\""), "{preview}");
+
+        // A value that does not parse leaves nothing to show.
+        let broken = settings::parse("[[schemes]]\nname = \"s\"\nred = \"#FF0000\"").expect("settings");
+        let mut draft = Draft::from_settings(&broken);
+        draft.schemes[0].colours[5] = "nope".to_string();
+        assert!(draft.preview(&broken).is_none());
     }
 
     #[test]
