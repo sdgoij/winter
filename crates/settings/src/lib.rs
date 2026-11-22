@@ -25,7 +25,7 @@ pub use parser::{
     LoadError, Loaded, SaveError, SettingsError, load, load_with_report, parse, parse_with_warnings, save, save_to,
     settings_path, to_toml,
 };
-pub use profiles::{Profile, default_shell};
+pub use profiles::{Profile, default_profiles, default_shell};
 pub use validation::Warning;
 pub use watch::{Stamp, stamp};
 
@@ -76,12 +76,12 @@ fn empty() -> Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let profile = Profile::default();
+        let profiles = default_profiles();
         Self {
             version: CURRENT_VERSION,
-            default_profile: Some(profile.name.clone()),
+            default_profile: profiles.first().map(|profile| profile.name.clone()),
             default_scheme: None,
-            profiles: vec![profile],
+            profiles,
             keybindings: DEFAULT_KEYBINDINGS.to_vec(),
             schemes: Vec::new(),
             font: Font::default(),
@@ -113,7 +113,7 @@ impl Settings {
     /// Fills in what a partial file leaves out.
     ///
     /// Called on every parse: a version below 1 is read as 1, an empty list
-    /// gets the default profile, a blank command gets the platform shell, a
+    /// gets the default profiles, a blank command gets the platform shell, a
     /// default that names nothing falls back to the first profile, the user's
     /// chords are applied over the defaults, a scheme with no name is dropped
     /// because nothing can select it, and a font size outside the usable range
@@ -127,7 +127,7 @@ impl Settings {
         self.version = self.version.max(CURRENT_VERSION);
 
         if self.profiles.is_empty() {
-            self.profiles.push(Profile::default());
+            self.profiles = default_profiles();
         }
 
         for (index, profile) in self.profiles.iter_mut().enumerate() {
@@ -218,18 +218,51 @@ mod tests {
     #[test]
     fn the_default_settings_run_the_platform_shell() {
         let settings = Settings::default();
+        let first = settings.profiles.first().expect("a default profile");
+
         assert_eq!(settings.version, CURRENT_VERSION);
-        assert_eq!(settings.default_profile.as_deref(), Some("default"));
-        assert_eq!(settings.profile().map(|profile| profile.name.as_str()), Some("default"));
+        assert_eq!(settings.default_profile.as_deref(), Some(first.name.as_str()));
+        assert_eq!(
+            settings.profile().map(|profile| profile.name.as_str()),
+            Some(first.name.as_str())
+        );
         assert!(!settings.profile().expect("profile").command.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_fresh_installation_offers_powershell_cmd_and_bash() {
+        let settings = Settings::default();
+        let names: Vec<&str> = settings.profiles.iter().map(|profile| profile.name.as_str()).collect();
+
+        assert_eq!(names, ["PowerShell", "Command Prompt", "Bash"]);
+        assert_eq!(settings.default_profile.as_deref(), Some("PowerShell"));
+        assert_eq!(settings.profiles[0].command, default_shell());
+        assert!(
+            settings.profiles[1].command.to_ascii_lowercase().ends_with("cmd.exe"),
+            "{}",
+            settings.profiles[1].command
+        );
+        assert_eq!(settings.profiles[2].command, "bash.exe");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_can_select_a_default_profile_by_name() {
+        let settings = parse("default_profile = \"Command Prompt\"").expect("parse");
+        assert_eq!(
+            settings.profile().map(|profile| profile.name.as_str()),
+            Some("Command Prompt")
+        );
     }
 
     #[test]
     fn an_empty_document_gets_the_defaults() {
         let settings = parse("").expect("parse");
-        assert_eq!(settings.profiles.len(), 1);
-        assert_eq!(settings.profile().map(|profile| profile.name.as_str()), Some("default"));
-        assert_eq!(settings.default_profile.as_deref(), Some("default"));
+        let defaults = Settings::default();
+
+        assert_eq!(settings.profiles, defaults.profiles);
+        assert_eq!(settings.default_profile, defaults.default_profile);
         assert_eq!(settings.version, CURRENT_VERSION);
     }
 
@@ -274,7 +307,7 @@ mod tests {
     #[test]
     fn an_empty_list_or_command_is_filled_in() {
         let settings = parse("").expect("parse");
-        assert_eq!(settings.profiles.len(), 1);
+        assert_eq!(settings.profiles.len(), Settings::default().profiles.len());
         assert!(!settings.profile().expect("profile").command.is_empty());
 
         let settings = parse("[[profiles]]\nname = \"x\"\ncommand = \"   \"\n").expect("parse");

@@ -22,7 +22,7 @@ Verified by running the gate, not by reading the previous status:
 | `winterm` | ~5.1k | 75 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a configurable shell, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1460 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1462 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
