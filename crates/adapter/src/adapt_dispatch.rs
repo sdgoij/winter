@@ -134,6 +134,11 @@ pub struct AdaptDispatch {
     unhandled_count: usize,
     /// The name of the last such callback.
     last_unhandled: Option<&'static str>,
+    /// Bytes the adapter owes the host, in order (DECRQM replies and later DSR).
+    ///
+    /// Upstream writes these through `ITerminalApi::ReturnResponse`; until that
+    /// seam exists the adapter queues them and the host drains the queue.
+    pending_responses: Vec<String>,
 }
 
 impl AdaptDispatch {
@@ -160,7 +165,13 @@ impl AdaptDispatch {
             cursor_style: CursorStyle::UserDefault,
             unhandled_count: 0,
             last_unhandled: None,
+            pending_responses: Vec::new(),
         }
+    }
+
+    /// Drains the responses the adapter owes the host.
+    pub fn take_responses(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_responses)
     }
 
     /// Returns whether insert/replace mode is enabled.
@@ -300,7 +311,7 @@ impl AdaptDispatch {
     }
 
     /// Sets a mode flag.
-    pub fn set_mode(&mut self, flag: ModeFlags, enabled: bool) {
+    pub fn set_mode_flag(&mut self, flag: ModeFlags, enabled: bool) {
         if enabled {
             self.modes.insert(flag);
         } else {
@@ -311,6 +322,132 @@ impl AdaptDispatch {
     /// Checks if a mode flag is set.
     pub fn mode_is_set(&self, flag: ModeFlags) -> bool {
         self.modes.contains(flag)
+    }
+
+    /// Ported from `_ModeParamsHelper`: applies a mode parameter.
+    ///
+    /// Input-layer modes (keypad, mouse, focus) are recorded here and consumed by
+    /// the input layer when it exists; recording them is what lets DECRQM answer
+    /// truthfully in the meantime.
+    pub(crate) fn apply_mode_param(&mut self, param: ModeParams, enable: bool) {
+        use ModeParams::*;
+
+        match param {
+            Irm => self.set_mode_flag(ModeFlags::IRM, enable),
+            Lnm => self.set_mode_flag(ModeFlags::LNM, enable),
+            DecCkm => self.set_mode_flag(ModeFlags::DECCKM, enable),
+            DecArm => self.set_mode_flag(ModeFlags::DECARM, enable),
+            DecNkm => self.set_mode_flag(ModeFlags::DECNKM, enable),
+            DecBkm => self.set_mode_flag(ModeFlags::DECBKM, enable),
+            Vt200MouseMode => self.set_mode_flag(ModeFlags::MOUSE_VT200, enable),
+            ButtonEventMouseMode => self.set_mode_flag(ModeFlags::MOUSE_BUTTON, enable),
+            AnyEventMouseMode => self.set_mode_flag(ModeFlags::MOUSE_ANY, enable),
+            Utf8ExtendedMode => self.set_mode_flag(ModeFlags::MOUSE_UTF8, enable),
+            SgrExtendedMode => self.set_mode_flag(ModeFlags::MOUSE_SGR, enable),
+            FocusEventMode => self.set_mode_flag(ModeFlags::FOCUS_EVENT, enable),
+            AlternateScroll => self.set_mode_flag(ModeFlags::ALTERNATE_SCROLL, enable),
+            Win32InputMode => self.set_mode_flag(ModeFlags::WIN32_INPUT, enable),
+            EnableDecColmSupport => self.set_mode_flag(ModeFlags::ALLOW_DECCOLM, enable),
+            DecScnm => self.set_mode_flag(ModeFlags::SCREEN_REVERSED, enable),
+            SynchronizedOutput => self.set_mode_flag(ModeFlags::SYNCHRONIZED_OUTPUT, enable),
+            DecSdm => self.set_mode_flag(ModeFlags::SIXEL_DISPLAY, enable),
+            DecEcm => self.set_mode_flag(ModeFlags::DECECM, enable),
+            BracketedPasteMode => self.set_mode_flag(ModeFlags::BRACKETED_PASTE, enable),
+            DecColm => self.set_mode_flag(ModeFlags::DECCOLM, enable),
+            DecOm => {
+                self.set_mode_flag(ModeFlags::DECOM, enable);
+                // Setting or resetting origin mode homes the cursor.
+                ITermDispatch::cursor_position(self, 1, 1);
+            }
+            DecAwm => {
+                self.set_mode_flag(ModeFlags::DECAWM, enable);
+                if !enable {
+                    // Turning autowrap off also discards a pending wrap.
+                    let buffer = self.page_manager.active_page().buffer();
+                    let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+                    buffer.cursor_mut().reset_delayed_eol_wrap();
+                }
+            }
+            Att610StartCursorBlink => {
+                let buffer = self.page_manager.active_page().buffer();
+                let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+                buffer.cursor_mut().set_blinking(enable);
+            }
+            DecTcem => {
+                let buffer = self.page_manager.active_page().buffer();
+                let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+                buffer.cursor_mut().set_visible(enable);
+            }
+            DecLrmm => {
+                self.set_mode_flag(ModeFlags::DECLRMM, enable);
+                // Enabling or disabling left/right margins resets them.
+                self.set_horizontal_scrolling_margins(0, 0, false);
+            }
+            DecPccm => {
+                self.set_mode_flag(ModeFlags::PAGE_CURSOR_COUPLING, enable);
+                if enable {
+                    self.page_manager.make_active_page_visible();
+                }
+            }
+            AlternateScreenBuffer => {
+                self.using_alt_buffer = enable;
+                if enable {
+                    self.page_manager.activate_alternate();
+                } else {
+                    self.page_manager.deactivate_alternate();
+                }
+            }
+            // DECANM switches the parser between ANSI and VT52, which this parser
+            // does not model; GCM is deliberately inert upstream too.
+            DecAnm | GraphemeClusterMode => {}
+        }
+    }
+
+    /// The DECRQM state for a mode: 0 unsupported, 1 enabled, 2 disabled.
+    fn mode_state(&mut self, param: ModeParams) -> u8 {
+        use ModeParams::*;
+
+        let flag = match param {
+            Irm => ModeFlags::IRM,
+            Lnm => ModeFlags::LNM,
+            DecCkm => ModeFlags::DECCKM,
+            DecArm => ModeFlags::DECARM,
+            DecNkm => ModeFlags::DECNKM,
+            DecBkm => ModeFlags::DECBKM,
+            Vt200MouseMode => ModeFlags::MOUSE_VT200,
+            ButtonEventMouseMode => ModeFlags::MOUSE_BUTTON,
+            AnyEventMouseMode => ModeFlags::MOUSE_ANY,
+            Utf8ExtendedMode => ModeFlags::MOUSE_UTF8,
+            SgrExtendedMode => ModeFlags::MOUSE_SGR,
+            FocusEventMode => ModeFlags::FOCUS_EVENT,
+            AlternateScroll => ModeFlags::ALTERNATE_SCROLL,
+            Win32InputMode => ModeFlags::WIN32_INPUT,
+            EnableDecColmSupport => ModeFlags::ALLOW_DECCOLM,
+            DecScnm => ModeFlags::SCREEN_REVERSED,
+            SynchronizedOutput => ModeFlags::SYNCHRONIZED_OUTPUT,
+            DecSdm => ModeFlags::SIXEL_DISPLAY,
+            DecEcm => ModeFlags::DECECM,
+            BracketedPasteMode => ModeFlags::BRACKETED_PASTE,
+            DecColm => ModeFlags::DECCOLM,
+            DecOm => ModeFlags::DECOM,
+            DecAwm => ModeFlags::DECAWM,
+            DecLrmm => ModeFlags::DECLRMM,
+            DecPccm => ModeFlags::PAGE_CURSOR_COUPLING,
+            Att610StartCursorBlink => {
+                let buffer = self.page_manager.active_page().buffer();
+                let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+                return u8::from(!buffer.cursor().is_blinking()) + 1;
+            }
+            DecTcem => {
+                let buffer = self.page_manager.active_page().buffer();
+                let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+                return u8::from(!buffer.cursor().is_visible()) + 1;
+            }
+            AlternateScreenBuffer => return u8::from(!self.using_alt_buffer) + 1,
+            DecAnm | GraphemeClusterMode => return 0,
+        };
+
+        u8::from(!self.modes.contains(flag)) + 1
     }
 
     /// Returns the active page's cursor position as `(row, column)`, 0-based.
@@ -861,6 +998,22 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn set_mode(&mut self, param: &ModeParams) {
+        self.apply_mode_param(*param, true);
+    }
+
+    fn reset_mode(&mut self, param: &ModeParams) {
+        self.apply_mode_param(*param, false);
+    }
+
+    fn request_mode(&mut self, param: &ModeParams) {
+        let param = *param;
+        let state = self.mode_state(param);
+        let private = if param.is_private() { "?" } else { "" };
+        self.pending_responses
+            .push(format!("\x1b[{}{};{}$y", private, param.param_number(), state));
+    }
+
     fn cursor_up(&mut self, distance: VTInt) {
         self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
     }
@@ -964,6 +1117,38 @@ bitflags::bitflags! {
         const DECECM = 1 << 8;
         /// Left/right margin mode (DECLRMM), which gates DECSLRM.
         const DECLRMM = 1 << 9;
+        /// Auto-repeat (DECARM); input-layer state, tracked for DECRQM.
+        const DECARM = 1 << 10;
+        /// Numeric keypad (DECNKM).
+        const DECNKM = 1 << 11;
+        /// Backarrow key (DECBKM).
+        const DECBKM = 1 << 12;
+        /// VT200 mouse tracking.
+        const MOUSE_VT200 = 1 << 13;
+        /// Button-event mouse tracking.
+        const MOUSE_BUTTON = 1 << 14;
+        /// Any-event mouse tracking.
+        const MOUSE_ANY = 1 << 15;
+        /// UTF-8 mouse coordinates.
+        const MOUSE_UTF8 = 1 << 16;
+        /// SGR mouse coordinates.
+        const MOUSE_SGR = 1 << 17;
+        /// Focus event reporting.
+        const FOCUS_EVENT = 1 << 18;
+        /// Alternate scroll mode.
+        const ALTERNATE_SCROLL = 1 << 19;
+        /// Win32 input records.
+        const WIN32_INPUT = 1 << 20;
+        /// DECCOLM is permitted (XTERM mode 40).
+        const ALLOW_DECCOLM = 1 << 21;
+        /// Reverse the screen (DECSCNM); the renderer reads this.
+        const SCREEN_REVERSED = 1 << 22;
+        /// Hold the frame until the program ends the block (mode 2026).
+        const SYNCHRONIZED_OUTPUT = 1 << 23;
+        /// Sixel image display mode (DECSDM).
+        const SIXEL_DISPLAY = 1 << 24;
+        /// Keep the visible page following the active one (DECPCCM).
+        const PAGE_CURSOR_COUPLING = 1 << 25;
     }
 }
 
@@ -985,7 +1170,7 @@ mod tests {
     #[test]
     fn test_soft_reset() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_mode(ModeFlags::IRM, true);
+        dispatch.set_mode_flag(ModeFlags::IRM, true);
         dispatch.soft_reset();
         assert!(!dispatch.is_insert_mode());
     }
@@ -993,7 +1178,7 @@ mod tests {
     #[test]
     fn test_hard_reset() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_mode(ModeFlags::IRM, true);
+        dispatch.set_mode_flag(ModeFlags::IRM, true);
         dispatch.hard_reset(true);
         assert!(!dispatch.is_insert_mode());
     }
@@ -1001,10 +1186,10 @@ mod tests {
     #[test]
     fn test_set_mode() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_mode(ModeFlags::IRM, true);
+        dispatch.set_mode_flag(ModeFlags::IRM, true);
         assert!(dispatch.is_insert_mode());
 
-        dispatch.set_mode(ModeFlags::IRM, false);
+        dispatch.set_mode_flag(ModeFlags::IRM, false);
         assert!(!dispatch.is_insert_mode());
     }
 
@@ -1100,7 +1285,7 @@ mod tests {
     fn origin_mode_makes_absolute_positions_margin_relative() {
         let mut dispatch = AdaptDispatch::new();
         dispatch.set_top_bottom_scrolling_margins(2, 20);
-        dispatch.set_mode(ModeFlags::DECOM, true);
+        dispatch.set_mode_flag(ModeFlags::DECOM, true);
 
         dispatch.cursor_position(1, 1);
         assert_eq!(dispatch.active_cursor_position(), (1, 0));
@@ -1112,7 +1297,7 @@ mod tests {
         dispatch.set_left_right_scrolling_margins(5, 75);
         assert_eq!(dispatch.horizontal_margins(), (0, 0));
 
-        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_mode_flag(ModeFlags::DECLRMM, true);
         dispatch.set_left_right_scrolling_margins(5, 75);
         assert_eq!(dispatch.horizontal_margins(), (4, 74));
     }
@@ -1152,6 +1337,9 @@ mod tests {
         dispatch.erase_characters(1);
         dispatch.selective_erase_in_display(EraseType::All);
         dispatch.selective_erase_in_line(EraseType::All);
+        dispatch.set_mode(&ModeParams::DecAwm);
+        dispatch.reset_mode(&ModeParams::DecAwm);
+        dispatch.request_mode(&ModeParams::DecOm);
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
@@ -1211,7 +1399,7 @@ mod tests {
     fn line_feed_with_lnm_returns_to_the_margin() {
         let mut dispatch = AdaptDispatch::new();
         dispatch.cursor_position(1, 6);
-        dispatch.set_mode(ModeFlags::LNM, true);
+        dispatch.set_mode_flag(ModeFlags::LNM, true);
         dispatch.line_feed(LineFeedType::DependsOnMode);
         assert_eq!(dispatch.active_cursor_position(), (1, 0));
     }
@@ -1252,7 +1440,7 @@ mod tests {
     #[test]
     fn carriage_return_respects_the_left_margin() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_mode_flag(ModeFlags::DECLRMM, true);
         dispatch.set_left_right_scrolling_margins(5, 75);
         dispatch.cursor_position(1, 10);
         dispatch.carriage_return();
@@ -1365,7 +1553,7 @@ mod tests {
         drop(buffer);
 
         // DECECM erases to the default background instead of the current colour.
-        dispatch.set_mode(ModeFlags::DECECM, true);
+        dispatch.set_mode_flag(ModeFlags::DECECM, true);
         dispatch.erase_in_line(EraseType::All);
         let buffer = dispatch.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
@@ -1385,6 +1573,66 @@ mod tests {
         assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
         assert_eq!(cell_text(&mut dispatch, 0, 1), " ");
         assert_eq!(cell_text(&mut dispatch, 0, 2), "C");
+    }
+
+    #[test]
+    fn decset_changes_state_and_decrqm_reports_it() {
+        let mut dispatch = AdaptDispatch::new();
+        assert!(!dispatch.is_insert_mode());
+
+        dispatch.set_mode(&ModeParams::Irm);
+        assert!(dispatch.is_insert_mode());
+
+        dispatch.request_mode(&ModeParams::Irm);
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[4;1$y".to_string()]);
+
+        dispatch.reset_mode(&ModeParams::Irm);
+        dispatch.request_mode(&ModeParams::Irm);
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[4;2$y".to_string()]);
+    }
+
+    #[test]
+    fn origin_mode_homes_the_cursor() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(5, 5);
+        dispatch.set_mode(&ModeParams::DecOm);
+
+        assert!(dispatch.is_origin_mode());
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+    }
+
+    #[test]
+    fn turning_off_autowrap_discards_a_pending_wrap() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string(&"x".repeat(80));
+        assert_eq!(dispatch.active_cursor_position(), (0, 79));
+
+        dispatch.reset_mode(&ModeParams::DecAwm);
+        dispatch.print('y');
+
+        // Autowrap is off, so the character overwrites the last column.
+        assert_eq!(dispatch.active_cursor_position(), (0, 79));
+        assert_eq!(cell_text(&mut dispatch, 0, 79), "y");
+    }
+
+    #[test]
+    fn alternate_screen_mode_switches_pages() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_mode(&ModeParams::AlternateScreenBuffer);
+
+        assert!(dispatch.is_alternate_buffer_active());
+        assert_eq!(dispatch.page_manager_mut().active_page().number(), 2);
+
+        dispatch.reset_mode(&ModeParams::AlternateScreenBuffer);
+        assert!(!dispatch.is_alternate_buffer_active());
+        assert_eq!(dispatch.page_manager_mut().active_page().number(), 1);
+    }
+
+    #[test]
+    fn decrqm_reports_unsupported_for_unmodelled_modes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.request_mode(&ModeParams::DecAnm);
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[?2;0$y".to_string()]);
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {
@@ -1429,7 +1677,7 @@ mod tests {
     #[test]
     fn print_wraps_at_the_right_margin() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_mode(ModeFlags::DECLRMM, true);
+        dispatch.set_mode_flag(ModeFlags::DECLRMM, true);
         dispatch.set_left_right_scrolling_margins(5, 75);
         dispatch.cursor_horizontal_position_absolute(5);
 
@@ -1455,7 +1703,7 @@ mod tests {
         let mut dispatch = AdaptDispatch::new();
         dispatch.print_string("AB");
         dispatch.cursor_position(1, 1);
-        dispatch.set_mode(ModeFlags::IRM, true);
+        dispatch.set_mode_flag(ModeFlags::IRM, true);
         dispatch.print('X');
 
         assert_eq!(cell_text(&mut dispatch, 0, 0), "X");

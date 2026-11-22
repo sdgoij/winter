@@ -501,106 +501,76 @@ pub enum StatusType {
     MultipleSessionStatus,
 }
 
-/// Mode parameters for SM/R/DESET/DECSET.
+/// Bit that distinguishes a DEC private mode from an ANSI mode of the same number.
+///
+/// Ported from `DECPrivateStatus` / `DECPrivateMode` in `DispatchTypes.hpp`:
+/// `DECSET ?1h` and `SM 1h` are different modes, and flattening the two onto one
+/// number gives DECCKM and DECARM the same value as modes that mean something
+/// else.
+pub const DEC_PRIVATE_MODE: VTInt = 0x0100_0000;
+
+/// Returns the DEC-private form of a mode number.
+pub const fn dec_private_mode(number: VTInt) -> VTInt {
+    DEC_PRIVATE_MODE | number
+}
+
+/// Returns the ANSI form of a mode number.
+pub const fn ansi_standard_mode(number: VTInt) -> VTInt {
+    number
+}
+
+/// Mode parameters for SM / DECSET / RM / DECRST / DECRQM.
+///
+/// Ported from `DispatchTypes::ModeParams`, values included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
 pub enum ModeParams {
-    /// Insert/Replace mode (IRM).
-    Irm = 4,
-    /// Line feed/new line mode (LNM).
-    Lnm = 20,
-    /// Cursor keys mode (DECCKM).
-    DecCkm = 25,
-    /// ANSI mode (DECANM).
-    DecAnm = 47,
-    /// Set number of columns (DECCOLM).
-    DecColm = 3,
-    /// Screen mode (DECSCNM).
-    DecScnm = 5,
-    /// Origin mode (DECOM).
-    DecOm = 6,
-    /// Auto wrap mode (DECAWM).
-    DecAwm = 7,
-    /// Auto repeat mode (DECARM).
-    DecArm = 8,
-    /// Start cursor blink (ATT610).
-    Att610StartCursorBlink = 9,
-    /// Text cursor enable mode (DECTCEM).
-    DecTcem = 12,
-    /// Enable DECCOLM support.
-    EnableDecColmSupport = 81,
-    /// Page cursor coupling mode.
-    DecPccm = 85,
-    /// Numeric keypad mode (DECNKM).
-    DecNkm = 66,
-    /// Backarrow key mode (DECBKM).
-    DecBkm = 82,
-    /// Left/right margin mode.
-    DecLrmm = 2048,
-    /// Sixel display mode.
-    DecSdm = 48,
-    /// Erase color mode.
-    DecEcm = 1040,
-    /// VT200 mouse mode.
-    Vt200MouseMode = 9_000,
-    /// Button event mouse mode.
-    ButtonEventMouseMode = 1000,
-    /// Any event mouse mode.
-    AnyEventMouseMode = 1002,
-    /// Focus event mode.
-    FocusEventMode = 1004,
-    /// UTF-8 extended mode.
-    Utf8ExtendedMode = 2004,
-    /// SGR extended mode.
-    SgrExtendedMode = 2006,
-    /// Alternate scroll.
-    AlternateScroll = 1007,
-    /// Alternate screen buffer.
-    AlternateScreenBuffer = 1049,
-    /// Bracketed paste mode.
-    BracketedPasteMode = 2005,
-    /// Synchronized output.
-    SynchronizedOutput = 2001,
-    /// Grapheme cluster mode.
-    GraphemeClusterMode = 2027,
-    /// Win32 input mode.
-    Win32InputMode = 2012,
+    Irm = ansi_standard_mode(4),
+    Lnm = ansi_standard_mode(20),
+    DecCkm = dec_private_mode(1),
+    DecAnm = dec_private_mode(2),
+    DecColm = dec_private_mode(3),
+    DecScnm = dec_private_mode(5),
+    DecOm = dec_private_mode(6),
+    DecAwm = dec_private_mode(7),
+    DecArm = dec_private_mode(8),
+    Att610StartCursorBlink = dec_private_mode(12),
+    DecTcem = dec_private_mode(25),
+    EnableDecColmSupport = dec_private_mode(40),
+    DecPccm = dec_private_mode(64),
+    DecNkm = dec_private_mode(66),
+    DecBkm = dec_private_mode(67),
+    DecLrmm = dec_private_mode(69),
+    DecSdm = dec_private_mode(80),
+    DecEcm = dec_private_mode(117),
+    Vt200MouseMode = dec_private_mode(1000),
+    ButtonEventMouseMode = dec_private_mode(1002),
+    AnyEventMouseMode = dec_private_mode(1003),
+    FocusEventMode = dec_private_mode(1004),
+    Utf8ExtendedMode = dec_private_mode(1005),
+    SgrExtendedMode = dec_private_mode(1006),
+    AlternateScroll = dec_private_mode(1007),
+    AlternateScreenBuffer = dec_private_mode(1049),
+    BracketedPasteMode = dec_private_mode(2004),
+    SynchronizedOutput = dec_private_mode(2026),
+    GraphemeClusterMode = dec_private_mode(2027),
+    Win32InputMode = dec_private_mode(9001),
 }
 
 impl ModeParams {
-    /// Returns the parameter number for this mode.
-    pub fn param_number(&self) -> VTInt {
-        match self {
-            ModeParams::Irm => 4,
-            ModeParams::Lnm => 20,
-            ModeParams::DecCkm => 25,
-            ModeParams::DecAnm => 47,
-            ModeParams::DecColm => 3,
-            ModeParams::DecScnm => 5,
-            ModeParams::DecOm => 6,
-            ModeParams::DecAwm => 7,
-            ModeParams::DecArm => 8,
-            ModeParams::Att610StartCursorBlink => 9,
-            ModeParams::DecTcem => 12,
-            ModeParams::EnableDecColmSupport => 81,
-            ModeParams::DecPccm => 85,
-            ModeParams::DecNkm => 66,
-            ModeParams::DecBkm => 82,
-            ModeParams::DecLrmm => 2048,
-            ModeParams::DecSdm => 48,
-            ModeParams::DecEcm => 1040,
-            ModeParams::Vt200MouseMode => 9,
-            ModeParams::ButtonEventMouseMode => 1000,
-            ModeParams::AnyEventMouseMode => 1002,
-            ModeParams::FocusEventMode => 1004,
-            ModeParams::Utf8ExtendedMode => 2004,
-            ModeParams::SgrExtendedMode => 2006,
-            ModeParams::AlternateScroll => 1007,
-            ModeParams::AlternateScreenBuffer => 1049,
-            ModeParams::BracketedPasteMode => 2004,
-            ModeParams::SynchronizedOutput => 2001,
-            ModeParams::GraphemeClusterMode => 2027,
-            ModeParams::Win32InputMode => 2012,
-        }
+    /// Returns the raw mode value, DEC-private tag included.
+    pub const fn raw(self) -> VTInt {
+        self as VTInt
+    }
+
+    /// Returns the mode number as it appears on the wire, tag removed.
+    pub const fn param_number(self) -> VTInt {
+        self.raw() & !DEC_PRIVATE_MODE
+    }
+
+    /// Returns whether this is a DEC private mode (`CSI ? … h`).
+    pub const fn is_private(self) -> bool {
+        self.raw() & DEC_PRIVATE_MODE != 0
     }
 }
 

@@ -13,10 +13,10 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~2.0k | 79 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
 | `buffer` | ~4.8k | 178 | Phase 2 partial — no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~6.0k | 87 | Phase 4 state and interfaces; print, SGR, cursor, margin, line and erase handlers ported |
+| `adapter` | ~6.6k | 92 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase and mode handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-604 tests, doc tests. Phases 5–14 are not started.
+609 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -38,7 +38,8 @@ settled.
    positioning (CUU, CUD, CUF, CUB, CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and
    the scrolling margins (DECSTBM, DECSLRM behind DECLRMM), the line controls
    (CR, LF/IND/NEL with LNM, RI, DECBI, DECFI), and erase (ED, EL, ECH, DECSED,
-   DECSEL, with `_GetEraseAttributes` and DECECM). Everything else falls through
+   DECSEL, with `_GetEraseAttributes` and DECECM), and modes (DECSET, DECRST,
+   DECRQM through a decoded ModeParams table). Everything else falls through
    to the trait default, which `AdaptDispatch::unhandled` records; the ratchet
    test in `adapt_dispatch.rs` names the ported set and must grow with each
    family. Next in dependency order: modes, then device reports.
