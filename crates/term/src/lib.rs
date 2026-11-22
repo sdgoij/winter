@@ -11,5 +11,7 @@
 //! decoder with an explicit replacement policy, before it reaches the buffer.
 
 pub mod output_engine;
+pub mod terminal;
 
 pub use output_engine::OutputStateMachineEngine;
+pub use terminal::Terminal;

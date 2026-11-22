@@ -17,7 +17,6 @@ use types::color_table::{
     color_from_hls, color_from_rgb100, color_to_hls, color_to_rgb100,
 };
 use types::{CharacterAttributes, TextAttribute, TextColor, UnderlineStyle};
-use utils::inclusive_rect::InclusiveRect;
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -584,17 +583,10 @@ impl AdaptDispatch {
             DECCOLM_RESET_COLUMNS
         };
 
-        let page = self.page_manager.visible_page();
-        let buffer = page.buffer();
-        let height = {
-            let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
-            buffer.screen_height()
-        };
-        {
-            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
-            buffer.resize(width, height);
-        }
-        page.set_viewport(InclusiveRect::new(0, 0, width - 1, height - 1));
+        let height = self.page_manager.size().1;
+        // DECCOLM sets the column count for every page, so the alternate screen
+        // does not keep the old width when it is activated next.
+        self.page_manager.resize_all(width, height);
 
         self.set_mode_flag(ModeFlags::DECCOLM, enable);
         self.set_mode_flag(ModeFlags::DECOM, false);

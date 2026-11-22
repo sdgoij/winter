@@ -13,11 +13,11 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~3.3k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.1k | 188 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
-| `adapter` | ~9.9k | 142 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
-| `term` | ~1.5k | 13 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding |
+| `adapter` | ~10.0k | 144 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, sixel, save-restore and tab handlers ported |
+| `term` | ~1.9k | 19 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-679 tests, doc tests. Phases 5–14 are not started.
+687 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -70,6 +70,13 @@ settled.
   the fabricated screen/buffer enum; it is now upstream's buffer enum
   (single/double width, double-height top/bottom), and the module that
   mis-used it is gone.
+
+- **`term::Terminal` is the application's handle.** It owns the parser, the
+  engine and an `AdaptDispatch`, feeds bytes through `process_bytes`, and
+  forwards the host queues (`take_responses`, clipboard, macro input, window
+  requests) and the title/CWD. `PageManager` now keeps its page size, so
+  `Terminal::resize` and DECCOLM size every existing page and every page
+  created afterwards.
 
 - **The stray `adapter/src/main.rs` binary is gone.** The crate is a library
   only again.

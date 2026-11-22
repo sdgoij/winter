@@ -3,7 +3,7 @@
 //! Ported from `PageManager.hpp/cpp` in the Windows Terminal C++ codebase.
 //! Manages the text buffers required by VT paging operations.
 
-use types::TextAttribute;
+use types::{TextAttribute, VTInt};
 
 use buffer::TextBuffer;
 use utils::inclusive_rect::InclusiveRect;
@@ -85,6 +85,8 @@ pub struct PageManager {
     visible_page_number: i32,
     /// Page buffers.
     pages: [Option<Page>; MAX_PAGES],
+    /// The size new pages start at, and the size a resize gives every page.
+    size: (VTInt, VTInt),
 }
 
 impl PageManager {
@@ -99,6 +101,7 @@ impl PageManager {
             active_page_number: 1,
             visible_page_number: 1,
             pages: Default::default(),
+            size: (80, 24),
         }
     }
 
@@ -107,6 +110,28 @@ impl PageManager {
         self.active_page_number = 1;
         self.visible_page_number = 1;
         self.pages = Default::default();
+        self.size = (80, 24);
+    }
+
+    /// Returns the character size every page uses.
+    pub const fn size(&self) -> (VTInt, VTInt) {
+        self.size
+    }
+
+    /// Resizes every created page and the size future pages start at.
+    pub fn resize_all(&mut self, width: VTInt, height: VTInt) {
+        let width = width.max(1);
+        let height = height.max(1);
+        self.size = (width, height);
+
+        let viewport = InclusiveRect::new(0, 0, width - 1, height - 1);
+        for page in self.pages.iter_mut().flatten() {
+            let buffer = page.buffer();
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            buffer.resize(width, height);
+            drop(buffer);
+            page.set_viewport(viewport);
+        }
     }
 
     /// Gets the page with the given number.
@@ -117,15 +142,15 @@ impl PageManager {
         }
 
         if self.pages[idx].is_none() {
-            // Create default viewport for new page
-            let viewport = InclusiveRect::new(0, 0, 79, 23); // 80x24 default
+            let (width, height) = self.size;
+            let viewport = InclusiveRect::new(0, 0, width - 1, height - 1);
             // Page 2 is the alternate screen; every other page is a main buffer.
             // PageManager does not own scrollback sizing, so the main pages here
             // start with none.
             let buffer = if page_number == 2 {
-                TextBuffer::new_alternate(80, 24)
+                TextBuffer::new_alternate(width, height)
             } else {
-                TextBuffer::with_dimensions(80, 24, 0)
+                TextBuffer::with_dimensions(width, height, 0)
             };
             self.pages[idx] = Some(Page::new(
                 std::sync::Arc::new(std::sync::RwLock::new(buffer)),
@@ -232,6 +257,41 @@ mod tests {
         pm.deactivate_alternate();
         assert_eq!(pm.active_page_number, 1);
         assert_eq!(pm.visible_page_number, 1);
+    }
+
+    #[test]
+    fn resizing_updates_created_and_future_pages() {
+        let mut pm = PageManager::new();
+        let main = pm.get(1).buffer();
+        let alternate = pm.get(2).buffer();
+
+        pm.resize_all(100, 40);
+
+        for buffer in [main, alternate] {
+            let buffer = buffer.read().unwrap();
+            assert_eq!(buffer.screen_width(), 100);
+            assert_eq!(buffer.screen_height(), 40);
+        }
+
+        // A page created after the resize starts at the new size.
+        let third = pm.get(3).buffer();
+        let third = third.read().unwrap();
+        assert_eq!(third.screen_width(), 100);
+        assert_eq!(third.screen_height(), 40);
+        assert_eq!(pm.size(), (100, 40));
+    }
+
+    #[test]
+    fn a_reset_restores_the_default_size() {
+        let mut pm = PageManager::new();
+        pm.resize_all(132, 50);
+        pm.reset();
+        assert_eq!(pm.size(), (80, 24));
+
+        let page = pm.get(1).buffer();
+        let page = page.read().unwrap();
+        assert_eq!(page.screen_width(), 80);
+        assert_eq!(page.screen_height(), 24);
     }
 
     #[test]
