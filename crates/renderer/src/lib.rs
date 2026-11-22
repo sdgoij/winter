@@ -20,6 +20,8 @@
 //! - [`render_engine`] — `RenderEngine`, `RenderError`, `RenderResult`, `StartPaint`
 //! - [`render_engine_base`] — `RenderEngineBase`, the shared title/frame state
 //! - [`render_frame_info`] — `RenderFrameInfo`, `GridLines` and `GridLineSet`
+//! - [`render_settings`] — `RenderSettings`, the colour table and modes
+//! - [`renderer`] — the renderer helpers (`get_gridlines`, soft-font test)
 
 pub mod cluster;
 pub mod composition;
@@ -33,6 +35,7 @@ pub mod render_engine;
 pub mod render_engine_base;
 pub mod render_frame_info;
 pub mod render_settings;
+pub mod renderer;
 
 pub use cluster::Cluster;
 pub use composition::{Composition, CompositionRange};
@@ -46,3 +49,4 @@ pub use render_engine::{RenderEngine, RenderError, RenderResult, StartPaint};
 pub use render_engine_base::RenderEngineBase;
 pub use render_frame_info::{GridLineSet, GridLines, RenderFrameInfo};
 pub use render_settings::{INVALID_COLOR, Mode, RenderSettings};
+pub use renderer::{FIRST_SOFT_FONT_CHAR, get_gridlines, is_soft_font_char};

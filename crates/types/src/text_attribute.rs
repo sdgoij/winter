@@ -133,6 +133,11 @@ impl TextAttribute {
         self.hyperlink_id
     }
 
+    /// Returns whether this attribute carries a hyperlink.
+    pub const fn is_hyperlink(&self) -> bool {
+        self.hyperlink_id != 0
+    }
+
     /// Returns the underline color.
     pub const fn get_underline_color(&self) -> TextColor {
         self.underline_color
@@ -245,6 +250,31 @@ impl TextAttribute {
     /// Returns whether the colours are reversed.
     pub const fn is_reverse_video(&self) -> bool {
         self.attrs.contains(CharacterAttributes::ReverseVideo)
+    }
+
+    /// Returns whether the top border is drawn.
+    pub const fn is_top_horizontal_displayed(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::TopGridline)
+    }
+
+    /// Returns whether the bottom border is drawn.
+    pub const fn is_bottom_horizontal_displayed(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::BottomGridline)
+    }
+
+    /// Returns whether the left border is drawn.
+    pub const fn is_left_vertical_displayed(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::LeftGridline)
+    }
+
+    /// Returns whether the right border is drawn.
+    pub const fn is_right_vertical_displayed(&self) -> bool {
+        self.attrs.contains(CharacterAttributes::RightGridline)
+    }
+
+    /// Returns whether any of the four borders is drawn.
+    pub const fn is_any_grid_line_enabled(&self) -> bool {
+        self.attrs.has_any_gridline()
     }
 
     /// Turns the intense (bright) attribute on or off.
