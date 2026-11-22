@@ -12,7 +12,11 @@ use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
-use types::{CharacterAttributes, TextAttribute, UnderlineStyle};
+use types::color_table::{
+    CURSOR_COLOR, ColorAlias, ColorTable, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND, TABLE_SIZE,
+    color_from_hls, color_from_rgb100, color_to_hls, color_to_rgb100,
+};
+use types::{CharacterAttributes, TextAttribute, TextColor, UnderlineStyle};
 use utils::inclusive_rect::InclusiveRect;
 
 /// Cursor state for save/restore operations.
@@ -131,6 +135,8 @@ pub struct AdaptDispatch {
     font_buffer: FontBuffer,
     /// Macro buffer.
     macro_buffer: std::sync::Arc<std::sync::Mutex<MacroBuffer>>,
+    /// The VT colour table shared with the DECRSTS restore handler.
+    color_table: std::sync::Arc<std::sync::Mutex<ColorTable>>,
     /// Whether we're using the alternate buffer.
     using_alt_buffer: bool,
     /// Scrolling margins, 0-based and inclusive; `(0, 0)` means unset, which the
@@ -191,6 +197,7 @@ impl AdaptDispatch {
             sixel_parser: SixelParser::new(SIXEL_DEFAULT_CONFORMANCE),
             font_buffer: FontBuffer::new(),
             macro_buffer: std::sync::Arc::new(std::sync::Mutex::new(MacroBuffer::new())),
+            color_table: std::sync::Arc::new(std::sync::Mutex::new(ColorTable::new())),
             using_alt_buffer: false,
             scroll_top_margin: 0,
             scroll_bottom_margin: 0,
@@ -245,6 +252,11 @@ impl AdaptDispatch {
     /// not model that mode, so the 7-bit form is always used.
     fn push_dcs(&mut self, body: &str) {
         self.pending_responses.push(format!("\x1bP{}\x1b\\", body));
+    }
+
+    /// Appends an OSC response to the queue the host drains.
+    fn push_osc(&mut self, body: &str) {
+        self.pending_responses.push(format!("\x1b]{}\x1b\\", body));
     }
 
     /// Ported from `_CursorPositionReport`: 1-based, page-relative, and
@@ -316,6 +328,85 @@ impl AdaptDispatch {
         (buffer.screen_width(), buffer.screen_height())
     }
 
+    /// Ported from `_ReportColorTable`: the DECCTR body DECRQTSR answers with.
+    fn report_color_table(&mut self, model_value: VTInt) {
+        use std::fmt::Write as _;
+
+        let Some(model) = ColorModel::from_int(model_value) else {
+            return;
+        };
+
+        let mut body = String::from("2$s");
+        {
+            let table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+            for index in 0..TABLE_SIZE {
+                let Some(color) = table.get(index) else {
+                    continue;
+                };
+                if index > 0 {
+                    body.push('/');
+                }
+                let (x, y, z) = match model {
+                    ColorModel::Hls => color_to_hls(color),
+                    ColorModel::Rgb => color_to_rgb100(color),
+                };
+                let _ = write!(body, "{};{};{};{};{}", index, model.to_int(), x, y, z);
+            }
+        }
+        self.push_dcs(&body);
+    }
+
+    /// Ported from `_RestoreColorTable`: parses the DECCTR report DECRSTS
+    /// delivers.
+    fn restore_color_table_handler(&self) -> Box<dyn FnMut(char) -> bool + Send> {
+        let table = std::sync::Arc::clone(&self.color_table);
+        let mut parameter: VTInt = 0;
+        let mut parameters: Vec<VTInt> = Vec::new();
+
+        Box::new(move |ch| {
+            match ch {
+                '0'..='9' => {
+                    parameter = parameter
+                        .saturating_mul(10)
+                        .saturating_add(ch as VTInt - '0' as VTInt)
+                        .min(65535);
+                }
+                ';' => {
+                    if parameters.len() < 5 {
+                        parameters.push(parameter);
+                    }
+                    parameter = 0;
+                }
+                '/' | '\x1b' => {
+                    parameters.push(parameter);
+
+                    let color_number = parameters.first().copied().unwrap_or(0);
+                    if (0..TABLE_SIZE as VTInt).contains(&color_number)
+                        && let Some(model) = ColorModel::from_int(parameters.get(1).copied().unwrap_or(0))
+                    {
+                        let x = parameters.get(2).copied().unwrap_or(0);
+                        let y = parameters.get(3).copied().unwrap_or(0);
+                        let z = parameters.get(4).copied().unwrap_or(0);
+                        let color = match model {
+                            ColorModel::Hls => color_from_hls(x, y, z),
+                            ColorModel::Rgb => color_from_rgb100(x, y, z),
+                        };
+                        table
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .set(color_number as usize, color);
+                    }
+
+                    parameters.clear();
+                    parameter = 0;
+                    return ch != '\x1b';
+                }
+                _ => {}
+            }
+            true
+        })
+    }
+
     /// Returns whether insert/replace mode is enabled.
     pub fn is_insert_mode(&self) -> bool {
         self.modes.contains(ModeFlags::IRM)
@@ -379,6 +470,11 @@ impl AdaptDispatch {
     /// Returns the macro buffer.
     pub fn macro_buffer(&self) -> std::sync::Arc<std::sync::Mutex<MacroBuffer>> {
         std::sync::Arc::clone(&self.macro_buffer)
+    }
+
+    /// Returns the colour table.
+    pub fn color_table(&self) -> std::sync::Arc<std::sync::Mutex<ColorTable>> {
+        std::sync::Arc::clone(&self.color_table)
     }
 
     /// Takes the macro sequences the application should feed to its parser.
@@ -449,8 +545,10 @@ impl AdaptDispatch {
         self.using_alt_buffer = false;
         self.cursor_style = CursorStyle::UserDefault;
         self.modes = ModeSet::default();
-        // RIS discards the macro definitions, as upstream does.
+        // RIS discards the macro definitions and restores the colour table, as
+        // upstream's `ClearMacrosIfInUse` and `RestoreDefaultSettings` do.
         self.macro_buffer.lock().unwrap_or_else(|e| e.into_inner()).reset();
+        self.color_table.lock().unwrap_or_else(|e| e.into_inner()).reset();
         if erase {
             // Erasing the pages is part of the dispatch work; the page manager
             // owns the buffers, so the reset path has nothing to clear here yet.
@@ -982,6 +1080,33 @@ fn do_line_feed(
         buffer.scroll_region_up(top, bottom);
         buffer.cursor_mut().set_position(row, new_column);
     }
+}
+
+/// Maps an xterm colour resource number (10–19) to its table slot and alias.
+///
+/// Ported from `XtermResourceColorTableMappings`; `None` means the resource is
+/// not supported.
+fn xterm_color_mapping(resource: usize) -> Option<(usize, Option<ColorAlias>)> {
+    const MAPPINGS: [Option<(usize, Option<ColorAlias>)>; 10] = [
+        Some((DEFAULT_FOREGROUND, Some(ColorAlias::DefaultForeground))),
+        Some((DEFAULT_BACKGROUND, Some(ColorAlias::DefaultBackground))),
+        Some((CURSOR_COLOR, None)),
+        None,
+        None,
+        None,
+        None,
+        Some((SELECTION_BACKGROUND, None)),
+        None,
+        None,
+    ];
+    resource
+        .checked_sub(10)
+        .and_then(|index| MAPPINGS.get(index).copied().flatten())
+}
+
+/// Decodes upstream's `COLORREF` packing (`0x00BBGGRR`).
+fn colorref_to_text_color(color: u32) -> TextColor {
+    TextColor::rgb(color as u8, (color >> 8) as u8, (color >> 16) as u8)
 }
 
 /// Fills a half-open rectangle (`bottom`/`right` exclusive) with `ch` and
@@ -1754,6 +1879,100 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn set_color_table_entry(&mut self, table_index: usize, color: u32) {
+        self.color_table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set(table_index, colorref_to_text_color(color));
+    }
+
+    fn request_color_table_entry(&mut self, table_index: usize) {
+        let color = self
+            .color_table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(table_index);
+        if let Some(color) = color {
+            self.push_osc(&format!(
+                "4;{};rgb:{:04x}/{:04x}/{:04x}",
+                table_index,
+                u16::from(color.get_r()) * 0x0101,
+                u16::from(color.get_g()) * 0x0101,
+                u16::from(color.get_b()) * 0x0101,
+            ));
+        }
+    }
+
+    fn reset_color_table(&mut self) {
+        self.color_table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reset_indexed();
+    }
+
+    fn reset_color_table_entry(&mut self, table_index: usize) {
+        self.color_table
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reset_entry(table_index);
+    }
+
+    fn set_xterm_color_resource(&mut self, resource: usize, color: u32) {
+        let Some((table_index, alias)) = xterm_color_mapping(resource) else {
+            return;
+        };
+        let mut table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(alias) = alias {
+            table.set_alias_index(alias, table_index);
+        }
+        table.set(table_index, colorref_to_text_color(color));
+    }
+
+    fn request_xterm_color_resource(&mut self, resource: usize) {
+        let Some((table_index, alias)) = xterm_color_mapping(resource) else {
+            return;
+        };
+        let color = {
+            let table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+            let index = alias.map_or(table_index, |alias| table.alias_index(alias));
+            table.get(index)
+        };
+        if let Some(color) = color {
+            self.push_osc(&format!(
+                "{};rgb:{:04x}/{:04x}/{:04x}",
+                resource,
+                u16::from(color.get_r()) * 0x0101,
+                u16::from(color.get_g()) * 0x0101,
+                u16::from(color.get_b()) * 0x0101,
+            ));
+        }
+    }
+
+    fn reset_xterm_color_resource(&mut self, resource: usize) {
+        let Some((table_index, alias)) = xterm_color_mapping(resource) else {
+            return;
+        };
+        let mut table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(alias) = alias {
+            table.restore_default_alias_index(alias);
+        }
+        table.reset_entry(table_index);
+    }
+
+    fn request_terminal_state_report(&mut self, format: ReportFormat, format_option: VTParameter) {
+        match format {
+            ReportFormat::ColorTableReport => self.report_color_table(format_option.value_or(0)),
+            ReportFormat::TerminalStateReport => {}
+        }
+    }
+
+    fn restore_terminal_state(&mut self, format: ReportFormat) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        match format {
+            ReportFormat::ColorTableReport => Some(self.restore_color_table_handler()),
+            ReportFormat::TerminalStateReport => None,
+        }
+    }
+
     fn cursor_save_state(&mut self) {
         let (row, column) = self.active_cursor_position();
         let index = self.cursor_state_index();
@@ -2261,6 +2480,15 @@ mod tests {
             VTParameter::default(),
             VTParameter::default(),
         );
+        dispatch.set_color_table_entry(0, 0x000000);
+        dispatch.request_color_table_entry(0);
+        dispatch.reset_color_table();
+        dispatch.reset_color_table_entry(0);
+        dispatch.set_xterm_color_resource(10, 0x00FF0000);
+        dispatch.request_xterm_color_resource(10);
+        dispatch.reset_xterm_color_resource(10);
+        dispatch.request_terminal_state_report(ReportFormat::ColorTableReport, VTParameter::from(2));
+        drop(dispatch.restore_terminal_state(ReportFormat::ColorTableReport));
         dispatch.cursor_save_state();
         dispatch.cursor_restore_state();
         dispatch.horizontal_tab_set();
@@ -2281,9 +2509,9 @@ mod tests {
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.set_color_table_entry(0, 0);
+        dispatch.assign_color(ColorItem::NormalText, 0, 0);
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("set_color_table_entry"));
+        assert_eq!(dispatch.last_unhandled(), Some("assign_color"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -2957,6 +3185,122 @@ mod tests {
                 "\x1b[4;312;480t".to_string(),
             ]
         );
+    }
+
+    // OSC 4 takes a COLORREF (0x00BBGGRR) and reports the 16-bit xterm form.
+    #[test]
+    fn osc4_sets_queries_and_resets_a_colour() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_color_table_entry(4, 0x00FF0000);
+
+        dispatch.request_color_table_entry(4);
+        assert_eq!(
+            dispatch.take_responses(),
+            vec!["\x1b]4;4;rgb:0000/0000/ffff\x1b\\".to_string()]
+        );
+
+        dispatch.reset_color_table_entry(4);
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.get(4), Some(types::TextColor::rgb(0x00, 0x37, 0xDA)));
+    }
+
+    #[test]
+    fn osc104_resets_indexed_entries_but_not_aliases() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_color_table_entry(1, 0x000000FF);
+        dispatch.set_xterm_color_resource(12, 0x00FF0000);
+
+        dispatch.reset_color_table();
+
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.get(1), Some(types::TextColor::rgb(0xC5, 0x0F, 0x1F)));
+        assert_eq!(table.get(CURSOR_COLOR), Some(types::TextColor::rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn osc10_and_11_move_the_default_aliases() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.set_xterm_color_resource(10, 0x0000FF00);
+        dispatch.request_xterm_color_resource(10);
+
+        assert_eq!(
+            dispatch.take_responses(),
+            vec!["\x1b]10;rgb:0000/ffff/0000\x1b\\".to_string()]
+        );
+        {
+            let table = dispatch.color_table();
+            let table = table.lock().unwrap();
+            assert_eq!(table.alias_index(ColorAlias::DefaultForeground), DEFAULT_FOREGROUND);
+            assert_eq!(table.get(DEFAULT_FOREGROUND), Some(types::TextColor::rgb(0, 255, 0)));
+        }
+
+        dispatch.reset_xterm_color_resource(10);
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(
+            table.alias_index(ColorAlias::DefaultForeground),
+            TextColor::DARK_WHITE.get_index() as usize
+        );
+    }
+
+    #[test]
+    fn decrqtsr_reports_the_colour_table_in_rgb_or_hls() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.request_terminal_state_report(ReportFormat::ColorTableReport, VTParameter::from(2));
+        let responses = dispatch.take_responses();
+        assert_eq!(responses.len(), 1);
+        let response = &responses[0];
+        assert!(response.starts_with("\x1bP2$s0;2;"));
+        assert!(response.contains("/4;2;0;22;85"));
+        assert!(response.ends_with("\x1b\\"));
+
+        dispatch.set_color_table_entry(0, 0x000000FF);
+        dispatch.request_terminal_state_report(ReportFormat::ColorTableReport, VTParameter::from(1));
+        let responses = dispatch.take_responses();
+        assert!(responses[0].contains("0;1;120;50;100"));
+    }
+
+    #[test]
+    fn decrsts_restores_the_reported_table() {
+        let mut source = AdaptDispatch::new();
+        source.set_color_table_entry(4, 0x00FF0000);
+        source.request_terminal_state_report(ReportFormat::ColorTableReport, VTParameter::from(2));
+        let response = source.take_responses().remove(0);
+
+        let mut target = AdaptDispatch::new();
+        let mut handler = target
+            .restore_terminal_state(ReportFormat::ColorTableReport)
+            .expect("colour table restore is supported");
+        let body = response.trim_start_matches("\x1bP").trim_end_matches("\x1b\\");
+        for ch in body.chars() {
+            assert!(handler(ch));
+        }
+        assert!(!handler('\x1b'));
+
+        let table = target.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.get(4), Some(types::TextColor::rgb(0, 0, 255)));
+        assert!(
+            target
+                .restore_terminal_state(ReportFormat::TerminalStateReport)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_hard_reset_restores_the_default_colour_table() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_color_table_entry(0, 0x000000FF);
+
+        dispatch.hard_reset(false);
+
+        let table = dispatch.color_table();
+        let table = table.lock().unwrap();
+        assert_eq!(table.get(0), Some(types::TextColor::rgb(0x0C, 0x0C, 0x0C)));
     }
 
     #[test]

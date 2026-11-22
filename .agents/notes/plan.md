@@ -10,13 +10,13 @@ Verified by running the gate, not by reading the previous status:
 | Crate | Lines | Tests | State |
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
-| `types` | ~2.0k | 80 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
+| `types` | ~2.6k | 85 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables, `SgrStack` and the colour table |
 | `buffer` | ~5.6k | 192 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed; OSC 8 hyperlink registry |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~8.9k | 133 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, macro, window, save-restore and tab handlers ported |
+| `adapter` | ~9.5k | 139 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-665 tests, doc tests. Phases 5–14 are not started.
+676 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -46,11 +46,13 @@ settled.
    DECFRA, DECERA, DECSERA, DECRQCRA), hyperlinks and OSC strings (OSC 8
    into the buffer's hyperlink registry, OSC 0/2 title, OSC 7 CWD, OSC 52
    clipboard), macros (DECDMAC text/hex with repeats, DECINVM, DECMSR,
-   DECCKSR), and window manipulation (CSI 1/2/3/7/8/14/16/18 t, with the
-   reports answered from the visible page).
-   Still ported nowhere: colour-table OSC strings, sixel/DCS and DRCS (the
-   storage model is decided by ADR 005; the decoders wait for it), and
-   presentation state.
+   DECCKSR), window manipulation (CSI 1/2/3/7/8/14/16/18 t, with the
+   reports answered from the visible page), and the colour table (OSC
+   4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report).
+   Still ported nowhere: DECAC colour assignment, presentation state
+   (DECRQPSR/DECRSPS), sixel/DCS and DRCS (the storage model is decided by
+   ADR 005; the decoders wait for it), and the ConEmu/iTerm2/FinalTerm/VS
+   Code/WT action strings.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
@@ -59,6 +61,20 @@ settled.
 
 - **The stray `adapter/src/main.rs` binary is gone.** The crate is a library
   only again.
+
+- **The colour table and its reports are ported.** `types::ColorTable` is the
+  real VT table: the Campbell palette for 0–15, the 6×6×6 cube for 16–231, 24
+  greys for 232–255, six reserved slots and four aliases, with the unset slots
+  left empty. OSC 4/104 program and reset the indexed entries, OSC 10/11 move
+  the foreground/background aliases, OSC 12/17 reach the cursor and selection
+  slots, and queries answer in xterm's 16-bit `rgb:` form. DECRQTSR only ever
+  supports the colour-table format upstream, so that is the whole of
+  `request_terminal_state_report`/`restore_terminal_state` here: the report is
+  `2$s` plus `N;model;x;y;z` entries, the restore handler feeds them back, and
+  a round-trip test checks the table. The HLS and percentage conversions are
+  ported from `Utils::ColorToHLS`/`ColorFromHLS` and friends. `COLORREF`
+  packing (`0x00BBGGRR`) is the adapter's wire format for the `u32` colour
+  parameter, and RIS restores the defaults.
 
 - **Window manipulation is ported.** CSI 1 t and CSI 2 t record a visibility
   request, CSI 7 t a redraw request, and CSI 8 t a size request; all three are

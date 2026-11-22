@@ -813,6 +813,25 @@ pub enum ColorModel {
     Rgb,
 }
 
+impl ColorModel {
+    /// Decodes the wire value used by DECRQTSR/DECRSTS: 1 is HLS, 2 is RGB.
+    pub const fn from_int(value: VTInt) -> Option<Self> {
+        match value {
+            1 => Some(Self::Hls),
+            2 => Some(Self::Rgb),
+            _ => None,
+        }
+    }
+
+    /// The wire value for this model.
+    pub const fn to_int(self) -> VTInt {
+        match self {
+            Self::Hls => 1,
+            Self::Rgb => 2,
+        }
+    }
+}
+
 /// Default column counts for DECCOLM.
 pub const DECCOLM_SET_COLUMNS: VTInt = 132;
 pub const DECCOLM_RESET_COLUMNS: VTInt = 80;

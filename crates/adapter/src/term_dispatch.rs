@@ -717,7 +717,7 @@ pub trait ITermDispatch: std::fmt::Debug {
     // ─── Terminal State ─────────────────────────────────────────────
 
     /// DECRQTSR — Request Terminal State Report.
-    fn request_terminal_state_report(&mut self, format: ReportFormat) {
+    fn request_terminal_state_report(&mut self, format: ReportFormat, format_option: VTParameter) {
         self.unhandled("request_terminal_state_report");
     }
 
