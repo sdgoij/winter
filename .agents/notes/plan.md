@@ -13,7 +13,7 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~2.0k | 79 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
 | `buffer` | ~5.0k | 181 | Phase 2 partial — scrollback stored, no `resize`/`reflow` |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~7.3k | 101 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, mode, report, save-restore and tab handlers ported |
+| `adapter` | ~7.4k | 101 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, mode, report, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
 621 tests, doc tests. Phases 5–14 are not started.

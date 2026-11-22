@@ -526,12 +526,12 @@ pub trait ITermDispatch: std::fmt::Debug {
     }
 
     /// SCS — Designate 94 Charset.
-    fn designate_94_charset(&mut self, gset_number: VTInt, charset: VTInt) {
+    fn designate_94_charset(&mut self, gset_number: VTInt, charset: VTID) {
         self.unhandled("designate_94_charset");
     }
 
     /// SCS — Designate 96 Charset.
-    fn designate_96_charset(&mut self, gset_number: VTInt, charset: VTInt) {
+    fn designate_96_charset(&mut self, gset_number: VTInt, charset: VTID) {
         self.unhandled("designate_96_charset");
     }
 

@@ -1229,8 +1229,46 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn set_keypad_mode(&mut self, application_mode: bool) {
+        // Input-layer state; the flag is what the input crate will read.
+        self.set_mode_flag(ModeFlags::DECNKM, application_mode);
+    }
+
+    fn designate_94_charset(&mut self, gset_number: VTInt, charset: VTID) {
+        self.term_output
+            .designate_94_charset(gset_number.max(0) as usize, charset);
+    }
+
+    fn designate_96_charset(&mut self, gset_number: VTInt, charset: VTID) {
+        self.term_output
+            .designate_96_charset(gset_number.max(0) as usize, charset);
+    }
+
+    fn locking_shift(&mut self, gset_number: VTInt) {
+        self.term_output.locking_shift(gset_number.max(0) as usize);
+    }
+
+    fn locking_shift_right(&mut self, gset_number: VTInt) {
+        self.term_output.locking_shift_right(gset_number.max(0) as usize);
+    }
+
+    fn single_shift(&mut self, gset_number: VTInt) {
+        self.term_output.single_shift(gset_number.max(0) as usize);
+    }
+
+    fn designate_coding_system(&mut self, coding_system: VTID) {
+        // DOCS: only UTF-8 is modelled; anything else leaves the coding system
+        // alone rather than silently reinterpreting the byte stream.
+        let _ = coding_system;
+    }
+
+    fn accept_c1_controls(&mut self, _enabled: bool) {}
+
+    fn send_c1_controls(&mut self, _enabled: bool) {}
+
+    fn announce_code_structure(&mut self, _ansi_level: VTInt) {}
+
     fn tab_set(&mut self, _set_type: TabSetType) {
-        // DECST8C has one defined value: restore the every-eighth-column default.
         let (page_width, _) = self.page_size();
         self.tab_stops.clear();
         self.ensure_tab_stops(page_width);
@@ -1576,6 +1614,16 @@ mod tests {
         dispatch.backwards_tab(1);
         dispatch.tab_clear(TabClearType::ClearAllColumns);
         dispatch.tab_set(TabSetType::SetEvery8Columns);
+        dispatch.set_keypad_mode(true);
+        dispatch.designate_94_charset(0, VTID::default());
+        dispatch.designate_96_charset(0, VTID::default());
+        dispatch.locking_shift(1);
+        dispatch.locking_shift_right(1);
+        dispatch.single_shift(2);
+        dispatch.designate_coding_system(VTID::default());
+        dispatch.accept_c1_controls(true);
+        dispatch.send_c1_controls(true);
+        dispatch.announce_code_structure(2);
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
