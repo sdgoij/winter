@@ -194,6 +194,32 @@ impl FontCollection {
             .or_else(|| self.faces.iter().find(|face| face.is_fixed_pitch()))
     }
 
+    /// Returns the first preferred family with both an upright and an italic
+    /// fixed-pitch face.
+    ///
+    /// A family can be installed upright only — Cascadia Mono ships that way on
+    /// some machines — and choosing it would leave SGR 3 upright while a later
+    /// preference has the face. The pair comes back together so the caller
+    /// registers a family that can render both.
+    pub fn default_monospace_with_italic(&self, preferred: &[&str]) -> Option<(&FontFace, &FontFace)> {
+        for family in preferred {
+            let Some(regular) = self
+                .resolve(family, 400, false)
+                .filter(|face| face.is_fixed_pitch() && !face.is_italic())
+            else {
+                continue;
+            };
+            let Some(italic) = self
+                .resolve(family, 400, true)
+                .filter(|face| face.is_italic() && face.is_fixed_pitch())
+            else {
+                continue;
+            };
+            return Some((regular, italic));
+        }
+        None
+    }
+
     /// Iterates over the fixed-pitch faces.
     pub fn monospace_faces(&self) -> impl Iterator<Item = &FontFace> {
         self.faces.iter().filter(|face| face.is_fixed_pitch())
@@ -878,6 +904,30 @@ mod tests {
             &test_face("Proportional", "Regular", false, 400, false),
         );
         assert!(proportional_only.default_monospace(&[]).is_none());
+    }
+
+    #[test]
+    fn a_family_without_an_italic_is_skipped_for_one_with_it() {
+        let mut collection = FontCollection::new();
+        collection.add_bytes("cascadia.ttf", &test_face("Cascadia Mono", "Roman", true, 400, false));
+        collection.add_bytes("consolas.ttf", &test_face("Consolas", "Regular", true, 400, false));
+        collection.add_bytes("consolas-italic.ttf", &test_face("Consolas", "Italic", true, 400, true));
+
+        let (regular, italic) = match collection.default_monospace_with_italic(&["Cascadia Mono", "Consolas"]) {
+            Some(pair) => pair,
+            None => panic!("no family with an italic"),
+        };
+        assert_eq!(regular.family(), "Consolas");
+        assert!(!regular.is_italic());
+        assert_eq!(italic.subfamily(), "Italic");
+    }
+
+    #[test]
+    fn a_family_without_an_italic_yields_no_pair() {
+        let mut collection = FontCollection::new();
+        collection.add_bytes("cascadia.ttf", &test_face("Cascadia Mono", "Roman", true, 400, false));
+
+        assert!(collection.default_monospace_with_italic(&["Cascadia Mono"]).is_none());
     }
 
     #[test]

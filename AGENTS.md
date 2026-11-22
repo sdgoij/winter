@@ -227,7 +227,8 @@ scrollback, mouse selection that reaches into history and scrolls when a drag
 leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC
 titles, bell attention, cursor shapes, text decorations, reverse video,
-intense brightening and faint text, tabs (ADR 021),
+intense brightening, faint text and italics from the host's monospace face
+(ADR 029), tabs (ADR 021),
 splittable panes (Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to
 resize, or drag a divider), a shell chosen by the profile, the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`

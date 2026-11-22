@@ -11,6 +11,7 @@ description = "The winterm terminal application"
 buffer.workspace = true
 eframe.workspace = true
 host.workspace = true
+renderer.workspace = true
 server.workspace = true
 settings.workspace = true
 term.workspace = true

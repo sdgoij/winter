@@ -37,6 +37,155 @@ const DIVIDER: egui::Color32 = egui::Color32::from_rgb(60, 60, 60);
 const DIVIDER_GRAB: f32 = 4.0;
 /// The line around the focused pane.
 const FOCUS_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 140, 200);
+/// The egui family the host's regular monospace face is registered under.
+const REGULAR_FAMILY: &str = "winterm-mono";
+/// The egui family the host's italic monospace face is registered under.
+const ITALIC_FAMILY: &str = "winterm-mono-italic";
+
+/// The faces the window could register from the host's fonts.
+///
+/// With no host family the shell keeps egui's embedded monospace face, which is
+/// upright only: italic text then draws upright rather than in a second font
+/// whose cell width would not match the grid (ADR 029).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Faces {
+    regular: bool,
+    italic: bool,
+}
+
+impl Faces {
+    /// The font for a style, falling back to what is available.
+    fn font(&self, size: f32, italic: bool) -> egui::FontId {
+        let family = if italic && self.italic {
+            Some(ITALIC_FAMILY)
+        } else if self.regular {
+            Some(REGULAR_FAMILY)
+        } else {
+            None
+        };
+
+        match family {
+            Some(name) => egui::FontId::new(size, egui::FontFamily::Name(name.into())),
+            None => egui::FontId::monospace(size),
+        }
+    }
+}
+
+/// Registers the host's monospace faces with egui, when there are any.
+///
+/// One family is chosen from the renderer's preference list and every style
+/// comes from it, so the cell metrics stay consistent; a style the host does
+/// not have keeps the family's upright face. Failure is silent on purpose: a
+/// machine with no discoverable fonts runs on the embedded face.
+fn register_fonts(ctx: &egui::Context) -> Faces {
+    let directories = font_directories();
+    if directories.is_empty() {
+        return Faces::default();
+    }
+
+    let paths: Vec<&Path> = directories.iter().map(PathBuf::as_path).collect();
+    let collection = renderer::FontCollection::from_directories(paths);
+
+    // A family that has an italic is preferred over one that does not: the
+    // first choice on a machine can be installed upright-only.
+    let chosen = collection
+        .default_monospace_with_italic(renderer::PREFERRED_MONOSPACE_FAMILIES)
+        .map(|(regular, italic)| (regular, Some(italic)))
+        .or_else(|| {
+            collection
+                .default_monospace(renderer::PREFERRED_MONOSPACE_FAMILIES)
+                .map(|regular| (regular, None))
+        });
+    let Some((regular, italic)) = chosen else {
+        return Faces::default();
+    };
+    let Some(regular_data) = font_data(regular) else {
+        return Faces::default();
+    };
+
+    let mut definitions = egui::FontDefinitions::default();
+    let fallbacks = definitions
+        .families
+        .get(&egui::FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
+
+    definitions
+        .font_data
+        .insert(REGULAR_FAMILY.to_string(), std::sync::Arc::new(regular_data));
+    let mut regular_chain = vec![REGULAR_FAMILY.to_string()];
+    regular_chain.extend(fallbacks.iter().cloned());
+    definitions
+        .families
+        .insert(egui::FontFamily::Name(REGULAR_FAMILY.into()), regular_chain);
+
+    let mut faces = Faces {
+        regular: true,
+        italic: false,
+    };
+
+    if let Some(italic) = italic
+        && let Some(italic_data) = font_data(italic)
+    {
+        definitions
+            .font_data
+            .insert(ITALIC_FAMILY.to_string(), std::sync::Arc::new(italic_data));
+        let mut italic_chain = vec![ITALIC_FAMILY.to_string(), REGULAR_FAMILY.to_string()];
+        italic_chain.extend(fallbacks);
+        definitions
+            .families
+            .insert(egui::FontFamily::Name(ITALIC_FAMILY.into()), italic_chain);
+        faces.italic = true;
+    }
+
+    ctx.set_fonts(definitions);
+    faces
+}
+
+/// Reads a face's file and its index inside it.
+fn font_data(face: &renderer::FontFace) -> Option<egui::FontData> {
+    let bytes = std::fs::read(face.path()).ok()?;
+    let mut data = egui::FontData::from_owned(bytes);
+    data.index = face.index();
+    Some(data)
+}
+
+/// Returns the directories this platform keeps fonts in, keeping the ones that
+/// exist.
+fn font_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+
+    #[cfg(windows)]
+    {
+        if let Some(windir) = std::env::var_os("WINDIR") {
+            directories.push(PathBuf::from(windir).join("Fonts"));
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            directories.push(PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        directories.push(PathBuf::from("/System/Library/Fonts"));
+        directories.push(PathBuf::from("/Library/Fonts"));
+        if let Some(home) = std::env::var_os("HOME") {
+            directories.push(PathBuf::from(home).join("Library").join("Fonts"));
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        directories.push(PathBuf::from("/usr/share/fonts"));
+        directories.push(PathBuf::from("/usr/local/share/fonts"));
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            directories.push(home.join(".local").join("share").join("fonts"));
+            directories.push(home.join(".fonts"));
+        }
+    }
+
+    directories.retain(|directory| directory.is_dir());
+    directories
+}
 
 /// Starts the window and the shell inside it.
 pub fn run() -> eframe::Result {
@@ -50,7 +199,14 @@ pub fn run() -> eframe::Result {
         ..Default::default()
     };
 
-    eframe::run_native("winterm", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)?))))
+    eframe::run_native(
+        "winterm",
+        options,
+        Box::new(|cc| {
+            let faces = register_fonts(&cc.egui_ctx);
+            Ok(Box::new(App::new(&cc.egui_ctx, faces)?))
+        }),
+    )
 }
 
 /// One pane: a shell, its parser and its viewport.
@@ -454,7 +610,15 @@ impl Pane {
         }
     }
 
-    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool, font_size: f32) {
+    fn paint(
+        &mut self,
+        ui: &egui::Ui,
+        area: egui::Rect,
+        cell: egui::Vec2,
+        cursor_on: bool,
+        font_size: f32,
+        faces: Faces,
+    ) {
         let screen = self.snapshot();
         let painter = ui.painter().with_clip_rect(area);
 
@@ -469,7 +633,6 @@ impl Pane {
         let pane_background =
             resolve(TextColor::new(), &table, ColorAlias::DefaultBackground).unwrap_or(FALLBACK_BACKGROUND);
         painter.rect_filled(area, 0, pane_background);
-        let font = egui::FontId::monospace(font_size);
 
         // Backgrounds first, so the selection can cover them and the text can
         // be drawn over both.
@@ -534,7 +697,7 @@ impl Pane {
                     egui::pos2(left, top),
                     egui::Align2::LEFT_TOP,
                     &run.text,
-                    font.clone(),
+                    faces.font(font_size, attribute.is_italic()),
                     foreground,
                 );
 
@@ -783,14 +946,22 @@ impl Tab {
         self.focused_pane_mut().map(Pane::snapshot).unwrap_or_default()
     }
 
-    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool, font_size: f32) {
+    fn paint(
+        &mut self,
+        ui: &egui::Ui,
+        area: egui::Rect,
+        cell: egui::Vec2,
+        cursor_on: bool,
+        font_size: f32,
+        faces: Faces,
+    ) {
         let focused = self.focused;
         let multiple = self.panes.len() > 1;
 
         for (id, fraction) in self.layout.rects() {
             let rect = fraction_rect(fraction, area);
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
-                pane.paint(ui, rect, cell, cursor_on && id == focused, font_size);
+                pane.paint(ui, rect, cell, cursor_on && id == focused, font_size, faces);
             }
 
             // With more than one pane the borders double as the focus cue.
@@ -906,6 +1077,8 @@ impl Draft {
 struct App {
     tabs: Tabs<Tab>,
     settings: Settings,
+    /// The faces egui renders the grid with.
+    faces: Faces,
     /// The scheme every pane starts with, if the file names one.
     scheme: Option<settings::Scheme>,
     /// The grid's point size, from the settings file.
@@ -952,7 +1125,7 @@ enum TabAction {
 }
 
 impl App {
-    fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    fn new(ctx: &egui::Context, faces: Faces) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let loaded = settings::load_with_report();
         let settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
         let settings_warnings = loaded.warnings.iter().map(ToString::to_string).collect();
@@ -965,6 +1138,7 @@ impl App {
         Ok(Self {
             tabs: Tabs::new(tab),
             settings,
+            faces,
             scheme,
             font_size,
             settings_path: loaded.path,
@@ -1294,7 +1468,7 @@ impl eframe::App for App {
         }
 
         let focused = ctx.input(|input| input.focused);
-        let font = egui::FontId::monospace(self.font_size);
+        let font = self.faces.font(self.font_size, false);
         let cell = ctx.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
 
         let area = ui.available_rect_before_wrap();
@@ -1321,7 +1495,7 @@ impl eframe::App for App {
         if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
             ctx.request_repaint_after(delay);
         }
-        tab.paint(ui, area, cell, self.cursor_on, self.font_size);
+        tab.paint(ui, area, cell, self.cursor_on, self.font_size, self.faces);
 
         if self.settings_open {
             self.settings_window(&ctx);
@@ -1920,6 +2094,66 @@ fn key_modifiers(modifiers: egui::Modifiers, right_alt: bool, right_ctrl: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_face_is_chosen_by_style_and_falls_back_to_the_embedded_one() {
+        let embedded = Faces::default();
+        assert_eq!(embedded.font(16.0, false).family, egui::FontFamily::Monospace);
+        assert_eq!(embedded.font(16.0, true).family, egui::FontFamily::Monospace);
+
+        let host = Faces {
+            regular: true,
+            italic: false,
+        };
+        assert_eq!(
+            host.font(16.0, false).family,
+            egui::FontFamily::Name(REGULAR_FAMILY.into())
+        );
+        // Without an italic face, italic text keeps the upright one.
+        assert_eq!(
+            host.font(16.0, true).family,
+            egui::FontFamily::Name(REGULAR_FAMILY.into())
+        );
+
+        let with_italic = Faces {
+            regular: true,
+            italic: true,
+        };
+        assert_eq!(
+            with_italic.font(16.0, true).family,
+            egui::FontFamily::Name(ITALIC_FAMILY.into())
+        );
+        assert_eq!(with_italic.font(21.0, true).size, 21.0);
+    }
+
+    #[test]
+    #[ignore = "reads the host's installed fonts; run with `cargo test -p winterm -- --ignored`"]
+    fn the_host_faces_register_with_egui() {
+        let ctx = egui::Context::default();
+        let faces = register_fonts(&ctx);
+        assert!(faces.regular, "no host monospace family was found");
+        eprintln!("registered faces: {faces:?}");
+
+        // The atlas is built by the first pass; its texture delta is dropped
+        // with the output, so mark it handled first.
+        let mut widths = (0.0, 0.0);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widths.0 = ui
+                .ctx()
+                .fonts_mut(|fonts| fonts.glyph_width(&faces.font(16.0, false), 'M'));
+            if faces.italic {
+                widths.1 = ui
+                    .ctx()
+                    .fonts_mut(|fonts| fonts.glyph_width(&faces.font(16.0, true), 'M'));
+            }
+        });
+        output.textures_delta.clear();
+
+        assert!(widths.0 > 0.0, "the regular face has no glyphs");
+        if faces.italic {
+            assert!(widths.1 > 0.0, "the italic face has no glyphs");
+        }
+    }
 
     #[test]
     fn the_keymap_names_the_keys_the_terminal_encodes() {

@@ -57,3 +57,4 @@ Rules:
 | [026](026-settings-are-toml.md) | Settings are TOML with a schema `version`; a newer version is refused | Accepted |
 | [027](027-normalization-warns.md) | Normalization returns typed warnings; the window lists what it adjusted | Accepted |
 | [028](028-settings-window-edits.md) | The window edits font size and the default profile and scheme, saving atomically | Accepted |
+| [029](029-host-font-family.md) | The shell renders with the host's monospace family; italic is a real face when installed | Accepted |
