@@ -3086,6 +3086,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "types",
 ]
 
 [[package]]

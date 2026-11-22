@@ -1,18 +1,20 @@
 //! User settings: the file, the default profile and the rules that make a
 //! partial file usable.
 //!
-//! The schema is the port's own (ADRs 022, 023). Windows Terminal's
+//! The schema is the port's own (ADRs 022, 023, 024). Windows Terminal's
 //! `settings.json` is a large cascadia schema; this one holds what the
-//! application consumes — named profiles and keybindings — and grows one
-//! consumer at a time.
+//! application consumes — named profiles, keybindings and colour schemes — and
+//! grows one consumer at a time.
 
 mod actions;
 mod keybindings;
+mod palette;
 mod parser;
 mod profiles;
 
 pub use actions::Action;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
+pub use palette::{Color, ColorError, Scheme};
 pub use parser::{load, parse, settings_path, to_json};
 pub use profiles::{Profile, default_shell};
 
@@ -28,6 +30,10 @@ pub struct Settings {
     pub default_profile: Option<String>,
     /// The chords the window claims before the shell sees them.
     pub keybindings: Vec<Keybinding>,
+    /// The colour schemes this installation knows.
+    pub schemes: Vec<Scheme>,
+    /// The scheme the window paints with, by name.
+    pub default_scheme: Option<String>,
 }
 
 impl Default for Settings {
@@ -37,6 +43,8 @@ impl Default for Settings {
             default_profile: Some(profile.name.clone()),
             profiles: vec![profile],
             keybindings: DEFAULT_KEYBINDINGS.to_vec(),
+            schemes: Vec::new(),
+            default_scheme: None,
         }
     }
 }
@@ -50,12 +58,25 @@ impl Settings {
             .or_else(|| self.profiles.first())
     }
 
+    /// Returns the scheme the window should paint with, or None for the
+    /// built-in palette.
+    ///
+    /// A name that matches nothing is not replaced by another scheme: a typo
+    /// should leave the built-in colours visible, not paint an arbitrary
+    /// palette.
+    pub fn scheme(&self) -> Option<&Scheme> {
+        self.default_scheme
+            .as_deref()
+            .and_then(|name| self.schemes.iter().find(|scheme| scheme.name == name))
+    }
+
     /// Fills in what a partial file leaves out.
     ///
     /// Called on every parse: an empty list gets the default profile, a blank
     /// command gets the platform shell, a default that names nothing falls
-    /// back to the first profile, and the user's chords are applied over the
-    /// defaults.
+    /// back to the first profile, the user's chords are applied over the
+    /// defaults, and a scheme with no name is dropped because nothing can
+    /// select it.
     pub(crate) fn normalize(mut self) -> Self {
         if self.profiles.is_empty() {
             self.profiles.push(Profile::default());
@@ -79,6 +100,7 @@ impl Settings {
         }
 
         self.keybindings = keybindings::resolve(&self.keybindings);
+        self.schemes.retain(|scheme| !scheme.name.trim().is_empty());
 
         self
     }
@@ -211,5 +233,69 @@ mod tests {
         assert!(parse(r#"{"keybindings": [{"keys": "ctrl+a+b", "action": "newTab"}]}"#).is_err());
         assert!(parse(r#"{"keybindings": [{"keys": "ctrl+t", "action": "explode"}]}"#).is_err());
         assert!(parse(r#"{"keybindings": [{"keys": "ctrl+t"}]}"#).is_err());
+    }
+
+    #[test]
+    fn the_default_settings_paint_with_the_built_in_palette() {
+        let settings = Settings::default();
+        assert!(settings.schemes.is_empty());
+        assert_eq!(settings.default_scheme, None);
+        assert!(settings.scheme().is_none());
+    }
+
+    #[test]
+    fn the_default_scheme_is_selected_by_name() {
+        let json = r##"{
+            "schemes": [
+                { "name": "one", "background": "#010203" },
+                { "name": "two", "background": "#040506" }
+            ],
+            "default_scheme": "two"
+        }"##;
+        let settings = parse(json).expect("parse");
+        let scheme = settings.scheme().expect("scheme");
+
+        assert_eq!(scheme.name, "two");
+        assert_eq!(
+            scheme.background.map(Color::text_color),
+            Some(types::TextColor::rgb(4, 5, 6))
+        );
+    }
+
+    #[test]
+    fn a_default_scheme_that_names_nothing_selects_none() {
+        let json = r##"{
+            "schemes": [{ "name": "one", "background": "#010203" }],
+            "default_scheme": "missing"
+        }"##;
+        let settings = parse(json).expect("parse");
+
+        assert_eq!(settings.default_scheme.as_deref(), Some("missing"));
+        assert!(settings.scheme().is_none());
+    }
+
+    #[test]
+    fn a_scheme_with_no_name_is_dropped() {
+        let json = r##"{"schemes": [{"background": "#010203"}, {"name": "  "}, {"name": "kept"}]}"##;
+        let settings = parse(json).expect("parse");
+
+        assert_eq!(settings.schemes.len(), 1);
+        assert_eq!(settings.schemes[0].name, "kept");
+    }
+
+    #[test]
+    fn a_scheme_round_trips_through_json() {
+        let json = r##"{
+            "schemes": [{ "name": "x", "foreground": "#C0C0C0", "red": "rgb:ff/00/00" }]
+        }"##;
+        let settings = parse(json).expect("parse");
+        let round_tripped = parse(&to_json(&settings)).expect("parse");
+
+        assert_eq!(round_tripped, settings);
+    }
+
+    #[test]
+    fn a_broken_colour_rejects_the_file() {
+        assert!(parse(r##"{"schemes": [{"name": "x", "red": "#12345"}]}"##).is_err());
     }
 }

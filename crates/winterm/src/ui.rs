@@ -18,7 +18,7 @@ use term::input::{
 };
 use types::CursorType;
 use types::UnderlineStyle;
-use types::color_table::{ColorAlias, ColorTable};
+use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGROUND as SELECTION_SLOT};
 use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
@@ -30,8 +30,8 @@ const FONT_SIZE: f32 = 16.0;
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 /// The colour used when the palette has no default foreground.
 const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
-/// The fill behind selected cells. Opaque, because the text is painted over it.
-const SELECTION_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
+/// The fill behind selected cells when the table names no selection colour.
+const FALLBACK_SELECTION: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
 /// The line between panes.
 const DIVIDER: egui::Color32 = egui::Color32::from_rgb(60, 60, 60);
 /// The line around the focused pane.
@@ -69,12 +69,25 @@ struct Pane {
 }
 
 impl Pane {
-    fn new(ctx: &egui::Context, id: PaneId, command: PtyCommand) -> io::Result<Self> {
+    fn new(
+        ctx: &egui::Context,
+        id: PaneId,
+        command: PtyCommand,
+        scheme: Option<&settings::Scheme>,
+    ) -> io::Result<Self> {
         let size = PtySize::DEFAULT;
         let repaint = ctx.clone();
         let session = Session::spawn_with(&command, size, move || repaint.request_repaint())?;
         let mut terminal = Terminal::new();
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
+
+        // The scheme fills the table before the shell can write to it, so a
+        // program's OSC 10/11 arrives later and wins, as it does upstream.
+        if let Some(scheme) = scheme
+            && let Ok(mut table) = terminal.dispatch().color_table().lock()
+        {
+            scheme.apply(&mut table);
+        }
 
         Ok(Self {
             id,
@@ -402,7 +415,6 @@ impl Pane {
     fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, cursor_on: bool) {
         let screen = self.snapshot();
         let painter = ui.painter().with_clip_rect(area);
-        painter.rect_filled(area, 0, FALLBACK_BACKGROUND);
 
         if cell.x <= 0.0 || cell.y <= 0.0 {
             return;
@@ -412,6 +424,9 @@ impl Pane {
         let Ok(table) = table.lock() else {
             return;
         };
+        let pane_background =
+            resolve(TextColor::new(), &table, ColorAlias::DefaultBackground).unwrap_or(FALLBACK_BACKGROUND);
+        painter.rect_filled(area, 0, pane_background);
         let font = egui::FontId::monospace(FONT_SIZE);
 
         // Backgrounds first, so the selection can cover them and the text can
@@ -419,19 +434,23 @@ impl Pane {
         for (index, row) in screen.rows.iter().enumerate() {
             let top = area.min.y + index as f32 * cell.y;
             for run in &row.runs {
-                let background = resolve(run.attribute.get_background(), &table, ColorAlias::DefaultBackground)
-                    .unwrap_or(FALLBACK_BACKGROUND);
-                if background == FALLBACK_BACKGROUND {
+                let run_background = resolve(run.attribute.get_background(), &table, ColorAlias::DefaultBackground)
+                    .unwrap_or(pane_background);
+                if run_background == pane_background {
                     continue;
                 }
                 let left = area.min.x + run.column as f32 * cell.x;
                 let rect =
                     egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(cell.x * run.cells as f32, cell.y));
-                painter.rect_filled(rect, 0, background);
+                painter.rect_filled(rect, 0, run_background);
             }
         }
 
         if let Some(selection) = self.view.selection() {
+            let fill = table
+                .get(SELECTION_SLOT)
+                .and_then(egui_color)
+                .unwrap_or(FALLBACK_SELECTION);
             for row in 0..screen.height {
                 // The selection is in document coordinates; the snapshot says
                 // which document row is painted on screen row zero.
@@ -450,7 +469,7 @@ impl Pane {
                     egui::pos2(left, top),
                     egui::vec2((end - start + 1) as f32 * cell.x, cell.y),
                 );
-                painter.rect_filled(rect, 0, SELECTION_BACKGROUND);
+                painter.rect_filled(rect, 0, fill);
             }
         }
 
@@ -522,7 +541,12 @@ impl Pane {
             let column = screen.cursor.0.clamp(0, screen.width.max(1) - 1);
             let row = screen.cursor.1.clamp(0, screen.height.max(1) - 1);
             let origin = egui::pos2(area.min.x + column as f32 * cell.x, area.min.y + row as f32 * cell.y);
-            paint_cursor(&painter, origin, cell, screen.cursor_shape);
+            let color = table
+                .get(CURSOR_COLOR)
+                .and_then(egui_color)
+                .map(|color| egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160))
+                .unwrap_or_else(|| egui::Color32::from_rgba_unmultiplied(230, 230, 230, 160));
+            paint_cursor(&painter, origin, cell, screen.cursor_shape, color);
         }
     }
 }
@@ -538,10 +562,15 @@ struct Tab {
 }
 
 impl Tab {
-    fn new(ctx: &egui::Context, command: PtyCommand, fallback_title: String) -> io::Result<Self> {
+    fn new(
+        ctx: &egui::Context,
+        command: PtyCommand,
+        fallback_title: String,
+        scheme: Option<&settings::Scheme>,
+    ) -> io::Result<Self> {
         let id = PaneId(0);
         Ok(Self {
-            panes: vec![Pane::new(ctx, id, command)?],
+            panes: vec![Pane::new(ctx, id, command, scheme)?],
             layout: Layout::leaf(id),
             focused: id,
             fallback_title,
@@ -567,9 +596,15 @@ impl Tab {
     }
 
     /// Splits the focused pane, spawning a shell for the new half.
-    fn split(&mut self, axis: Axis, ctx: &egui::Context, command: PtyCommand) -> bool {
+    fn split(
+        &mut self,
+        axis: Axis,
+        ctx: &egui::Context,
+        command: PtyCommand,
+        scheme: Option<&settings::Scheme>,
+    ) -> bool {
         let id = PaneId(self.next_id);
-        let Ok(pane) = Pane::new(ctx, id, command) else {
+        let Ok(pane) = Pane::new(ctx, id, command, scheme) else {
             return false;
         };
 
@@ -713,6 +748,8 @@ fn fraction_rect(fraction: Fraction, area: egui::Rect) -> egui::Rect {
 struct App {
     tabs: Tabs<Tab>,
     settings: Settings,
+    /// The scheme every pane starts with, if the file names one.
+    scheme: Option<settings::Scheme>,
     /// The sides egui collapses but the encoder distinguishes.
     sides: ModifierSides,
     clipboard: Option<arboard::Clipboard>,
@@ -742,12 +779,14 @@ enum TabAction {
 impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let settings = settings::load();
+        let scheme = settings.scheme().cloned();
         let (command, title) = profile_command(settings.profile());
-        let tab = Tab::new(ctx, command, title)?;
+        let tab = Tab::new(ctx, command, title, scheme.as_ref())?;
 
         Ok(Self {
             tabs: Tabs::new(tab),
             settings,
+            scheme,
             sides: ModifierSides::default(),
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
@@ -759,7 +798,7 @@ impl App {
     /// Opens another shell in a new tab.
     fn open_tab(&mut self, ctx: &egui::Context) {
         let (command, title) = profile_command(self.settings.profile());
-        if let Ok(tab) = Tab::new(ctx, command, title) {
+        if let Ok(tab) = Tab::new(ctx, command, title, self.scheme.as_ref()) {
             self.tabs.add(tab);
         }
     }
@@ -785,7 +824,7 @@ impl App {
             TabAction::Split(axis) => {
                 let (command, _) = profile_command(self.settings.profile());
                 if let Some(tab) = self.tabs.active_mut() {
-                    tab.split(axis, ctx, command);
+                    tab.split(axis, ctx, command, self.scheme.as_ref());
                 }
             }
             TabAction::Focus(direction) => {
@@ -1165,8 +1204,13 @@ const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> MouseBut
 }
 
 /// Draws the cursor in the shape the terminal asked for.
-fn paint_cursor(painter: &egui::Painter, origin: egui::Pos2, cell: egui::Vec2, shape: CursorType) {
-    let color = egui::Color32::from_rgba_unmultiplied(230, 230, 230, 160);
+fn paint_cursor(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    cell: egui::Vec2,
+    shape: CursorType,
+    color: egui::Color32,
+) {
     let rect = egui::Rect::from_min_size(origin, cell);
     let bar = (cell.x / 8.0).max(1.0);
 
@@ -1227,7 +1271,12 @@ fn resolve(color: TextColor, table: &ColorTable, alias: ColorAlias) -> Option<eg
         ColorType::Default => table.get(table.alias_index(alias))?,
     };
 
-    match entry.get_type() {
+    egui_color(entry)
+}
+
+/// The egui colour an RGB terminal colour names.
+fn egui_color(color: TextColor) -> Option<egui::Color32> {
+    match color.get_type() {
         ColorType::Rgb { r, g, b } => Some(egui::Color32::from_rgb(r, g, b)),
         _ => None,
     }
@@ -1439,6 +1488,35 @@ mod tests {
         assert_eq!(
             resolve(TextColor::new(), &table, ColorAlias::DefaultBackground),
             Some(egui::Color32::from_rgb(0x0C, 0x0C, 0x0C))
+        );
+    }
+
+    #[test]
+    fn a_scheme_colours_resolve_through_the_table() {
+        let settings = settings::parse(
+            r##"{
+                "schemes": [
+                    { "name": "x", "foreground": "#010203", "background": "#101112", "blue": "#0000FF" }
+                ],
+                "default_scheme": "x"
+            }"##,
+        )
+        .expect("settings");
+
+        let mut table = ColorTable::new();
+        settings.scheme().expect("scheme").apply(&mut table);
+
+        assert_eq!(
+            resolve(TextColor::new(), &table, ColorAlias::DefaultForeground),
+            Some(egui::Color32::from_rgb(1, 2, 3))
+        );
+        assert_eq!(
+            resolve(TextColor::new(), &table, ColorAlias::DefaultBackground),
+            Some(egui::Color32::from_rgb(0x10, 0x11, 0x12))
+        );
+        assert_eq!(
+            resolve(TextColor::index16(4), &table, ColorAlias::DefaultForeground),
+            Some(egui::Color32::from_rgb(0, 0, 0xFF))
         );
     }
 

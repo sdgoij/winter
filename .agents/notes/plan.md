@@ -18,16 +18,16 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `settings` | ~0.9k | 23 | Phase 10 (ADRs 022, 023): the JSON file's path, the named-profile schema, keybindings with their own chord syntax and action names, and the normalization that makes a partial file usable. Palettes, fonts and the settings UI are next |
-| `winterm` | ~3.4k | 55 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs, splittable panes, a configurable shell and keybindings read from the file work |
+| `settings` | ~1.3k | 34 | Phase 10 (ADRs 022–024): the JSON file's path, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, and the normalization that makes a partial file usable. Fonts and the settings UI are next |
+| `winterm` | ~3.5k | 56 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs, splittable panes, a configurable shell, keybindings and a colour scheme read from the file work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1409 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1421 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
-tabs and panes; Phase 10 has the settings file, its profiles and its
-keybindings. Phases 11–14 are not started.
+tabs and panes; Phase 10 has the settings file, its profiles, its keybindings
+and its colour schemes. Phases 11–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1243,9 +1243,11 @@ makes a partial file usable (ADR 022). The schema is a named-profile list and
 `default_profile`, and the application starts the default profile's command. The
 window's chords are settings too (ADR 023): `crates/settings/src/keybindings.rs`
 parses upstream's chord syntax into a typed `Chord`, `actions.rs` names the
-commands, and the user's list is merged over `DEFAULT_KEYBINDINGS`. The rest of
-the plan's rows arrive when they have a consumer — palettes feed the adapter's
-`ColorTable`, and the settings UI is what makes a malformed file visible.
+commands, and the user's list is merged over `DEFAULT_KEYBINDINGS`. Colour
+schemes (ADR 024) live in `palette.rs`: a `Scheme` reads specs with the ported
+`ColorFromXParseColorSpec` and writes the adapter's `ColorTable` when a pane is
+created. The rest of the plan's rows arrive when they have a consumer — fonts
+feed the renderer, and the settings UI is what makes a malformed file visible.
 
 ### Settings Model
 
@@ -1262,8 +1264,12 @@ the plan's rows arrive when they have a consumer — palettes feed the adapter's
   - One list with a named default. **Tests:** the default profile names the
     platform shell; an unknown or absent default falls back to the first
     profile; a blank command is filled in.
-- [ ] `winterm/crates/settings/src/palette.rs` — Color palettes
-  - [ ] **Tests:** load palette, validate colors, apply palette
+- [x] `winterm/crates/settings/src/palette.rs` — Color palettes
+  - `Color` reads the ported xparse grammar (`#RGB` … `#RRGGBB`, `rgb:r/g/b`);
+    `Scheme` names the twenty colours upstream's scheme names and `apply`
+    writes them to the table, including the reserved default slots.
+    **Tests:** spec grammar, canonical hex output, only-named colours written,
+    alias moves, both boundary entries in ANSI order (ADR 024).
 - [ ] `winterm/crates/settings/src/fonts.rs` — Font config
   - [ ] **Tests:** face validation, size parsing, weight parsing, feature parsing
 - [x] `winterm/crates/settings/src/keybindings.rs` — Keybinding definitions

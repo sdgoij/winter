@@ -52,3 +52,4 @@ Rules:
 | [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |
 | [022](022-settings-json-profiles.md) | Settings are a JSON file of named profiles | Accepted |
 | [023](023-keybindings-are-settings.md) | Keybindings are settings data: typed chords, flat action names, merged over the defaults | Accepted |
+| [024](024-colour-schemes.md) | Colour schemes are settings; `settings` may depend on `types` for the colour vocabulary | Accepted |
