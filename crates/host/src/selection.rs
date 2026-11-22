@@ -10,7 +10,7 @@
 //! line, and the color-selection and mark-mode navigation halves are
 //! `selectionInput.cpp`; they land with their consumers.
 
-use crate::console_information::ConsoleInformation;
+use crate::console_information::{ClipboardData, ConsoleInformation};
 use crate::screen_info::ScreenInformation;
 use crate::scrolling::Scrolling;
 use crate::selection_input::{input_line_boundaries, is_within_boundaries};
@@ -18,6 +18,23 @@ use crate::selection_state::{SelectionFlags, SelectionState};
 use crate::utils::{compare_coords, get_opposite_corner};
 use buffer::{AttributeColorsFn, CopyRequest, TextBuffer};
 use utils::{Color, InclusiveRect, Point, PointSpan, Size};
+
+/// What the window layer supplies for a formatted copy.
+///
+/// Upstream reads these from the screen's current font and the render settings;
+/// the portable host has neither, so the caller passes them.
+pub struct ClipboardFormatting<'a> {
+    /// The unscaled font height in points.
+    pub font_height_points: f32,
+    /// The font face name.
+    pub font_face: &'a str,
+    /// The default background colour, also used for padding.
+    pub background: Color,
+    /// Whether intensity is drawn as bold.
+    pub is_intense_bold: bool,
+    /// Resolves an attribute to its foreground, background and underline.
+    pub attribute_colors: &'a AttributeColorsFn<'a>,
+}
 
 impl SelectionState {
     /// Starts a mark-mode selection at the cursor.
@@ -329,6 +346,66 @@ impl SelectionState {
             false,
             false,
         ))
+    }
+
+    /// Returns the clipboard data for the selection, or `None` when nothing is
+    /// selected.
+    ///
+    /// `formatting` adds the HTML and RTF forms; without it the copy is plain
+    /// text only, which is what upstream does unless formatting was asked for.
+    pub fn clipboard_data(
+        &self,
+        buffer: &TextBuffer,
+        single_line: bool,
+        formatting: Option<&ClipboardFormatting<'_>>,
+    ) -> Option<ClipboardData> {
+        let request = self.clipboard_request(buffer, single_line)?;
+        let text = buffer.get_plain_text(&request);
+
+        let (html, rtf) = match formatting {
+            Some(format) => (
+                Some(buffer.gen_html(
+                    &request,
+                    format.font_height_points,
+                    format.font_face,
+                    format.background,
+                    format.is_intense_bold,
+                    format.attribute_colors,
+                )),
+                Some(buffer.gen_rtf(
+                    &request,
+                    format.font_height_points,
+                    format.font_face,
+                    format.background,
+                    format.is_intense_bold,
+                    format.attribute_colors,
+                )),
+            ),
+            None => (None, None),
+        };
+
+        Some(ClipboardData { text, html, rtf })
+    }
+
+    /// Stores the selection on the console's pending clipboard and ends it.
+    ///
+    /// Ported from `Clipboard::Copy` and `StoreSelectionToClipboard`. The
+    /// selection is cleared even when nothing was stored, as upstream does.
+    pub fn copy_selection_to_clipboard(
+        &mut self,
+        console: &mut ConsoleInformation,
+        screen: &mut ScreenInformation,
+        single_line: bool,
+        formatting: Option<&ClipboardFormatting<'_>>,
+    ) -> bool {
+        let data = self.clipboard_data(screen.text_buffer(), single_line, formatting);
+        let stored = data.is_some();
+        if let Some(data) = data {
+            console.copy_to_clipboard(data);
+        }
+
+        self.clear_selection(console, screen, false);
+        stored
     }
 }
 
@@ -734,5 +811,64 @@ mod tests {
         );
         assert!(rtf.starts_with("{\\rtf1"));
         assert!(rtf.contains(" hi}"));
+    }
+
+    #[test]
+    fn copying_stores_the_text_and_clears_the_selection() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+
+        let mut selection = SelectionState::new();
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 1, y: 0 }, &mut screen);
+
+        assert!(selection.copy_selection_to_clipboard(&mut console, &mut screen, false, None));
+
+        let data = console.use_pending_clipboard().expect("clipboard data");
+        assert_eq!(data.text, "hi");
+        assert_eq!(data.html, None);
+        assert_eq!(data.rtf, None);
+        assert!(!console.flags().contains(ConsoleFlags::SELECTING));
+    }
+
+    #[test]
+    fn copying_with_formatting_adds_html_and_rtf() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+
+        let mut selection = SelectionState::new();
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 1, y: 0 }, &mut screen);
+
+        let formatting = ClipboardFormatting {
+            font_height_points: 12.0,
+            font_face: "Cascadia Mono",
+            background: Color::rgb(0xAA, 0xBB, 0xCC),
+            is_intense_bold: false,
+            attribute_colors: &fixed_colors,
+        };
+
+        assert!(selection.copy_selection_to_clipboard(&mut console, &mut screen, false, Some(&formatting)));
+
+        let data = console.use_pending_clipboard().expect("clipboard data");
+        assert_eq!(data.text, "hi");
+        assert!(data.html.expect("html").contains("<SPAN STYLE=\"color:#112233;"));
+        assert!(data.rtf.expect("rtf").starts_with("{\\rtf1"));
+    }
+
+    #[test]
+    fn copying_without_a_selection_stores_nothing() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut selection = SelectionState::new();
+
+        assert!(!selection.copy_selection_to_clipboard(&mut console, &mut screen, false, None));
+        assert_eq!(console.use_pending_clipboard(), None);
     }
 }

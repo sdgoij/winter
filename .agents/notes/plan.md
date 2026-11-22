@@ -842,10 +842,10 @@ porting skill requires.
   - [x] Ported from `consoleInformation.cpp` and the class in `server.h`: the
     recursive console lock, the input buffer, the per-application histories,
     the flags, the titles and their prefix, bracketed paste, the pending
-    clipboard text, and the pending-cooked-read marker.
+    clipboard data (text, HTML and RTF), and the pending-cooked-read marker.
   - [x] **Tests:** title composition, original and link titles, bracketed paste,
-    clipboard consumption, the popup marker, recursive locking, the input
-    buffer, keyed histories, and the flag bits
+    clipboard consumption in all three formats, the popup marker, recursive
+    locking, the input buffer, keyed histories, and the flag bits
   - Not ported: the screen buffers, VT I/O, MIDI, code pages, `AllocateConsole`
     and `AsCharInfo`; they need `screenInfo.cpp`, the server layer and the UI
 - [x] `winterm/crates/host/src/settings.rs` — `Settings`
@@ -925,13 +925,15 @@ porting skill requires.
     `AdjustSelection`, `ExtendSelection`, `ClearSelection`, `SelectNewRegion`,
     `SelectAll` (whose input-line half takes the no-input-line path, so
     "all" ends at the saved cursor or the cursor), `GetSelectionSpans`, and
-    the plain-text and formatted (`GenHTML`/`GenRTF`) clipboard data.
+    the clipboard copy: plain text plus the optional `GenHTML`/`GenRTF`
+    forms, stored on the console and then cleared, as `Clipboard::Copy`
+    does.
   - [x] **Tests:** mark and mouse start, the one-cell rectangle, the Alt flip,
     extending with clamping, adjust stopping the drag, cursor save and restore,
     both clear paths, the no-op clear, replacing a selection through
     `SelectNewRegion`, select-all in line and block form, its saved-cursor end,
     the restored viewport origin, line and block copy text, the spans of both
-    forms, and the formatted copy's output
+    forms, the formatted copy's output, and the clipboard handoff
   - Not ported: painting and the accessibility notifications (renderer and
     window), and colour selection
 - [x] `winterm/crates/host/src/selection_input.rs` — Selection input

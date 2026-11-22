@@ -60,6 +60,21 @@ bitflags! {
     }
 }
 
+/// The formats a copy hands to the window's clipboard.
+///
+/// Upstream always writes the plain text and, when formatting was requested,
+/// the registered "HTML Format" and "Rich Text Format" data. The host keeps
+/// the three strings here; the window layer publishes them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClipboardData {
+    /// The `CF_UNICODETEXT` form.
+    pub text: String,
+    /// The registered "HTML Format" data, when formatting was copied.
+    pub html: Option<String>,
+    /// The registered "Rich Text Format" data, when formatting was copied.
+    pub rtf: Option<String>,
+}
+
 /// The console, as the host's modules see it.
 #[derive(Debug)]
 pub struct ConsoleInformation {
@@ -72,7 +87,7 @@ pub struct ConsoleInformation {
     original_title: String,
     link_title: String,
     bracketed_paste_mode: bool,
-    pending_clipboard_text: Option<String>,
+    pending_clipboard: Option<ClipboardData>,
     /// `None` when no read is pending; `Some(presenting_popup)` when one is.
     cooked_read: Option<bool>,
     lock: RecursiveTicketLock,
@@ -91,7 +106,7 @@ impl ConsoleInformation {
             original_title: String::new(),
             link_title: String::new(),
             bracketed_paste_mode: false,
-            pending_clipboard_text: None,
+            pending_clipboard: None,
             cooked_read: None,
             lock: RecursiveTicketLock::new(),
         }
@@ -204,18 +219,18 @@ impl ConsoleInformation {
         self.bracketed_paste_mode = enabled;
     }
 
-    /// Offers `text` to the window's clipboard.
+    /// Offers `data` to the window's clipboard.
     ///
     /// Upstream posts a message to the GUI thread because only it may touch the
-    /// clipboard. The portable host keeps the text here and the window layer
-    /// takes it with [`use_pending_clipboard_text`](Self::use_pending_clipboard_text).
-    pub fn copy_text_to_clipboard(&mut self, text: &str) {
-        self.pending_clipboard_text = Some(text.to_owned());
+    /// clipboard. The portable host keeps the data here and the window layer
+    /// takes it with [`use_pending_clipboard`](Self::use_pending_clipboard).
+    pub fn copy_to_clipboard(&mut self, data: ClipboardData) {
+        self.pending_clipboard = Some(data);
     }
 
-    /// Takes the pending clipboard text, leaving none.
-    pub fn use_pending_clipboard_text(&mut self) -> Option<String> {
-        self.pending_clipboard_text.take()
+    /// Takes the pending clipboard data, leaving none.
+    pub fn use_pending_clipboard(&mut self) -> Option<ClipboardData> {
+        self.pending_clipboard.take()
     }
 
     /// Records whether a cooked read is pending, and whether it shows a popup.
@@ -298,10 +313,21 @@ mod tests {
     #[test]
     fn the_clipboard_text_is_consumed_once() {
         let mut console = ConsoleInformation::new();
-        console.copy_text_to_clipboard("copied");
+        console.copy_to_clipboard(ClipboardData {
+            text: "copied".to_string(),
+            html: None,
+            rtf: None,
+        });
 
-        assert_eq!(console.use_pending_clipboard_text(), Some("copied".to_string()));
-        assert_eq!(console.use_pending_clipboard_text(), None);
+        assert_eq!(
+            console.use_pending_clipboard(),
+            Some(ClipboardData {
+                text: "copied".to_string(),
+                html: None,
+                rtf: None,
+            })
+        );
+        assert_eq!(console.use_pending_clipboard(), None);
     }
 
     #[test]
