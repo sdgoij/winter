@@ -14,10 +14,11 @@ use eframe::egui;
 use settings::Settings;
 
 use crate::config::Draft;
+use crate::input::ModifierSides;
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
 use crate::term_events::TerminalEvent;
 use crate::term_settings::TerminalSettings;
-use crate::terminal_widget::{GridPaint, ModifierSides, Pane, contrasting_text, egui_color};
+use crate::terminal_widget::{GridPaint, Pane, contrasting_text, egui_color};
 use crate::{blink::Blink, grid, notifications, sound::Sound, tabs::Tabs, window};
 
 /// The line between panes.
@@ -1293,7 +1294,7 @@ fn chord_key(key: egui::Key) -> Option<settings::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use term::input::{Key, MouseButtons};
+    use term::input::Key;
 
     use crate::scrollbar;
     use types::TextAttribute;
@@ -1301,10 +1302,7 @@ mod tests {
     use types::text_color::TextColor;
 
     use crate::config::{BindingDraft, Draft, ProfileDraft, SchemeDraft, ThemeDraft, settings_rows};
-    use crate::terminal_widget::{
-        FindBar, attribute_colors, forwards_to_application, key_modifiers, keymap, mouse_buttons, resolve,
-        screen_to_document, scrollbar_track,
-    };
+    use crate::terminal_widget::{FindBar, attribute_colors, keymap, resolve, scrollbar_track};
 
     #[test]
     fn a_face_is_chosen_by_style_and_falls_back_to_the_embedded_one() {
@@ -1373,34 +1371,6 @@ mod tests {
         assert_eq!(keymap(egui::Key::Q), Some(Key::Char('q')));
         assert_eq!(keymap(egui::Key::AltRight), Some(Key::RightAlt));
         assert_eq!(keymap(egui::Key::BrowserBack), None);
-    }
-
-    #[test]
-    fn a_right_alt_chord_is_distinguishable_from_left_alt() {
-        let chord = egui::Modifiers {
-            alt: true,
-            ctrl: true,
-            ..egui::Modifiers::default()
-        };
-
-        assert!(key_modifiers(chord, true, false).is_alt_gr());
-        assert!(!key_modifiers(chord, false, false).is_alt_gr());
-    }
-
-    #[test]
-    fn the_modifier_sides_come_from_the_tracked_keys() {
-        let ctrl = egui::Modifiers {
-            ctrl: true,
-            ..egui::Modifiers::default()
-        };
-
-        let left = key_modifiers(ctrl, false, false);
-        assert!(left.left_ctrl);
-        assert!(!left.right_ctrl);
-
-        let right = key_modifiers(ctrl, false, true);
-        assert!(!right.left_ctrl);
-        assert!(right.right_ctrl);
     }
 
     #[test]
@@ -2167,47 +2137,5 @@ mod tests {
         let (path, axis, _) = divider_at(&layout, egui::pos2(101.0, 51.0), area).expect("divider");
         assert_eq!(path, vec![1]);
         assert_eq!(axis, Axis::Vertical);
-    }
-
-    #[test]
-    fn a_screen_row_maps_into_the_document() {
-        assert_eq!(screen_to_document(5, 2, 0), 3);
-        assert_eq!(screen_to_document(5, 0, 4), 9);
-        assert_eq!(screen_to_document(0, 0, 0), 0);
-    }
-
-    #[test]
-    fn shift_takes_the_mouse_back_from_a_tracking_application() {
-        assert!(forwards_to_application(true, false));
-        assert!(!forwards_to_application(true, true));
-        assert!(!forwards_to_application(false, false));
-    }
-
-    #[test]
-    fn the_pointer_buttons_map_to_the_protocol_buttons() {
-        assert_eq!(
-            mouse_buttons(true, false, false),
-            MouseButtons {
-                left: true,
-                middle: false,
-                right: false,
-            }
-        );
-        assert_eq!(
-            mouse_buttons(false, true, false),
-            MouseButtons {
-                left: false,
-                middle: true,
-                right: false,
-            }
-        );
-        assert_eq!(
-            mouse_buttons(false, false, true),
-            MouseButtons {
-                left: false,
-                middle: false,
-                right: true,
-            }
-        );
     }
 }

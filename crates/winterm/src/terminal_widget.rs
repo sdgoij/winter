@@ -21,6 +21,7 @@ use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGRO
 use types::text_color::{ColorType, TextColor};
 
 use crate::app::{Faces, next_match};
+use crate::input::{self, ModifierSides};
 use crate::layout::PaneId;
 use crate::term_control::Control;
 use crate::term_events::TerminalEvent;
@@ -142,56 +143,20 @@ impl Pane {
 
     pub(crate) fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
         for event in events {
+            let Some(event) = egui_event(event) else {
+                continue;
+            };
+            let outcome = input::translate(&event, sides);
+
             // Typing returns to the live screen, as upstream's TrySnapOnInput.
-            if self.view.scroll() != 0
-                && matches!(&event, egui::Event::Text(_) | egui::Event::Key { pressed: true, .. })
-            {
+            if outcome.activity {
                 self.view.scroll_to_bottom();
             }
-
-            match event {
-                egui::Event::Text(text) => {
-                    for character in text.chars() {
-                        self.send_key(&KeyEvent {
-                            key: Key::Unidentified,
-                            codepoint: Some(character),
-                            ..KeyEvent::down(Key::Unidentified)
-                        });
-                    }
-                }
-                egui::Event::Paste(text) => {
-                    self.paste_text(&text);
-                }
-                egui::Event::Key {
-                    key,
-                    pressed,
-                    repeat,
-                    modifiers,
-                    ..
-                } => {
-                    track_modifier(sides, key, pressed);
-
-                    let Some(key) = keymap(key) else {
-                        continue;
-                    };
-
-                    // A printable key arrives again as `Event::Text`; sending
-                    // the key event as well would type it twice. Ctrl, Alt and
-                    // Command suppress the text event, so those chords go here.
-                    let printable = matches!(key, Key::Char(_) | Key::Space);
-                    if printable && !modifiers.ctrl && !modifiers.alt && !modifiers.command {
-                        continue;
-                    }
-
-                    self.send_key(&KeyEvent {
-                        key,
-                        modifiers: key_modifiers(modifiers, sides.right_alt, sides.right_ctrl),
-                        pressed,
-                        repeat,
-                        ..KeyEvent::down(key)
-                    });
-                }
-                _ => {}
+            for key in &outcome.keys {
+                self.send_key(key);
+            }
+            if let Some(text) = outcome.paste {
+                self.paste_text(&text);
             }
         }
     }
@@ -265,7 +230,7 @@ impl Pane {
             let rows = rows.max(1);
             let row = if outside < 0 { 0 } else { rows - 1 };
             let column = (((position.x - area.min.x) / cell.x).floor() as i32).clamp(0, columns.max(1) - 1);
-            let document = screen_to_document(max, self.view.scroll(), row);
+            let document = input::screen_to_document(max, self.view.scroll(), row);
             self.view.extend((column, document));
 
             self.last_mouse_cell = None;
@@ -284,10 +249,10 @@ impl Pane {
         // Selection is in document coordinates: history first, then the
         // screen. The pointer is clamped to the grid, so the row is in range.
         let history = self.control.max_scroll();
-        let document_row = screen_to_document(history, self.view.scroll(), cell_position.1);
+        let document_row = input::screen_to_document(history, self.view.scroll(), cell_position.1);
         let document_position = (cell_position.0, document_row);
 
-        let forwards = forwards_to_application(self.control.is_tracking_mouse(), input.modifiers.shift);
+        let forwards = input::forwards_to_application(self.control.is_tracking_mouse(), input.modifiers.shift);
 
         if input.scroll != 0.0 {
             let lines = (input.scroll / cell.y).round() as i32;
@@ -314,8 +279,8 @@ impl Pane {
         if forwards {
             let moved = self.last_mouse_cell != Some(cell_position);
             self.last_mouse_cell = Some(cell_position);
-            let buttons = mouse_buttons(input.primary_down, input.middle_down, input.secondary_down);
-            let modifiers = key_modifiers(input.modifiers, sides.right_alt, sides.right_ctrl);
+            let buttons = input::mouse_buttons(input.primary_down, input.middle_down, input.secondary_down);
+            let modifiers = input::key_modifiers(modifiers_of(input.modifiers), sides.right_alt, sides.right_ctrl);
 
             self.send_mouse_buttons(&input, cell_position, buttons, modifiers);
 
@@ -805,22 +770,6 @@ pub(crate) fn scrollbar_error_color() -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(235, 90, 90, 235)
 }
 
-/// The modifier sides egui collapses but the encoder distinguishes.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct ModifierSides {
-    pub(crate) right_alt: bool,
-    pub(crate) right_ctrl: bool,
-}
-
-/// Records which side of a modifier key an event touched.
-pub(crate) fn track_modifier(sides: &mut ModifierSides, key: egui::Key, pressed: bool) {
-    match key {
-        egui::Key::AltRight => sides.right_alt = pressed,
-        egui::Key::ControlRight => sides.right_ctrl = pressed,
-        _ => {}
-    }
-}
-
 /// Resolves a cell's foreground and background the way the renderer does.
 pub(crate) fn attribute_colors(attribute: &TextAttribute, table: &ColorTable) -> (egui::Color32, egui::Color32) {
     // Mirrors `RenderSettings::get_attribute_colors` (`render_settings.rs`):
@@ -868,31 +817,6 @@ pub(crate) struct PointerInput {
     secondary_released: bool,
     scroll: f32,
     modifiers: egui::Modifiers,
-}
-
-/// Maps a screen row to a document row for the current scroll.
-///
-/// Document row zero is the oldest row still held; the screen's first row is
-/// `history - scroll`.
-pub(crate) const fn screen_to_document(history: i32, scroll: i32, screen_row: i32) -> i32 {
-    history - scroll + screen_row
-}
-
-/// Returns whether the application, rather than the selection, gets the mouse.
-///
-/// Shift is the user's override: it selects even while an application tracks
-/// the mouse, which is how a person copies text out of a full-screen program.
-pub(crate) const fn forwards_to_application(tracking: bool, shift: bool) -> bool {
-    tracking && !shift
-}
-
-/// Maps the pointer's buttons to the protocol's set of held buttons.
-pub(crate) const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> MouseButtons {
-    MouseButtons {
-        left: primary,
-        middle,
-        right: secondary,
-    }
 }
 
 /// Draws the cursor in the shape the terminal asked for.
@@ -1104,20 +1028,33 @@ pub(crate) fn keymap(key: egui::Key) -> Option<Key> {
     })
 }
 
-/// Composes the terminal's modifier state from egui's collapsed state and the
-/// sides the shell has tracked.
-///
-/// egui reports that *an* Alt is held but not which; tracking the right key is
-/// what lets `Modifiers::is_alt_gr` recognise an AltGr chord.
-pub(crate) fn key_modifiers(modifiers: egui::Modifiers, right_alt: bool, right_ctrl: bool) -> KeyModifiers {
-    KeyModifiers {
+/// The portable event an egui event names.
+fn egui_event(event: egui::Event) -> Option<input::Event> {
+    match event {
+        egui::Event::Text(text) => Some(input::Event::Text(text)),
+        egui::Event::Paste(text) => Some(input::Event::Paste(text)),
+        egui::Event::Key {
+            key,
+            pressed,
+            repeat,
+            modifiers,
+            ..
+        } => Some(input::Event::Key {
+            key: keymap(key)?,
+            pressed,
+            repeat,
+            modifiers: modifiers_of(modifiers),
+        }),
+        _ => None,
+    }
+}
+
+/// egui's collapsed modifiers in the shell's vocabulary.
+fn modifiers_of(modifiers: egui::Modifiers) -> input::Modifiers {
+    input::Modifiers {
         shift: modifiers.shift,
-        left_ctrl: modifiers.ctrl && !right_ctrl,
-        right_ctrl: modifiers.ctrl && right_ctrl,
-        left_alt: modifiers.alt && !right_alt,
-        right_alt: modifiers.alt && right_alt,
-        caps_lock: false,
-        num_lock: false,
-        enhanced: false,
+        ctrl: modifiers.ctrl,
+        alt: modifiers.alt,
+        command: modifiers.command,
     }
 }

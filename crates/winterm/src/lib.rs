@@ -9,6 +9,8 @@
 //!   of a window.
 //! - [`grid`] turns the active buffer into rows of attribute runs and a
 //!   cursor; it knows nothing of a window either.
+//! - [`input`] is the shell's event vocabulary and the rules that turn it into
+//!   `term` keys, shared by every window backend (ADRs 009, 040).
 //! - [`term_control`] wraps a terminal and its connection;
 //!   [`term_connection`] is the backend trait and [`term_events`] is what it
 //!   reports.
@@ -27,6 +29,7 @@ pub mod blink;
 pub mod config;
 pub mod grid;
 pub mod icon;
+pub mod input;
 pub mod layout;
 pub mod notifications;
 pub mod scrollbar;
