@@ -9,7 +9,7 @@
 
 use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
-use crate::term_dispatch::ITermDispatch;
+use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
 use types::TextAttribute;
 
@@ -139,6 +139,8 @@ pub struct AdaptDispatch {
     /// Upstream writes these through `ITerminalApi::ReturnResponse`; until that
     /// seam exists the adapter queues them and the host drains the queue.
     pending_responses: Vec<String>,
+    /// Terminal features announced in DA1.
+    optional_features: std::collections::HashSet<OptionalFeature>,
 }
 
 impl AdaptDispatch {
@@ -166,6 +168,35 @@ impl AdaptDispatch {
             unhandled_count: 0,
             last_unhandled: None,
             pending_responses: Vec::new(),
+            optional_features: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Appends a CSI response to the queue the host drains.
+    fn push_csi(&mut self, body: &str) {
+        self.pending_responses.push(format!("\x1b[{}", body));
+    }
+
+    /// Ported from `_CursorPositionReport`: 1-based, page-relative, and
+    /// margin-relative when origin mode is set.
+    fn cursor_position_report(&mut self, extended: bool) -> String {
+        let (mut row, mut column) = self.active_cursor_position();
+        column += 1;
+        row += 1;
+
+        if self.modes.contains(ModeFlags::DECOM) {
+            let (page_width, page_height) = self.page_size();
+            let (top, _) = self.effective_vertical_margins(page_height);
+            let (left, _) = self.effective_horizontal_margins(page_width);
+            column -= left;
+            row -= top;
+        }
+
+        if extended {
+            let page = self.page_manager.active_page().number();
+            format!("?{};{};{}R", row, column, page)
+        } else {
+            format!("{};{}R", row, column)
         }
     }
 
@@ -1014,6 +1045,60 @@ impl ITermDispatch for AdaptDispatch {
             .push(format!("\x1b[{}{};{}$y", private, param.param_number(), state));
     }
 
+    fn device_status_report(&mut self, status_type: StatusType, _id: VTParameter) {
+        let body = match status_type {
+            StatusType::OperatingStatus => "0n".to_string(),
+            StatusType::CursorPositionReport => self.cursor_position_report(false),
+            StatusType::ExtendedCursorPositionReport => self.cursor_position_report(true),
+            StatusType::PrinterStatus => "?13n".to_string(),
+            StatusType::UserDefinedKeys => "?23n".to_string(),
+            StatusType::KeyboardStatus => "?27;0;0;5n".to_string(),
+            StatusType::LocatorStatus => "?53n".to_string(),
+            StatusType::LocatorIdentity => "?57;0n".to_string(),
+            StatusType::DataIntegrity => "?70n".to_string(),
+            StatusType::MultipleSessionStatus => "?83n".to_string(),
+            // The macro space and checksum reports need the macro buffer to
+            // answer; they are the two DSR forms that stay open.
+            StatusType::MacroSpaceReport | StatusType::MemoryChecksum => return,
+        };
+        self.push_csi(&body);
+    }
+
+    fn device_attributes(&mut self) {
+        // DA1: VT100 with advanced video, sixel, selective erase, soft fonts,
+        // 8-bit interface, horizontal scrolling, colour, Greek/Turkish sets,
+        // rectangular operations, macros, Latin-2, and clipboard if enabled.
+        if self.optional_features.contains(&OptionalFeature::ClipboardWrite) {
+            self.push_csi("?61;4;6;7;14;21;22;23;24;28;32;42;52c");
+        } else {
+            self.push_csi("?61;4;6;7;14;21;22;23;24;28;32;42c");
+        }
+    }
+
+    fn secondary_device_attributes(&mut self) {
+        self.push_csi(">0;10;1c");
+    }
+
+    fn tertiary_device_attributes(&mut self) {
+        self.pending_responses.push("\x1bP!|00000000\x1b\\".to_string());
+    }
+
+    fn vt52_device_attributes(&mut self) {
+        // A terminal emulating a VT52 answers with ESC / Z, not ESC / K.
+        self.pending_responses.push("\x1b/Z".to_string());
+    }
+
+    fn request_terminal_parameters(&mut self, permission: ReportingPermission) {
+        match permission {
+            ReportingPermission::Unsolicited => self.push_csi("2;1;1;128;128;1;0x"),
+            ReportingPermission::Solicited => self.push_csi("3;1;1;128;128;1;0x"),
+        }
+    }
+
+    fn set_optional_features(&mut self, features: std::collections::HashSet<OptionalFeature>) {
+        self.optional_features = features;
+    }
+
     fn cursor_up(&mut self, distance: VTInt) {
         self.move_cursor(Offset::backward(distance), Offset::unchanged(), true);
     }
@@ -1340,12 +1425,19 @@ mod tests {
         dispatch.set_mode(&ModeParams::DecAwm);
         dispatch.reset_mode(&ModeParams::DecAwm);
         dispatch.request_mode(&ModeParams::DecOm);
+        dispatch.device_status_report(StatusType::OperatingStatus, VTParameter::default());
+        dispatch.device_attributes();
+        dispatch.secondary_device_attributes();
+        dispatch.tertiary_device_attributes();
+        dispatch.vt52_device_attributes();
+        dispatch.request_terminal_parameters(ReportingPermission::Solicited);
+        dispatch.set_optional_features(std::collections::HashSet::new());
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.device_attributes();
+        dispatch.set_window_title("x");
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("device_attributes"));
+        assert_eq!(dispatch.last_unhandled(), Some("set_window_title"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -1633,6 +1725,50 @@ mod tests {
         let mut dispatch = AdaptDispatch::new();
         dispatch.request_mode(&ModeParams::DecAnm);
         assert_eq!(dispatch.take_responses(), vec!["\x1b[?2;0$y".to_string()]);
+    }
+
+    #[test]
+    fn da1_announces_the_terminal_capabilities() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.device_attributes();
+        assert_eq!(
+            dispatch.take_responses(),
+            vec!["\x1b[?61;4;6;7;14;21;22;23;24;28;32;42c".to_string()]
+        );
+    }
+
+    #[test]
+    fn da1_includes_clipboard_only_when_enabled() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_optional_features(std::collections::HashSet::from([OptionalFeature::ClipboardWrite]));
+        dispatch.device_attributes();
+        assert_eq!(
+            dispatch.take_responses(),
+            vec!["\x1b[?61;4;6;7;14;21;22;23;24;28;32;42;52c".to_string()]
+        );
+    }
+
+    #[test]
+    fn cpr_reports_a_one_based_position() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(10, 5);
+        dispatch.device_status_report(StatusType::CursorPositionReport, VTParameter::default());
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[10;5R".to_string()]);
+    }
+
+    #[test]
+    fn extended_cpr_includes_the_page_number() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(10, 5);
+        dispatch.device_status_report(StatusType::ExtendedCursorPositionReport, VTParameter::default());
+        assert_eq!(dispatch.take_responses(), vec!["\x1b[?10;5;1R".to_string()]);
+    }
+
+    #[test]
+    fn vt52_identifies_with_slash_z() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.vt52_device_attributes();
+        assert_eq!(dispatch.take_responses(), vec!["\x1b/Z".to_string()]);
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {
