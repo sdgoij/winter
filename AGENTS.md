@@ -237,7 +237,7 @@ menu), a command palette (Ctrl+Shift+P) over the profiles and the window's
 actions, an in-terminal find bar (Ctrl+Shift+F), a scrollbar with prompt marks,
 desktop notifications for a program's OSC 777, the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
-(ADRs 022–024), a settings window (Ctrl+,) that reports the file it loaded, lists
+(ADRs 022–024, 034), a settings window (Ctrl+,) that reports the file it loaded, lists
 what normalization adjusted (ADR 027), edits everything the file holds —
 font size, defaults, profiles, keybindings and schemes (ADRs 028, 030–032) — and
 previews the document a save would write, with a poll that reloads the file when

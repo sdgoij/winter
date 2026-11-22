@@ -9,15 +9,19 @@
 //! it (ADR 026).
 
 mod actions;
+mod defaults;
 mod fonts;
 mod keybindings;
+mod migration;
 mod palette;
 mod parser;
 mod profiles;
+mod sgr_aliases;
 mod validation;
 mod watch;
 
 pub use actions::Action;
+pub use defaults::ensure_file;
 pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
@@ -26,6 +30,7 @@ pub use parser::{
     settings_path, to_toml,
 };
 pub use profiles::{Profile, default_profiles, default_shell};
+pub use sgr_aliases::SchemeColor;
 pub use validation::Warning;
 pub use watch::{Stamp, stamp};
 
@@ -76,16 +81,7 @@ fn empty() -> Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let profiles = default_profiles();
-        Self {
-            version: CURRENT_VERSION,
-            default_profile: profiles.first().map(|profile| profile.name.clone()),
-            default_scheme: None,
-            profiles,
-            keybindings: DEFAULT_KEYBINDINGS.to_vec(),
-            schemes: Vec::new(),
-            font: Font::default(),
-        }
+        defaults::settings()
     }
 }
 

@@ -62,3 +62,4 @@ Rules:
 | [031](031-settings-window-edits-keybindings.md) | The window edits keybindings; the list shown is the effective one; an invalid chord blocks Save | Amended by 032 (schemes) |
 | [032](032-settings-window-edits-schemes.md) | The window edits schemes as text fields with swatches; an empty field means the built-in colour | Accepted |
 | [033](033-audio-tone-model.md) | Audio is a portable tone model in `audio`; the Windows `Beep` sink lives in the app | Accepted |
+| [034](034-settings-file-and-migration.md) | A fresh install is given the default file; an earlier `settings.json` is migrated once and kept | Accepted |

@@ -9,7 +9,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::validation::Warning;
-use crate::{CURRENT_VERSION, Settings};
+use crate::{CURRENT_VERSION, Settings, migration};
 
 /// Parses a settings document, filling in what it leaves out.
 ///
@@ -159,6 +159,8 @@ pub struct Loaded {
     pub settings: Settings,
     /// The file that was read, when the platform has a settings path.
     pub path: Option<PathBuf>,
+    /// The earlier file these settings were migrated from, if they were.
+    pub migrated_from: Option<PathBuf>,
     /// Why the file was not used. A missing file is not an error.
     pub error: Option<LoadError>,
     /// What normalization had to decide for a file that was used.
@@ -199,11 +201,12 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-fn load_from_path(path: Option<PathBuf>) -> Loaded {
+pub(crate) fn load_from_path(path: Option<PathBuf>) -> Loaded {
     let Some(path) = path else {
         return Loaded {
             settings: Settings::default(),
             path: None,
+            migrated_from: None,
             error: None,
             warnings: Vec::new(),
         };
@@ -212,17 +215,19 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Loaded {
+            return migrate_beside(&path).unwrap_or(Loaded {
                 settings: Settings::default(),
                 path: Some(path),
+                migrated_from: None,
                 error: None,
                 warnings: Vec::new(),
-            };
+            });
         }
         Err(error) => {
             return Loaded {
                 settings: Settings::default(),
                 path: Some(path.clone()),
+                migrated_from: None,
                 error: Some(LoadError::Unreadable {
                     path,
                     detail: error.to_string(),
@@ -236,18 +241,68 @@ fn load_from_path(path: Option<PathBuf>) -> Loaded {
         Ok((settings, warnings)) => Loaded {
             settings,
             path: Some(path),
+            migrated_from: None,
             error: None,
             warnings,
         },
         Err(error) => Loaded {
             settings: Settings::default(),
             path: Some(path.clone()),
+            migrated_from: None,
             error: Some(LoadError::Invalid {
                 path,
                 detail: error.to_string(),
             }),
             warnings: Vec::new(),
         },
+    }
+}
+
+/// Reads the earlier JSON file beside `path`, when one is there.
+///
+/// The migrated settings are written out as TOML, so the next start reads the
+/// current file; a failure to write is not a reason to lose them. The old file
+/// stays: deleting a user's file is not a migration.
+fn migrate_beside(path: &Path) -> Option<Loaded> {
+    let legacy = migration::legacy_path(path);
+    let text = match std::fs::read_to_string(&legacy) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            return Some(Loaded {
+                settings: Settings::default(),
+                path: Some(path.to_path_buf()),
+                migrated_from: None,
+                error: Some(LoadError::Unreadable {
+                    path: legacy,
+                    detail: error.to_string(),
+                }),
+                warnings: Vec::new(),
+            });
+        }
+    };
+
+    match migration::from_json(&text) {
+        Ok((settings, warnings)) => {
+            let _ = save_to(path, &settings);
+            Some(Loaded {
+                settings,
+                path: Some(path.to_path_buf()),
+                migrated_from: Some(legacy),
+                error: None,
+                warnings,
+            })
+        }
+        Err(error) => Some(Loaded {
+            settings: Settings::default(),
+            path: Some(path.to_path_buf()),
+            migrated_from: None,
+            error: Some(LoadError::Invalid {
+                path: legacy,
+                detail: error.to_string(),
+            }),
+            warnings: Vec::new(),
+        }),
     }
 }
 
@@ -381,5 +436,72 @@ mod tests {
             loaded.settings.profile().map(|profile| profile.name.as_str()),
             Some("a")
         );
+    }
+
+    #[test]
+    fn an_earlier_json_file_is_migrated_and_written_as_toml() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        let legacy = directory.path().join("settings.json");
+        std::fs::write(
+            &legacy,
+            r#"{ "profiles": [{ "name": "old", "command": "cmd.exe" }], "default_profile": "old" }"#,
+        )
+        .expect("write");
+
+        let loaded = load_from_path(Some(path.clone()));
+
+        assert_eq!(loaded.error, None);
+        assert_eq!(loaded.migrated_from, Some(legacy.clone()));
+        assert_eq!(
+            loaded.settings.profile().map(|profile| profile.name.as_str()),
+            Some("old")
+        );
+        assert!(path.exists(), "the migration is written so it runs once");
+        assert!(legacy.exists(), "the earlier file is left alone");
+
+        // The second start reads the TOML and does not migrate again.
+        let loaded = load_from_path(Some(path));
+        assert_eq!(loaded.migrated_from, None);
+        assert_eq!(
+            loaded.settings.profile().map(|profile| profile.name.as_str()),
+            Some("old")
+        );
+    }
+
+    #[test]
+    fn a_settings_file_wins_over_the_earlier_one() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "[[profiles]]\nname = \"new\"\ncommand = \"sh\"\n").expect("write");
+        std::fs::write(directory.path().join("settings.json"), "{}").expect("write");
+
+        let loaded = load_from_path(Some(path));
+        assert_eq!(loaded.migrated_from, None);
+        assert_eq!(
+            loaded.settings.profile().map(|profile| profile.name.as_str()),
+            Some("new")
+        );
+    }
+
+    #[test]
+    fn an_earlier_file_that_does_not_parse_is_reported() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+        let legacy = directory.path().join("settings.json");
+        std::fs::write(&legacy, "{ not json").expect("write");
+
+        let loaded = load_from_path(Some(path.clone()));
+
+        assert_eq!(loaded.settings, Settings::default());
+        assert_eq!(loaded.migrated_from, None);
+        match loaded.error {
+            Some(LoadError::Invalid { path, detail }) => {
+                assert_eq!(path, legacy);
+                assert!(!detail.is_empty());
+            }
+            other => panic!("expected an invalid-file error, got {other:?}"),
+        }
+        assert!(!path.exists(), "a failed migration writes nothing");
     }
 }

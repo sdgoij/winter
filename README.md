@@ -27,11 +27,11 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames; its font collection supplies the shell's faces | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
-| [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
+| [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1511 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1533 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 

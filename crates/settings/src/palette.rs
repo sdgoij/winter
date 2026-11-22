@@ -12,10 +12,9 @@ use std::fmt;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use types::TextColor;
-use types::color_table::{
-    CURSOR_COLOR, ColorAlias, ColorTable, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND,
-    color_from_xparse_color_spec,
-};
+use types::color_table::{ColorTable, color_from_xparse_color_spec};
+
+use crate::sgr_aliases::SchemeColor;
 
 /// A colour as the settings file writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,28 +123,6 @@ pub struct Scheme {
 }
 
 impl Scheme {
-    /// The sixteen ANSI colours in table order.
-    pub const fn ansi(&self) -> [Option<Color>; 16] {
-        [
-            self.black,
-            self.red,
-            self.green,
-            self.yellow,
-            self.blue,
-            self.purple,
-            self.cyan,
-            self.white,
-            self.bright_black,
-            self.bright_red,
-            self.bright_green,
-            self.bright_yellow,
-            self.bright_blue,
-            self.bright_purple,
-            self.bright_cyan,
-            self.bright_white,
-        ]
-    }
-
     /// Makes `table` the built-in palette with this scheme's colours on top.
     ///
     /// A scheme describes the whole palette, not an edit of it, so the table is
@@ -157,25 +134,16 @@ impl Scheme {
     pub fn apply(&self, table: &mut ColorTable) {
         table.reset();
 
-        for (index, color) in self.ansi().into_iter().enumerate() {
-            if let Some(color) = color {
-                table.set(index, color.text_color());
+        for color in SchemeColor::ALL {
+            let Some(written) = self.get(color) else {
+                continue;
+            };
+            // The two the palette aliases are moved before they are filled, so
+            // a program's own default foreground lands in this scheme's slot.
+            if let Some(alias) = color.alias() {
+                table.set_alias_index(alias, color.slot());
             }
-        }
-
-        if let Some(color) = self.foreground {
-            table.set_alias_index(ColorAlias::DefaultForeground, DEFAULT_FOREGROUND);
-            table.set(DEFAULT_FOREGROUND, color.text_color());
-        }
-        if let Some(color) = self.background {
-            table.set_alias_index(ColorAlias::DefaultBackground, DEFAULT_BACKGROUND);
-            table.set(DEFAULT_BACKGROUND, color.text_color());
-        }
-        if let Some(color) = self.cursor_color {
-            table.set(CURSOR_COLOR, color.text_color());
-        }
-        if let Some(color) = self.selection_background {
-            table.set(SELECTION_BACKGROUND, color.text_color());
+            table.set(color.slot(), written.text_color());
         }
     }
 }
@@ -183,6 +151,7 @@ impl Scheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use types::color_table::{CURSOR_COLOR, ColorAlias, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND};
 
     #[test]
     fn a_color_spec_is_read_with_upstreams_grammar() {

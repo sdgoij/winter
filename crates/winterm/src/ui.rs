@@ -1477,92 +1477,13 @@ impl BindingDraft {
     }
 }
 
-/// The scheme fields in the order the window lists them.
-///
-/// The list is one place so the form, the reader and the writer cannot disagree
-/// about which fields a scheme has (ADR 032).
-const SCHEME_COLORS: &[&str] = &[
-    "foreground",
-    "background",
-    "cursor_color",
-    "selection_background",
-    "black",
-    "red",
-    "green",
-    "yellow",
-    "blue",
-    "purple",
-    "cyan",
-    "white",
-    "bright_black",
-    "bright_red",
-    "bright_green",
-    "bright_yellow",
-    "bright_blue",
-    "bright_purple",
-    "bright_cyan",
-    "bright_white",
-];
-
-/// Returns the colour a scheme holds for a field name.
-fn scheme_color(scheme: &settings::Scheme, field: &str) -> Option<settings::Color> {
-    match field {
-        "foreground" => scheme.foreground,
-        "background" => scheme.background,
-        "cursor_color" => scheme.cursor_color,
-        "selection_background" => scheme.selection_background,
-        "black" => scheme.black,
-        "red" => scheme.red,
-        "green" => scheme.green,
-        "yellow" => scheme.yellow,
-        "blue" => scheme.blue,
-        "purple" => scheme.purple,
-        "cyan" => scheme.cyan,
-        "white" => scheme.white,
-        "bright_black" => scheme.bright_black,
-        "bright_red" => scheme.bright_red,
-        "bright_green" => scheme.bright_green,
-        "bright_yellow" => scheme.bright_yellow,
-        "bright_blue" => scheme.bright_blue,
-        "bright_purple" => scheme.bright_purple,
-        "bright_cyan" => scheme.bright_cyan,
-        "bright_white" => scheme.bright_white,
-        _ => None,
-    }
-}
-
-/// Sets the colour a scheme holds for a field name.
-fn set_scheme_color(scheme: &mut settings::Scheme, field: &str, color: Option<settings::Color>) {
-    match field {
-        "foreground" => scheme.foreground = color,
-        "background" => scheme.background = color,
-        "cursor_color" => scheme.cursor_color = color,
-        "selection_background" => scheme.selection_background = color,
-        "black" => scheme.black = color,
-        "red" => scheme.red = color,
-        "green" => scheme.green = color,
-        "yellow" => scheme.yellow = color,
-        "blue" => scheme.blue = color,
-        "purple" => scheme.purple = color,
-        "cyan" => scheme.cyan = color,
-        "white" => scheme.white = color,
-        "bright_black" => scheme.bright_black = color,
-        "bright_red" => scheme.bright_red = color,
-        "bright_green" => scheme.bright_green = color,
-        "bright_yellow" => scheme.bright_yellow = color,
-        "bright_blue" => scheme.bright_blue = color,
-        "bright_purple" => scheme.bright_purple = color,
-        "bright_cyan" => scheme.bright_cyan = color,
-        "bright_white" => scheme.bright_white = color,
-        _ => {}
-    }
-}
-
 /// One scheme as the window edits it.
 ///
 /// A colour is text until the document is built; an empty field means the
 /// scheme leaves that colour to the built-in palette, which is different from
-/// a field that cannot be parsed (ADR 032).
+/// a field that cannot be parsed (ADR 032). The fields themselves are
+/// `settings::SchemeColor`'s, so the form, the reader and the writer cannot
+/// disagree about which colours a scheme has (ADR 034).
 struct SchemeDraft {
     name: String,
     colours: Vec<String>,
@@ -1572,13 +1493,9 @@ impl SchemeDraft {
     fn from_scheme(scheme: &settings::Scheme) -> Self {
         Self {
             name: scheme.name.clone(),
-            colours: SCHEME_COLORS
+            colours: settings::SchemeColor::ALL
                 .iter()
-                .map(|field| {
-                    scheme_color(scheme, field)
-                        .map(|color| color.to_string())
-                        .unwrap_or_default()
-                })
+                .map(|color| scheme.get(*color).map(|color| color.to_string()).unwrap_or_default())
                 .collect(),
         }
     }
@@ -1586,7 +1503,7 @@ impl SchemeDraft {
     fn new(name: String) -> Self {
         Self {
             name,
-            colours: vec![String::new(); SCHEME_COLORS.len()],
+            colours: vec![String::new(); settings::SchemeColor::ALL.len()],
         }
     }
 
@@ -1596,12 +1513,13 @@ impl SchemeDraft {
             ..Default::default()
         };
 
-        for (field, text) in SCHEME_COLORS.iter().zip(&self.colours) {
+        for (color, text) in settings::SchemeColor::ALL.iter().zip(&self.colours) {
             if text.trim().is_empty() {
                 continue;
             }
-            let color = settings::Color::parse(text).map_err(|_| format!("{field}: `{text}` is not a colour"))?;
-            set_scheme_color(&mut scheme, field, Some(color));
+            let parsed =
+                settings::Color::parse(text).map_err(|_| format!("{}: `{text}` is not a colour", color.name()))?;
+            scheme.set(*color, Some(parsed));
         }
 
         Ok(scheme)
@@ -1679,6 +1597,8 @@ struct App {
     font_size: f32,
     /// The path the settings were read from, when the platform has one.
     settings_path: Option<PathBuf>,
+    /// The earlier file these settings were migrated from, if they were.
+    settings_migrated_from: Option<PathBuf>,
     /// Why the file was not used, if it was not.
     settings_error: Option<String>,
     /// What normalization had to decide for the file, in the window's words.
@@ -1763,6 +1683,9 @@ enum TabAction {
 
 impl App {
     fn new(ctx: &egui::Context, faces: Faces) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // A fresh installation gets a file to edit, as upstream writes one
+        // (ADR 034).
+        settings::ensure_file();
         let loaded = settings::load_with_report();
         let settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
         let settings_warnings = loaded.warnings.iter().map(ToString::to_string).collect();
@@ -1779,6 +1702,7 @@ impl App {
             scheme,
             font_size,
             settings_path: loaded.path,
+            settings_migrated_from: loaded.migrated_from,
             settings_error: loaded.error.map(|error| error.to_string()),
             settings_warnings,
             draft: None,
@@ -2033,6 +1957,12 @@ impl App {
                             ui.label(warning);
                         }
                     }
+
+                    if let Some(path) = &self.settings_migrated_from {
+                        ui.separator();
+                        ui.strong("Migrated from");
+                        ui.label(format!("{} was read and written as this file.", path.display()));
+                    }
                 });
             });
 
@@ -2124,6 +2054,7 @@ impl App {
     fn reload_settings(&mut self) {
         let loaded = settings::load_with_report();
         self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
+        self.settings_migrated_from = loaded.migrated_from.clone();
         if let Some(error) = loaded.error {
             // A half-written save must not wipe a running session: the previous
             // settings stay in force and the window reports the error.
@@ -2937,8 +2868,8 @@ fn draft_editor(
                         ui.label("");
                         ui.end_row();
 
-                        for (field, text) in SCHEME_COLORS.iter().zip(scheme.colours.iter_mut()) {
-                            ui.label(*field);
+                        for (color, text) in settings::SchemeColor::ALL.iter().zip(scheme.colours.iter_mut()) {
+                            ui.label(color.name());
                             ui.text_edit_singleline(text);
                             match settings::Color::parse(text)
                                 .ok()
@@ -3897,7 +3828,7 @@ mod tests {
 
         let draft = SchemeDraft::from_scheme(&scheme);
         assert_eq!(draft.name, "muted");
-        assert_eq!(draft.colours.len(), SCHEME_COLORS.len());
+        assert_eq!(draft.colours.len(), settings::SchemeColor::ALL.len());
         assert_eq!(draft.to_scheme().expect("scheme"), scheme);
 
         // A field that is not a colour is named, and does not become a silent
