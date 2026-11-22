@@ -46,3 +46,5 @@ pub mod terminal_widget;
 pub mod view;
 pub mod visual_bell;
 pub mod window;
+#[cfg(windows)]
+pub mod winui;

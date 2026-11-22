@@ -282,12 +282,18 @@ mod tests {
             atlas_settings(4, 2),
             Box::new(shared.clone()),
         )));
+        renderer.invalidate_all();
         renderer.paint_frame().expect("a frame");
 
         assert_eq!((shared.width(), shared.height()), (32, 32));
         shared.with_pixels(|pixels| {
             let distinct = pixels.iter().collect::<std::collections::HashSet<_>>().len();
             assert!(distinct >= 2, "the frame is one flat colour: {distinct}");
+            let light = pixels
+                .iter()
+                .filter(|&&pixel| pixel & 0x00FF_FFFF > 0x0080_8080)
+                .count();
+            assert!(light > 0, "no foreground pixels were painted");
         });
     }
 

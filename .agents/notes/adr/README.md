@@ -70,3 +70,4 @@ Rules:
 | [039](039-native-windows-ui.md) | Native UI means a Windows-looking window: a drawn caption on the existing winit window, one `win32` module for what the toolkit cannot express | Superseded by 040 |
 | [040](040-winui-windows-shell.md) | The Windows shell is WinUI 3 through `windows-reactor`; egui keeps Linux and macOS; the terminal content stays `renderer`'s | Amended by 041 |
 | [041](041-swap-chain-surface.md) | The pane's surface is a `SwapChainPanel`; Direct2D blits the software backend's pixels, in one `unsafe` module | Accepted |
+| [042](042-winui-binding-version.md) | The WinUI binding is the `windows-reactor-pre` 0.108 snapshot, because 0.100 has no input events | Accepted |

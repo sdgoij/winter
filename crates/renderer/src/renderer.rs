@@ -142,6 +142,16 @@ impl<D: RenderData> Renderer<D> {
             .any(|engine| engine.requires_continuous_redraw())
     }
 
+    /// Marks the whole viewport dirty, so the next frame repaints every row.
+    ///
+    /// The atlas engine paints only its dirty area; a shell that always presents
+    /// the software buffer invalidates before each frame (ADR 006).
+    pub fn invalidate_all(&mut self) {
+        for engine in &mut self.engines {
+            let _ = engine.invalidate(None);
+        }
+    }
+
     /// Paints one frame into every engine.
     pub fn paint_frame(&mut self) -> RenderResult<()> {
         let Renderer {

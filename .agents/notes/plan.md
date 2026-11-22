@@ -20,7 +20,7 @@ Verified by running the gate, not by reading the previous status:
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~2.8k | 82 | Phase 10 (ADRs 022–032, 034, 035): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
-| `winterm` | ~6.6k | 129 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
+| `winterm` | ~6.6k | 129 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–042). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
@@ -28,8 +28,9 @@ for a program's OSC 777, a settings window that reports the file, lists what it 
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018); ADR 040
-takes the Windows shell to WinUI 3 through `windows-reactor`, keeping egui for
-Linux and macOS until their own shells land. Phase 9 has tabs, panes
+takes the Windows shell to WinUI 3, and the first WinUI shell (ADRs 041, 042)
+runs a shell and paints it through `renderer`, with egui kept for Linux and
+macOS until their own shells land. Phase 9 has tabs, panes
 and the shell's own modules (ADR 038); Phase 10 has the settings
 file, its profiles, its keybindings, its colour schemes, the window themes the
 tab strip paints, the default file a
@@ -1153,10 +1154,11 @@ The first shell is egui on winit and wgpu (ADR 018), in
 and `icon.rs` (ADR 038). The rows below are retired: they assume four
 hand-written backends, and ADR 018 defers them until the application works
 everywhere. A native backend replaces those five without touching `session.rs` or
-`grid.rs`. ADR 040 replaces the Windows shell with WinUI 3 through
-`windows-reactor`: the XAML files become modules under `src/winui/`, the
-terminal content stays `renderer`'s, and egui keeps Linux and macOS until their
-native shells land.
+`grid.rs`. ADR 040 replaces the Windows shell with WinUI 3; `src/winui/app.rs`
+and `surface.rs` are the first one — a window, one pane, the pty, keys and the
+renderer's pixels on a `SwapChainPanel` (ADRs 041, 042). Tabs, the palette and
+the settings editor are still to come, and egui keeps Linux and macOS until
+their native shells land.
 
 - [x] ~~`winterm/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
   - Retired: winit supplies the window, event loop, DPI and clipboard (ADR 018).
