@@ -52,6 +52,12 @@ band, so even a sequence that reached the parser painted nothing.
   so the renderer's snapshot carries what the buffer holds.
 - `just console-host` copies Windows Terminal's packaged `OpenConsole.exe` to
   `target/debug` and `target/release`, since it cannot be executed in place.
+  `scripts/console-host.ps1` takes a `-Destination` folder and a `-Source`
+  binary for a host built or unpacked elsewhere.
+- `just dist` assembles a runnable release folder: the release binary, the
+  host beside it (so the sibling lookup finds it without Windows Terminal
+  installed), `OpenConsole.NOTICE.html` from the package, and
+  `LICENSE-OpenConsole.txt` carrying Windows Terminal's MIT text.
 
 ## Consequences
 
@@ -60,9 +66,10 @@ band, so even a sequence that reached the parser painted nothing.
   `reverie-amidst-ruins` runs at 60 fps. Without one, the terminal behaves as it
   did before this ADR.
 - The host is Windows Terminal's binary, not ours. It is discovered, never
-  downloaded or executed from a registry-supplied path automatically; copying
-  it is an explicit developer step. A release build should ship its own
-  `OpenConsole.exe` beside `winterm.exe`.
+  downloaded, and copying it is an explicit developer step; a release folder
+  carries it beside `winterm.exe` together with its notices. Building our own
+  conhost remains the long-term answer, which is why the lookup checks beside
+  our own executable first.
 - `Packed` is an ABI, not a convenience struct: `signal` must stay at offset 0
   and `reference` at offset 8, because the OS reads the reference out of it.
   Never reorder or add a field before them.

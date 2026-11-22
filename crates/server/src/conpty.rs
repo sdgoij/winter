@@ -14,7 +14,7 @@ use std::mem::{self, size_of};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::FromRawHandle;
 use std::os::windows::process::ExitStatusExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::ptr::null_mut;
 
@@ -603,18 +603,28 @@ fn packed_console(size: PtySize, input: HANDLE, output: HANDLE) -> io::Result<Op
 /// Finds a console host that can forward an image sequence.
 ///
 /// The inbox `conhost.exe` cannot; the newer `OpenConsole.exe` can. It is
-/// looked for beside this executable, in its `x64` subdirectory, in the app's
-/// cache directory, and finally where the environment points.
+/// looked for where the environment points, beside this executable, in its
+/// `x64` subdirectory, and finally in the app's cache directory.
+///
+/// A packaged release has the host beside `winterm.exe`, so it needs neither
+/// Windows Terminal nor the cache (ADR 055).
 fn console_host() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("WINTERM_CONSOLE_HOST") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
     let executable = std::env::current_exe().ok()?;
     let directory = executable.parent()?;
+    let configured = std::env::var_os("WINTERM_CONSOLE_HOST").map(PathBuf::from);
+    let cache = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    console_host_in(directory, configured.as_deref(), cache.as_deref())
+}
+
+/// Picks the first host that exists from the documented order.
+///
+/// The sources are arguments rather than lookups, so the order can be tested
+/// without touching the environment or this executable.
+fn console_host_in(directory: &Path, configured: Option<&Path>, local_app_data: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = configured.filter(|path| path.is_file()) {
+        return Some(path.to_path_buf());
+    }
+
     for candidate in [
         directory.join("OpenConsole.exe"),
         directory.join("x64").join("OpenConsole.exe"),
@@ -624,9 +634,7 @@ fn console_host() -> Option<PathBuf> {
         }
     }
 
-    let cached = PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
-        .join("winterm")
-        .join("OpenConsole.exe");
+    let cached = local_app_data?.join("winterm").join("OpenConsole.exe");
     cached.is_file().then_some(cached)
 }
 
@@ -844,6 +852,86 @@ mod tests {
 
     fn shell() -> OsString {
         std::env::var_os("COMSPEC").unwrap_or_else(|| OsString::from("cmd.exe"))
+    }
+
+    /// A scratch directory that removes itself.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("winterm-host-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("scratch directory");
+            Self(path)
+        }
+
+        fn touch(&self, relative: &str) -> PathBuf {
+            let path = self.0.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("parent directory");
+            }
+            std::fs::write(&path, b"host").expect("host file");
+            path
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_console_host_beside_the_executable_is_preferred() {
+        let exe = Scratch::new("beside");
+        let cache = Scratch::new("beside-cache");
+        let beside = exe.touch("OpenConsole.exe");
+        cache.touch("winterm/OpenConsole.exe");
+
+        assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), Some(beside));
+    }
+
+    #[test]
+    fn a_configured_host_wins_over_the_sibling() {
+        let exe = Scratch::new("configured");
+        let other = Scratch::new("configured-other");
+        exe.touch("OpenConsole.exe");
+        let configured = other.touch("OpenConsole.exe");
+
+        assert_eq!(console_host_in(exe.path(), Some(&configured), None), Some(configured));
+    }
+
+    #[test]
+    fn a_configured_path_that_is_not_a_file_is_ignored() {
+        let exe = Scratch::new("configured-missing");
+        let beside = exe.touch("OpenConsole.exe");
+
+        assert_eq!(
+            console_host_in(exe.path(), Some(Path::new("does-not-exist.exe")), None),
+            Some(beside)
+        );
+    }
+
+    #[test]
+    fn the_x64_directory_is_a_fallback() {
+        let exe = Scratch::new("x64");
+        let nested = exe.touch("x64/OpenConsole.exe");
+
+        assert_eq!(console_host_in(exe.path(), None, None), Some(nested));
+    }
+
+    #[test]
+    fn the_app_cache_is_the_last_resort() {
+        let exe = Scratch::new("cache");
+        let cache = Scratch::new("cache-store");
+        assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), None);
+
+        let cached = cache.touch("winterm/OpenConsole.exe");
+        assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), Some(cached));
     }
 
     // Requires a console host that forwards image sequences. Point

@@ -34,6 +34,8 @@ not Windows-specific belongs there, never in `winui`.
   `OpenConsole.exe` beside the built binary — `just console-host` copies the one
   Windows Terminal ships — or set `WINTERM_CONSOLE_HOST`. Without one the
   session runs on the inbox ConPTY and silently drops images (ADR 055).
+  `just dist` assembles the release folder with the host, its `NOTICE.html` and
+  the Windows Terminal MIT licence beside `winterm.exe`.
 - The app's `%TEMP%` is not bash's. MSYS `$TEMP` is `/tmp`; the app and
   PowerShell use `%LOCALAPPDATA%\Temp`. A probe file written by the app is not
   in `$TEMP`.

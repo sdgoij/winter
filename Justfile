@@ -65,6 +65,19 @@ build:
 console-host:
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1
 
+# Assemble a runnable release folder: the binary, the console host that forwards
+# image sequences, and the licences they carry. Windows only; `dist/` is
+# generated and ignored (ADR 055).
+dist:
+    cargo build --release -p winterm
+    rm -rf dist
+    mkdir -p dist
+    cp target/release/winterm.exe dist/winterm.exe
+    cp LICENSE.md dist/LICENSE.md
+    cp licenses/OpenConsole-MIT.txt dist/LICENSE-OpenConsole.txt
+    cp README.md dist/README.md
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1 -Destination dist
+
 # Enable the pre-commit hook for this clone and silence the Windows CRLF warning.
 hooks:
     git config core.hooksPath .githooks
