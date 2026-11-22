@@ -495,10 +495,9 @@ The Windows Terminal codebase maps to these Rust module groups:
 - [x] `crates/buffer/src/hyperlinks.rs` — Hyperlink map
   - [x] **Tests:** add/get/remove/clear, generational index invalidation, custom ID mapping
   - [x] **Property tests:** URI lookup is bidirectional for same ID; removing all hyperlinks empties map
-- [x] `crates/buffer/src/selection.rs` — Selection
-  - [x] **Tests:** point_span creation, iteration over rows, text extraction (plain, HTML, RTF), block selection, trimmed trailing whitespace, clipboard copy request
-  - [x] **Property tests:** selecting and copying then pasting returns identical text; block selection text is rectangular
-  - [ ] **Snapshot tests:** render selection rects over known buffer
+- [x] ~~`crates/buffer/src/selection.rs` — Selection~~
+  - Removed: ADR 014 moves the selection state and its operations to the host.
+    The buffer gains a rectangle-to-text read when the copy path needs it.
 - [ ] `crates/buffer/src/clipboard.rs` — Clipboard formatting
 
 ### Row Memory Layout
@@ -826,10 +825,10 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 Order: `history`, `input_buffer`, `read_data_cooked` (alias expansion now wired
 through `alias`), `input_state_machine_engine`, `console_information`,
-`screen_info`, `settings`, `alias`, `input_key_info` and `scrolling` are done.
-`selection` is next, scoped to its buffer and viewport state; the window-driven
-half waits for the window layer. Each module lands with its tests and its
-declaration in `lib.rs`, as the porting skill requires.
+`screen_info`, `settings`, `alias`, `input_key_info`, `scrolling` and
+`selection` are done. `selection_input` is next; it needs the cooked read and
+`InputKeyInfo`, which are both in place. Each module lands with its tests and
+its declaration in `lib.rs`, as the porting skill requires.
 
 ### Core Console State
 
@@ -911,7 +910,20 @@ declaration in `lib.rs`, as the porting skill requires.
   - Not ported: `s_UpdateSystemMetrics` (the window supplies the metrics),
     `s_ScrollIfNecessary` and its point test (window and selection), and the
     window title/selection side effects of scroll mode
-- [ ] `winterm/crates/host/src/selection.rs` — Selection state
+- [x] `winterm/crates/host/src/selection.rs` — Selection state
+  - [x] Ported from `selection.cpp` and `selectionState.cpp`: the flags (mouse,
+    keyboard mark, line/block, the inverted bit), the anchor, the rectangle,
+    the exclusive end, the saved cursor, the line-versus-block predicate, and
+    `ShouldAllowMouseDragSelection`; plus `InitializeMarkSelection`,
+    `InitializeMouseSelection`, `CheckAndSetAlternateSelection`,
+    `AdjustSelection`, `ExtendSelection` and `ClearSelection`.
+  - [x] **Tests:** mark and mouse start, the one-cell rectangle, the Alt flip,
+    extending with clamping, adjust stopping the drag, cursor save and restore,
+    both clear paths, and the no-op clear
+  - Not ported: painting and the accessibility notifications (renderer and
+    window), the clipboard write and `SelectAll` (they need the cooked read's
+    line and the buffer's rectangle read), and colour selection
+- [ ] `winterm/crates/host/src/selection_input.rs` — Selection input
 - [x] `winterm/crates/host/src/input_key_info.rs` — Keyboard state
   - [x] Ported from `inputKeyInfo.cpp` and the class in `input.h`: the virtual
     key, the control-key state, and the modifier predicates (`IsCtrlOnly`,

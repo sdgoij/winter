@@ -18,14 +18,14 @@ runnable yet because the host and server layers are still landing.
 |---|---|---|
 | [`crates/utils`](crates/utils) | Geometry, colour, containers, locks | Complete |
 | [`crates/types`](crates/types) | Terminal vocabulary: colours, attributes, enums, input records | Complete |
-| [`crates/buffer`](crates/buffer) | `OutputCell`, `Row`, `TextBuffer`, selection, search, image bands | Complete for Phase 2 |
+| [`crates/buffer`](crates/buffer) | `OutputCell`, `Row`, `TextBuffer`, marks, search, image bands | Complete for Phase 2 |
 | [`crates/vt`](crates/vt) | DFA parser for VT escape sequences | Complete for Phase 3 |
 | [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Complete for Phase 4 |
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input |
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
-| [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling | Phase 6 under way |
+| [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection | Phase 6 under way |
 
-1235 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1245 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -53,12 +53,12 @@ cargo install cargo-deny --locked
 ```
 crates/utils      geometry, colour, small vector, locks, hash — the only crate with unsafe
 crates/types      colours, character attributes, cursor type, viewport, input records
-crates/buffer     cells, rows, the scrollback buffer, selection, marks, search, images
+crates/buffer     cells, rows, the scrollback buffer, marks, search, images
 crates/vt         the escape-sequence state machine and its dispatch actions
 crates/adapter    applies parsed sequences to buffers: dispatch, pages, sixel, macros
 crates/term       wires the parser to the adapter; the `Terminal` handle and input encoding
 crates/renderer   fonts, cell metrics, atlas, and the software paint path
-crates/host       the console side: history, input buffer, cooked read, and the input parser
+crates/host       the console side: history, input buffer, cooked read, input parser, selection
 ```
 
 The dependency ring starts at `utils → types → {buffer, vt} → adapter → term`.

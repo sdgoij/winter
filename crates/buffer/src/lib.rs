@@ -12,7 +12,6 @@
 //! - [`cursor`] — `Cursor` — terminal cursor state
 //! - [`marks`] — Scroll/command marks for shell integration
 //! - [`hyperlinks`] — Hyperlink map for OSC 8 hyperlinks
-//! - [`selection`] — Text selection types
 //! - [`cell_width`] — Character-to-column mapping
 //! - [`output_cell_iterator`] — Cell iterators
 //! - [`output_cell_rect`] — Rectangular cell regions
@@ -33,7 +32,6 @@ pub mod output_cell_rect;
 pub mod row;
 pub mod row_attributes;
 pub mod search;
-pub mod selection;
 pub mod text_attribute_behavior;
 pub mod text_buffer;
 pub mod text_buffer_cell_iterator;
@@ -52,7 +50,6 @@ pub use output_cell_rect::OutputCellRect;
 pub use row::Row;
 pub use row_attributes::RowAttributes;
 pub use search::{SearchMatch, SearchOptions};
-pub use selection::{Selection, SelectionPoint, SelectionType};
 // `TextAttribute` is vocabulary shared by the buffer and the adapter, so it
 // lives in `types`; the re-export keeps the historical `buffer::TextAttribute`
 // path working (ADR 002).

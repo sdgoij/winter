@@ -13,7 +13,6 @@ use crate::image_slice::ImageSlice;
 use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
-use crate::selection::{Selection, SelectionType};
 use types::LineRendition;
 
 /// The default scrollback buffer height (number of rows).
@@ -107,8 +106,6 @@ pub struct TextBuffer {
     marks: Marks,
     /// Hyperlink map for OSC 8 hyperlinks.
     hyperlinks: HyperlinkMap,
-    /// Current selection (if any).
-    selection: Option<Selection>,
     /// The mutation ID, incremented on each write.
     mutation_id: u64,
     /// Rows pushed off the top of the screen, oldest first.
@@ -254,7 +251,6 @@ impl TextBuffer {
             cursor: Cursor::new(),
             marks: Marks::new(),
             hyperlinks: HyperlinkMap::new(),
-            selection: None,
             mutation_id: 0,
             scrollback: std::collections::VecDeque::new(),
         };
@@ -349,11 +345,6 @@ impl TextBuffer {
     /// Ported from `TextBuffer::GetHyperlinkUriFromId`.
     pub fn get_hyperlink_uri(&self, id: u16) -> Option<&str> {
         self.hyperlinks.uri(id)
-    }
-
-    /// Returns the selection.
-    pub const fn selection(&self) -> Option<&Selection> {
-        self.selection.as_ref()
     }
 
     /// Returns the current mutation ID.
@@ -870,40 +861,6 @@ impl TextBuffer {
         result
     }
 
-    /// Creates a new selection starting at the given position.
-    pub fn start_selection(&mut self, row: i32, col: i32, r#type: SelectionType) {
-        self.selection = Some(Selection::new(row, col, r#type));
-    }
-
-    /// Extends the selection to the given position.
-    pub fn extend_selection(&mut self, row: i32, col: i32) {
-        if let Some(ref mut selection) = self.selection {
-            selection.set_end(row, col);
-        }
-    }
-
-    /// Gets the selected text.
-    pub fn get_selection_text(&self) -> Option<String> {
-        self.selection.as_ref().map(|s| s.get_text(self))
-    }
-
-    /// Clears the current selection.
-    pub fn clear_selection(&mut self) {
-        self.selection = None;
-    }
-
-    /// Returns whether there is an active selection.
-    pub fn has_selection(&self) -> bool {
-        self.selection.is_some()
-    }
-
-    /// Returns the extent of the current selection.
-    pub fn get_selection_extent(&self) -> Option<(i32, i32, i32, i32)> {
-        self.selection.as_ref().map(|s| s.bounds())
-    }
-
-    // ─── Internal ─────────────────────────────────────────────────────
-
     fn new_line(&mut self) {
         let col = self.cursor.column();
         if col >= self.screen_width {
@@ -1298,19 +1255,6 @@ mod tests {
         assert!(id > 0);
         assert_eq!(buf.get_hyperlink_uri(id), Some("https://example.com"));
         assert!(!buf.hyperlinks().is_empty());
-    }
-
-    #[test]
-    fn test_selection() {
-        let mut buf = TextBuffer::new();
-        buf.start_selection(0, 0, SelectionType::Regular);
-        assert!(buf.has_selection());
-
-        buf.extend_selection(5, 10);
-        assert!(buf.get_selection_extent().is_some());
-
-        buf.clear_selection();
-        assert!(!buf.has_selection());
     }
 
     #[test]
