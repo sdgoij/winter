@@ -69,6 +69,11 @@ pub struct TextBuffer {
     selection: Option<Selection>,
     /// The mutation ID, incremented on each write.
     mutation_id: u64,
+    /// Rows pushed off the top of the screen, oldest first.
+    ///
+    /// This is the storage reflow will rewrap into; until the view offset exists
+    /// it is written by scrolling and cleared by `ED 3`, not displayed.
+    scrollback: std::collections::VecDeque<Row>,
 }
 
 /// A simple VecDeque-like wrapper for circular buffer operations.
@@ -198,14 +203,18 @@ impl TextBuffer {
     pub fn with_dimensions(width: i32, height: i32, scrollback_height: i32) -> Self {
         let buffer_height = height + scrollback_height;
 
-        // Initialize rows for the visible area
+        // Allocate scrollback rows as well as the visible ones: the screen
+        // index is offset by the scrollback height, so a buffer that only
+        // allocated its visible rows could not look any of them up.
         let mut rows = VecDequeCompat::new(buffer_height as usize);
         let mut screen_line_index = HashMap::new();
 
-        for i in 0..height {
+        for i in 0..buffer_height {
             let row = Row::new(width);
+            rows.push_back(BufferedRow::new(row, i - scrollback_height));
+        }
+        for i in 0..height {
             let buffer_idx = i + scrollback_height;
-            rows.push_back(BufferedRow::new(row, i));
             screen_line_index.insert(i, (buffer_idx as usize) % buffer_height as usize);
         }
 
@@ -222,6 +231,7 @@ impl TextBuffer {
             hyperlinks: HyperlinkMap::new(),
             selection: None,
             mutation_id: 0,
+            scrollback: std::collections::VecDeque::new(),
         }
     }
 
@@ -382,16 +392,45 @@ impl TextBuffer {
     ///
     /// Ported from `_ScrollRectVertically` with a count of one: a line feed at
     /// the bottom margin moves every row in the region up and reveals a blank
-    /// bottom row, without touching rows outside it.
+    /// bottom row, without touching rows outside it. A full-page scroll keeps
+    /// the row it pushes off the top in the scrollback.
     pub fn scroll_region_up(&mut self, top: i32, bottom: i32) {
         if bottom <= top || top < 0 || bottom >= self.screen_height {
             return;
         }
+
+        if top == 0
+            && bottom == self.screen_height - 1
+            && self.scrollback_height > 0
+            && let Some(evicted) = self.get_row_at_screen_line(0).cloned()
+        {
+            self.scrollback.push_back(evicted);
+            while self.scrollback.len() > self.scrollback_height as usize {
+                self.scrollback.pop_front();
+            }
+        }
+
         for row in top..bottom {
             self.copy_row(row, row + 1);
         }
         let blank = OutputCell::from_char(' ');
         self.fill_rect(bottom, 0, bottom, self.screen_width - 1, &blank);
+        self.mutation_id += 1;
+    }
+
+    /// Returns how many rows are held in the scrollback.
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
+    }
+
+    /// Returns the text of a scrollback row, oldest first.
+    pub fn scrollback_row_text(&self, index: usize) -> Option<String> {
+        self.scrollback.get(index).map(Row::get_text)
+    }
+
+    /// Discards the scrollback, which is what `ED 3` asks for.
+    pub fn clear_scrollback(&mut self) {
+        self.scrollback.clear();
         self.mutation_id += 1;
     }
 
@@ -653,6 +692,36 @@ mod tests {
 
     fn text_at(buffer: &TextBuffer, row: i32, column: i32) -> String {
         buffer.get_text_data_at(row, column).unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn a_full_page_scroll_keeps_the_evicted_row() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 4);
+        write_text_at(&mut buffer, 0, 0, "top");
+
+        buffer.scroll_region_up(0, 1);
+
+        assert_eq!(buffer.scrollback_len(), 1);
+        assert!(buffer.scrollback_row_text(0).unwrap().starts_with("top"));
+    }
+
+    #[test]
+    fn the_scrollback_is_capped_at_its_height() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 2);
+        for _ in 0..5 {
+            buffer.scroll_region_up(0, 1);
+        }
+        assert_eq!(buffer.scrollback_len(), 2);
+    }
+
+    #[test]
+    fn clear_scrollback_discards_the_rows() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 4);
+        buffer.scroll_region_up(0, 1);
+        assert_eq!(buffer.scrollback_len(), 1);
+
+        buffer.clear_scrollback();
+        assert_eq!(buffer.scrollback_len(), 0);
     }
 
     #[test]

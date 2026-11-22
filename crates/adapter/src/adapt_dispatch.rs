@@ -959,7 +959,9 @@ impl ITermDispatch for AdaptDispatch {
 
     fn erase_in_display(&mut self, erase_type: EraseType) {
         if matches!(erase_type, EraseType::Scrollback) {
-            // A buffer with no scrollback has nothing above the screen to clear.
+            let buffer = self.page_manager.active_page().buffer();
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            buffer.clear_scrollback();
             return;
         }
 
