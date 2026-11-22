@@ -27,12 +27,45 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
-| [`crates/settings`](crates/settings) | The JSON settings file: named profiles, normalization, the platform path | Phase 10 started (ADR 022) |
+| [`crates/settings`](crates/settings) | The JSON settings file: named profiles, keybindings, normalization, the platform path | Phase 10 (ADRs 022, 023) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1394 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1409 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
+
+## Configuration
+
+`crates/settings` reads `%APPDATA%\winterm\settings.json` on Windows and
+`$XDG_CONFIG_HOME/winterm/settings.json` (else
+`$HOME/.config/winterm/settings.json`) elsewhere. A missing or invalid file
+starts the platform shell with the default chords; the application never writes
+the file.
+
+```json
+{
+  "profiles": [
+    { "name": "default", "command": "pwsh.exe", "args": ["-NoLogo"] }
+  ],
+  "default_profile": "default",
+  "keybindings": [
+    { "keys": "ctrl+alt+t", "action": "newTab" },
+    { "keys": "ctrl+shift+c", "action": "unbound" }
+  ]
+}
+```
+
+A chord is `[ctrl+][alt+][shift+]<key>` in any modifier order, case-insensitive.
+Keys are `0-9`, `a-z`, a single punctuation character, `tab`, `enter`, `esc`,
+`space`, `backspace`, `insert`, `delete`, `home`, `end`, `pgup`, `pgdn`, the
+arrows and `f1`–`f24`. Actions are `newTab`, `closeTab`, `nextTab`, `prevTab`,
+`splitHorizontal`, `splitVertical`, `focusLeft`/`Right`/`Up`/`Down`,
+`resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste` and `unbound`.
+
+A binding replaces a default with the same chord and adds a new chord to the
+defaults; `unbound` removes one, so the key reaches the shell. An empty list
+means the defaults. A chord or action the build does not know rejects the file,
+and the defaults load instead (ADR 023).
 
 ## Building and testing
 
@@ -70,10 +103,10 @@ crates/server     the console API surface; the pty layer (ConPTY and `openpty`)
 The dependency ring starts at `utils → types → {buffer, vt} → adapter → term`.
 `renderer` sits on `utils`, `types` and `buffer` so the adapter may call it later;
 `host` sits on `types`, `vt` and `adapter`, consuming the parser and the console
-interfaces; `server` sits on `host` and exposes the console's API surface. The
-ring is enforced by the manifests and described in
-[ADR 001](.agents/notes/adr/001-workspace-layering.md). Phases 8–14 add `input`,
-`settings`, and the application crate on top of it.
+interfaces; `server` sits on `host` and exposes the console's API surface;
+`settings` needs no workspace crate; `winterm` is the application on top and the
+only crate that sees everything (ADR 018). The ring is enforced by the manifests
+and described in [ADR 001](.agents/notes/adr/001-workspace-layering.md).
 
 ## Contributing
 

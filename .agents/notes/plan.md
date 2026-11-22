@@ -18,15 +18,16 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `settings` | ~0.3k | 10 | Phase 10 started (ADR 022): the JSON file's path, the named-profile schema and the normalization that makes a partial file usable. Keybindings, palettes, fonts and the settings UI are next |
-| `winterm` | ~3.2k | 53 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the first settings consumer: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs, splittable panes and a configurable shell work |
+| `settings` | ~0.9k | 23 | Phase 10 (ADRs 022, 023): the JSON file's path, the named-profile schema, keybindings with their own chord syntax and action names, and the normalization that makes a partial file usable. Palettes, fonts and the settings UI are next |
+| `winterm` | ~3.4k | 55 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs, splittable panes, a configurable shell and keybindings read from the file work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1394 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1409 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
-`term` (ADR 017), and native window backends are deferred (ADR 018). Phases 9–14
-are not started.
+`term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
+tabs and panes; Phase 10 has the settings file, its profiles and its
+keybindings. Phases 11–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1239,10 +1240,12 @@ the rest of `src/cascadia` remain.
 
 Started: `crates/settings` owns the file, its path and the normalization that
 makes a partial file usable (ADR 022). The schema is a named-profile list and
-`default_profile`; the application starts the default profile's command. The
-rest of the plan's rows arrive when they have a consumer — keybindings replace
-the hand-written chord map, and the settings UI is what makes a malformed file
-visible.
+`default_profile`, and the application starts the default profile's command. The
+window's chords are settings too (ADR 023): `crates/settings/src/keybindings.rs`
+parses upstream's chord syntax into a typed `Chord`, `actions.rs` names the
+commands, and the user's list is merged over `DEFAULT_KEYBINDINGS`. The rest of
+the plan's rows arrive when they have a consumer — palettes feed the adapter's
+`ColorTable`, and the settings UI is what makes a malformed file visible.
 
 ### Settings Model
 
@@ -1263,8 +1266,17 @@ visible.
   - [ ] **Tests:** load palette, validate colors, apply palette
 - [ ] `winterm/crates/settings/src/fonts.rs` — Font config
   - [ ] **Tests:** face validation, size parsing, weight parsing, feature parsing
-- [ ] `winterm/crates/settings/src/keybindings.rs` — Keybinding definitions
-- [ ] `winterm/crates/settings/src/actions.rs` — Action definitions
+- [x] `winterm/crates/settings/src/keybindings.rs` — Keybinding definitions
+  - `Chord` parses `[ctrl+][alt+][shift+]<key>` as upstream's
+    `KeyChordSerialization.cpp` does; `Key` is the vocabulary an egui event
+    reports; `resolve` merges the user's list over `DEFAULT_KEYBINDINGS`, where
+    the same chord replaces a default and `unbound` removes one. **Tests:**
+    order- and case-insensitivity, a second key rejected, exact modifiers,
+    round-trip of every default, replace/add/unbind/duplicate rules.
+- [x] `winterm/crates/settings/src/actions.rs` — Action definitions
+  - Flat command names (`newTab`, `splitHorizontal`, `focusLeft`, …,
+    `unbound`); the application maps them to window actions.
+    **Tests:** the schema-driven cases in `lib.rs` and `ui.rs`.
 - [ ] `winterm/crates/settings/src/themes.rs` — Theme definitions
 - [ ] `winterm/crates/settings/src/sgr_aliases.rs` — SGR alias table
 - [ ] `winterm/crates/settings/src/defaults.rs` — Defaults

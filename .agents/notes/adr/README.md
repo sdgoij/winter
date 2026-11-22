@@ -51,3 +51,4 @@ Rules:
 | [020](020-selection-adds-document-rows.md) | Selection addresses document rows (history first) | Accepted |
 | [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |
 | [022](022-settings-json-profiles.md) | Settings are a JSON file of named profiles | Accepted |
+| [023](023-keybindings-are-settings.md) | Keybindings are settings data: typed chords, flat action names, merged over the defaults | Accepted |

@@ -893,7 +893,7 @@ impl eframe::App for App {
         let events = ctx.input(|input| input.events.clone());
         let mut forwarded = Vec::with_capacity(events.len());
         for event in events {
-            if let Some(action) = command_for(&event) {
+            if let Some(action) = command_for(&self.settings.keybindings, &event) {
                 self.apply(action, &ctx);
             } else {
                 forwarded.push(event);
@@ -945,11 +945,12 @@ fn track_modifier(sides: &mut ModifierSides, key: egui::Key, pressed: bool) {
     }
 }
 
-/// The window command a key event carries, if any.
+/// The window command an event carries, according to the settings' bindings.
 ///
-/// These chords never reach the shell: the window consumes them before the tab
-/// sees the event.
-fn command_for(event: &egui::Event) -> Option<TabAction> {
+/// A bound chord never reaches the shell: the window consumes it before the tab
+/// sees the event. A chord the file unbound is no longer in the list, so the key
+/// falls through to the shell, as it does when nothing binds it.
+fn command_for(bindings: &[settings::Keybinding], event: &egui::Event) -> Option<TabAction> {
     let egui::Event::Key {
         key,
         pressed: true,
@@ -960,25 +961,146 @@ fn command_for(event: &egui::Event) -> Option<TabAction> {
         return None;
     };
 
-    match (*key, modifiers.ctrl, modifiers.shift, modifiers.alt) {
-        (egui::Key::T, true, true, _) => Some(TabAction::New),
-        (egui::Key::W, true, true, _) => Some(TabAction::CloseActive),
-        (egui::Key::D, true, true, _) => Some(TabAction::Split(Axis::Horizontal)),
-        (egui::Key::E, true, true, _) => Some(TabAction::Split(Axis::Vertical)),
-        (egui::Key::Tab, true, false, _) => Some(TabAction::Next),
-        (egui::Key::Tab, true, true, _) => Some(TabAction::Previous),
-        (egui::Key::C, true, true, _) => Some(TabAction::Copy),
-        (egui::Key::V, true, true, _) => Some(TabAction::Paste),
-        (egui::Key::ArrowLeft, false, false, true) => Some(TabAction::Focus(Direction::Left)),
-        (egui::Key::ArrowRight, false, false, true) => Some(TabAction::Focus(Direction::Right)),
-        (egui::Key::ArrowUp, false, false, true) => Some(TabAction::Focus(Direction::Up)),
-        (egui::Key::ArrowDown, false, false, true) => Some(TabAction::Focus(Direction::Down)),
-        (egui::Key::ArrowLeft, false, true, true) => Some(TabAction::Resize(Direction::Left)),
-        (egui::Key::ArrowRight, false, true, true) => Some(TabAction::Resize(Direction::Right)),
-        (egui::Key::ArrowUp, false, true, true) => Some(TabAction::Resize(Direction::Up)),
-        (egui::Key::ArrowDown, false, true, true) => Some(TabAction::Resize(Direction::Down)),
-        _ => None,
-    }
+    let key = chord_key(*key)?;
+    let modifiers = settings::Modifiers {
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+    };
+    let binding = bindings.iter().find(|binding| binding.keys.matches(key, modifiers))?;
+
+    action_for(binding.action)
+}
+
+/// The window action a settings action names.
+fn action_for(action: settings::Action) -> Option<TabAction> {
+    Some(match action {
+        settings::Action::NewTab => TabAction::New,
+        settings::Action::CloseTab => TabAction::CloseActive,
+        settings::Action::NextTab => TabAction::Next,
+        settings::Action::PrevTab => TabAction::Previous,
+        settings::Action::SplitHorizontal => TabAction::Split(Axis::Horizontal),
+        settings::Action::SplitVertical => TabAction::Split(Axis::Vertical),
+        settings::Action::FocusLeft => TabAction::Focus(Direction::Left),
+        settings::Action::FocusRight => TabAction::Focus(Direction::Right),
+        settings::Action::FocusUp => TabAction::Focus(Direction::Up),
+        settings::Action::FocusDown => TabAction::Focus(Direction::Down),
+        settings::Action::ResizeLeft => TabAction::Resize(Direction::Left),
+        settings::Action::ResizeRight => TabAction::Resize(Direction::Right),
+        settings::Action::ResizeUp => TabAction::Resize(Direction::Up),
+        settings::Action::ResizeDown => TabAction::Resize(Direction::Down),
+        settings::Action::Copy => TabAction::Copy,
+        settings::Action::Paste => TabAction::Paste,
+        // `unbound` is resolved away when the file loads.
+        settings::Action::Unbound => return None,
+    })
+}
+
+/// Maps an egui key to the key a chord names.
+///
+/// This is the vocabulary `settings::Key` documents, not the encoder's: a chord
+/// key is what a key event reports, so punctuation is the character the key
+/// produces on the user's layout.
+fn chord_key(key: egui::Key) -> Option<settings::Key> {
+    use egui::Key as E;
+    use settings::Key as C;
+
+    Some(match key {
+        E::A => C::Char('a'),
+        E::B => C::Char('b'),
+        E::C => C::Char('c'),
+        E::D => C::Char('d'),
+        E::E => C::Char('e'),
+        E::F => C::Char('f'),
+        E::G => C::Char('g'),
+        E::H => C::Char('h'),
+        E::I => C::Char('i'),
+        E::J => C::Char('j'),
+        E::K => C::Char('k'),
+        E::L => C::Char('l'),
+        E::M => C::Char('m'),
+        E::N => C::Char('n'),
+        E::O => C::Char('o'),
+        E::P => C::Char('p'),
+        E::Q => C::Char('q'),
+        E::R => C::Char('r'),
+        E::S => C::Char('s'),
+        E::T => C::Char('t'),
+        E::U => C::Char('u'),
+        E::V => C::Char('v'),
+        E::W => C::Char('w'),
+        E::X => C::Char('x'),
+        E::Y => C::Char('y'),
+        E::Z => C::Char('z'),
+        E::Num0 => C::Char('0'),
+        E::Num1 => C::Char('1'),
+        E::Num2 => C::Char('2'),
+        E::Num3 => C::Char('3'),
+        E::Num4 => C::Char('4'),
+        E::Num5 => C::Char('5'),
+        E::Num6 => C::Char('6'),
+        E::Num7 => C::Char('7'),
+        E::Num8 => C::Char('8'),
+        E::Num9 => C::Char('9'),
+        E::Colon => C::Char(':'),
+        E::Comma => C::Char(','),
+        E::Backslash => C::Char('\\'),
+        E::Slash => C::Char('/'),
+        E::Pipe => C::Char('|'),
+        E::Questionmark => C::Char('?'),
+        E::Exclamationmark => C::Char('!'),
+        E::OpenBracket => C::Char('['),
+        E::CloseBracket => C::Char(']'),
+        E::OpenCurlyBracket => C::Char('{'),
+        E::CloseCurlyBracket => C::Char('}'),
+        E::Backtick => C::Char('`'),
+        E::Minus => C::Char('-'),
+        E::Period => C::Char('.'),
+        E::Plus => C::Char('+'),
+        E::Equals => C::Char('='),
+        E::Semicolon => C::Char(';'),
+        E::Quote => C::Char('\''),
+        E::Tab => C::Tab,
+        E::Enter => C::Enter,
+        E::Escape => C::Escape,
+        E::Space => C::Space,
+        E::Backspace => C::Backspace,
+        E::Insert => C::Insert,
+        E::Delete => C::Delete,
+        E::Home => C::Home,
+        E::End => C::End,
+        E::PageUp => C::PageUp,
+        E::PageDown => C::PageDown,
+        E::ArrowLeft => C::Left,
+        E::ArrowRight => C::Right,
+        E::ArrowUp => C::Up,
+        E::ArrowDown => C::Down,
+        E::F1 => C::Function(1),
+        E::F2 => C::Function(2),
+        E::F3 => C::Function(3),
+        E::F4 => C::Function(4),
+        E::F5 => C::Function(5),
+        E::F6 => C::Function(6),
+        E::F7 => C::Function(7),
+        E::F8 => C::Function(8),
+        E::F9 => C::Function(9),
+        E::F10 => C::Function(10),
+        E::F11 => C::Function(11),
+        E::F12 => C::Function(12),
+        E::F13 => C::Function(13),
+        E::F14 => C::Function(14),
+        E::F15 => C::Function(15),
+        E::F16 => C::Function(16),
+        E::F17 => C::Function(17),
+        E::F18 => C::Function(18),
+        E::F19 => C::Function(19),
+        E::F20 => C::Function(20),
+        E::F21 => C::Function(21),
+        E::F22 => C::Function(22),
+        E::F23 => C::Function(23),
+        E::F24 => C::Function(24),
+        _ => return None,
+    })
 }
 
 /// The name a tab shows until its shell sets a title.
@@ -1376,29 +1498,45 @@ mod tests {
                 ..egui::Modifiers::default()
             },
         };
+        let bindings = settings::DEFAULT_KEYBINDINGS;
 
-        assert_eq!(command_for(&key(egui::Key::T, true, true)), Some(TabAction::New));
         assert_eq!(
-            command_for(&key(egui::Key::W, true, true)),
+            command_for(bindings, &key(egui::Key::T, true, true)),
+            Some(TabAction::New)
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::W, true, true)),
             Some(TabAction::CloseActive)
         );
-        assert_eq!(command_for(&key(egui::Key::Tab, true, false)), Some(TabAction::Next));
-        assert_eq!(command_for(&key(egui::Key::Tab, true, true)), Some(TabAction::Previous));
-        assert_eq!(command_for(&key(egui::Key::C, true, true)), Some(TabAction::Copy));
-        assert_eq!(command_for(&key(egui::Key::V, true, true)), Some(TabAction::Paste));
         assert_eq!(
-            command_for(&key(egui::Key::D, true, true)),
+            command_for(bindings, &key(egui::Key::Tab, true, false)),
+            Some(TabAction::Next)
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::Tab, true, true)),
+            Some(TabAction::Previous)
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::C, true, true)),
+            Some(TabAction::Copy)
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::V, true, true)),
+            Some(TabAction::Paste)
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::D, true, true)),
             Some(TabAction::Split(Axis::Horizontal))
         );
         assert_eq!(
-            command_for(&key(egui::Key::E, true, true)),
+            command_for(bindings, &key(egui::Key::E, true, true)),
             Some(TabAction::Split(Axis::Vertical))
         );
 
         // Without both modifiers, the key belongs to the shell.
-        assert_eq!(command_for(&key(egui::Key::T, true, false)), None);
-        assert_eq!(command_for(&key(egui::Key::Tab, false, false)), None);
-        assert_eq!(command_for(&egui::Event::Text("t".into())), None);
+        assert_eq!(command_for(bindings, &key(egui::Key::T, true, false)), None);
+        assert_eq!(command_for(bindings, &key(egui::Key::Tab, false, false)), None);
+        assert_eq!(command_for(bindings, &egui::Event::Text("t".into())), None);
     }
 
     #[test]
@@ -1415,23 +1553,87 @@ mod tests {
                 ..egui::Modifiers::default()
             },
         };
+        let bindings = settings::DEFAULT_KEYBINDINGS;
 
         assert_eq!(
-            command_for(&key(egui::Key::ArrowLeft, false, false, true)),
+            command_for(bindings, &key(egui::Key::ArrowLeft, false, false, true)),
             Some(TabAction::Focus(Direction::Left))
         );
         assert_eq!(
-            command_for(&key(egui::Key::ArrowDown, false, false, true)),
+            command_for(bindings, &key(egui::Key::ArrowDown, false, false, true)),
             Some(TabAction::Focus(Direction::Down))
         );
         assert_eq!(
-            command_for(&key(egui::Key::ArrowUp, false, true, true)),
+            command_for(bindings, &key(egui::Key::ArrowUp, false, true, true)),
             Some(TabAction::Resize(Direction::Up))
         );
 
         // Ctrl+Alt+Arrow is the shell's, and a bare arrow is a key.
-        assert_eq!(command_for(&key(egui::Key::ArrowLeft, true, false, true)), None);
-        assert_eq!(command_for(&key(egui::Key::ArrowLeft, false, false, false)), None);
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::ArrowLeft, true, false, true)),
+            None
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::ArrowLeft, false, false, false)),
+            None
+        );
+    }
+
+    #[test]
+    fn the_settings_decide_which_chords_the_window_claims() {
+        let key = |key, ctrl, shift, alt| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl,
+                shift,
+                alt,
+                ..egui::Modifiers::default()
+            },
+        };
+        let settings = settings::parse(
+            r#"{
+                "keybindings": [
+                    { "keys": "ctrl+alt+t", "action": "newTab" },
+                    { "keys": "ctrl+shift+t", "action": "paste" },
+                    { "keys": "ctrl+shift+c", "action": "unbound" }
+                ]
+            }"#,
+        )
+        .expect("settings");
+
+        // A chord the file adds runs its action.
+        assert_eq!(
+            command_for(&settings.keybindings, &key(egui::Key::T, true, false, true)),
+            Some(TabAction::New)
+        );
+        // A user chord takes the default's place instead of running beside it.
+        assert_eq!(
+            command_for(&settings.keybindings, &key(egui::Key::T, true, true, false)),
+            Some(TabAction::Paste)
+        );
+        // An unbound default reaches the shell.
+        assert_eq!(
+            command_for(&settings.keybindings, &key(egui::Key::C, true, true, false)),
+            None
+        );
+        // A default the file does not name is still the window's.
+        assert_eq!(
+            command_for(&settings.keybindings, &key(egui::Key::W, true, true, false)),
+            Some(TabAction::CloseActive)
+        );
+    }
+
+    #[test]
+    fn chord_keys_name_the_egui_keys_the_settings_can_use() {
+        assert_eq!(chord_key(egui::Key::T), Some(settings::Key::Char('t')));
+        assert_eq!(chord_key(egui::Key::Num7), Some(settings::Key::Char('7')));
+        assert_eq!(chord_key(egui::Key::Semicolon), Some(settings::Key::Char(';')));
+        assert_eq!(chord_key(egui::Key::F5), Some(settings::Key::Function(5)));
+        assert_eq!(chord_key(egui::Key::PageDown), Some(settings::Key::PageDown));
+        assert_eq!(chord_key(egui::Key::BrowserBack), None);
     }
 
     #[test]

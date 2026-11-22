@@ -1,13 +1,18 @@
 //! User settings: the file, the default profile and the rules that make a
 //! partial file usable.
 //!
-//! The schema is the port's own (ADR 022). Windows Terminal's `settings.json`
-//! is a large cascadia schema; this one starts with what the application
-//! consumes — named profiles — and grows one consumer at a time.
+//! The schema is the port's own (ADRs 022, 023). Windows Terminal's
+//! `settings.json` is a large cascadia schema; this one holds what the
+//! application consumes — named profiles and keybindings — and grows one
+//! consumer at a time.
 
+mod actions;
+mod keybindings;
 mod parser;
 mod profiles;
 
+pub use actions::Action;
+pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use parser::{load, parse, settings_path, to_json};
 pub use profiles::{Profile, default_shell};
 
@@ -21,6 +26,8 @@ pub struct Settings {
     pub profiles: Vec<Profile>,
     /// The profile a new tab uses, by name.
     pub default_profile: Option<String>,
+    /// The chords the window claims before the shell sees them.
+    pub keybindings: Vec<Keybinding>,
 }
 
 impl Default for Settings {
@@ -29,6 +36,7 @@ impl Default for Settings {
         Self {
             default_profile: Some(profile.name.clone()),
             profiles: vec![profile],
+            keybindings: DEFAULT_KEYBINDINGS.to_vec(),
         }
     }
 }
@@ -45,8 +53,9 @@ impl Settings {
     /// Fills in what a partial file leaves out.
     ///
     /// Called on every parse: an empty list gets the default profile, a blank
-    /// command gets the platform shell, and a default that names nothing falls
-    /// back to the first profile.
+    /// command gets the platform shell, a default that names nothing falls
+    /// back to the first profile, and the user's chords are applied over the
+    /// defaults.
     pub(crate) fn normalize(mut self) -> Self {
         if self.profiles.is_empty() {
             self.profiles.push(Profile::default());
@@ -68,6 +77,8 @@ impl Settings {
         if !known {
             self.default_profile = Some(self.profiles[0].name.clone());
         }
+
+        self.keybindings = keybindings::resolve(&self.keybindings);
 
         self
     }
@@ -148,5 +159,57 @@ mod tests {
         let settings = Settings::default();
         let json = to_json(&settings);
         assert_eq!(parse(&json).expect("parse"), settings);
+    }
+
+    #[test]
+    fn the_default_settings_bind_the_window_chords() {
+        let settings = Settings::default();
+        assert_eq!(settings.keybindings, DEFAULT_KEYBINDINGS);
+        assert_eq!(settings.keybindings.len(), 16);
+    }
+
+    #[test]
+    fn a_file_without_keybindings_gets_the_defaults() {
+        let settings = parse(r#"{"profiles": [{"name": "a", "command": "sh"}]}"#).expect("parse");
+        assert_eq!(settings.keybindings, DEFAULT_KEYBINDINGS);
+
+        let settings = parse(r#"{"keybindings": []}"#).expect("parse");
+        assert_eq!(settings.keybindings, DEFAULT_KEYBINDINGS);
+    }
+
+    #[test]
+    fn a_file_applies_its_chords_over_the_defaults() {
+        let json = r#"{
+            "keybindings": [
+                { "keys": "ctrl+shift+t", "action": "paste" },
+                { "keys": "ctrl+alt+t", "action": "newTab" },
+                { "keys": "ctrl+shift+c", "action": "unbound" }
+            ]
+        }"#;
+        let settings = parse(json).expect("parse");
+
+        let action = |chord: &str| {
+            let chord = Chord::parse(chord).expect("chord");
+            settings
+                .keybindings
+                .iter()
+                .find(|binding| binding.keys == chord)
+                .map(|binding| binding.action)
+        };
+
+        assert_eq!(action("ctrl+shift+t"), Some(Action::Paste));
+        assert_eq!(action("ctrl+alt+t"), Some(Action::NewTab));
+        assert_eq!(action("ctrl+shift+c"), None);
+        // A default the file does not name is untouched.
+        assert_eq!(action("ctrl+shift+d"), Some(Action::SplitHorizontal));
+        // One default replaced, one chord added, one removed.
+        assert_eq!(settings.keybindings.len(), DEFAULT_KEYBINDINGS.len());
+    }
+
+    #[test]
+    fn a_broken_chord_or_action_rejects_the_file() {
+        assert!(parse(r#"{"keybindings": [{"keys": "ctrl+a+b", "action": "newTab"}]}"#).is_err());
+        assert!(parse(r#"{"keybindings": [{"keys": "ctrl+t", "action": "explode"}]}"#).is_err());
+        assert!(parse(r#"{"keybindings": [{"keys": "ctrl+t"}]}"#).is_err());
     }
 }
