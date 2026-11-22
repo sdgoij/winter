@@ -68,6 +68,29 @@ fn esc_h_sets_a_tab_stop() {
 }
 
 #[test]
+fn esc_open_paren_zero_selects_the_graphics_charset() {
+    let mut screen = Screen::new(10, 3);
+    screen.feed_str("\x1b(0qxl");
+    assert_eq!(screen.cell(0, 0), "\u{2500}");
+    assert_eq!(screen.cell(0, 1), "\u{2502}");
+    assert_eq!(screen.cell(0, 2), "\u{250c}");
+
+    // Designating ASCII again restores the Latin character.
+    screen.feed_str("\x1b(Bq");
+    assert_eq!(screen.cell(0, 3), "q");
+}
+
+#[test]
+fn a_single_shift_applies_to_one_character() {
+    let mut screen = Screen::new(10, 3);
+    // G2 is the graphics set; SS2 uses it for the next character only.
+    screen.feed_str("\x1b*0\x1bNq");
+    assert_eq!(screen.cell(0, 0), "\u{2500}");
+    screen.feed_str("q");
+    assert_eq!(screen.cell(0, 1), "q");
+}
+
+#[test]
 fn esc_open_paren_selects_a_character_set() {
     // `A` is the British set, which differs from ASCII at `#`.
     let mut screen = Screen::new(10, 3);

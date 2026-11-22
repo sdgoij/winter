@@ -18,7 +18,7 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-993 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+997 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -189,14 +189,12 @@ it; the rest of this section is the record of what the cleanup passes settled.
   the scrollback is clamped to the top visible row rather than stopping the
   copy early as upstream's circular buffer does.
 
-**Open in `adapter`.**
-
-- `types::charsets` stores every table as `u8`, so DEC Special Graphics cannot
-  hold the line-drawing code points (`U+2500`, `U+2502`, …): `ESC ( 0`
-  translates to Latin-1 bytes instead of box characters. The tables need to
-  carry `char`, and `TerminalOutput::translate_key` needs single-shift
-  (`SS2`/`SS3`) consumption ported with them. Designation, the active GL/GR
-  table refresh and the British set's `#` mapping are tested meanwhile.
+**Character sets translate.** `types::charsets` now carries `char` tables rather
+than bytes, so DEC Special Graphics holds the drawing code points (`U+2500`,
+`U+2502`, …) instead of Latin-1 substitutes. `TerminalOutput` re-applies the
+locking shifts when a set is designated, `SI`/`SO` read the table they select,
+`translate_key` maps GL and GR by range rather than by one flag, and a single
+shift (`SS2`/`SS3`) applies to one character and is then cleared.
 
 - The upstream source was not present when the cleanup started; it now is, at
   `.design/refs/terminal`, and the handler port is running against it (ADR 004).

@@ -12,9 +12,9 @@ pub struct TerminalOutput {
     /// User preference charset ID.
     upss_id: VTID,
     /// User preference charset translation table.
-    upss_translation_table: &'static [u8],
+    upss_translation_table: &'static [char],
     /// Gset translation tables (G0-G3).
-    gset_translation_tables: [&'static [u8]; 4],
+    gset_translation_tables: [&'static [char]; 4],
     /// Gset IDs (G0-G3).
     gset_ids: [VTID; 4],
     /// Whether each Gset is a 96-character set.
@@ -26,9 +26,9 @@ pub struct TerminalOutput {
     /// GR set number (currently active).
     gr_set_number: usize,
     /// GL translation table.
-    gl_translation_table: &'static [u8],
+    gl_translation_table: &'static [char],
     /// GR translation table.
-    gr_translation_table: &'static [u8],
+    gr_translation_table: &'static [char],
     /// Single shift set number.
     ss_set_number: usize,
     /// Whether GR translation is enabled.
@@ -36,7 +36,7 @@ pub struct TerminalOutput {
     /// DRCS ID.
     drcs_id: VTID,
     /// DRCS translation table.
-    drcs_translation_table: &'static [u8],
+    drcs_translation_table: &'static [char],
 }
 
 impl TerminalOutput {
@@ -129,8 +129,19 @@ impl TerminalOutput {
     /// Translates a character through the active character sets.
     ///
     /// GL covers `0x20..=0x7E` and GR covers `0xA0..=0xFF`, as upstream's
-    /// `TranslateKey` does. Single-shift consumption is not ported yet.
-    pub fn translate_key(&self, ch: char) -> char {
+    /// `TranslateKey` does. A single shift applies to one character and is
+    /// then cleared.
+    pub fn translate_key(&mut self, ch: char) -> char {
+        if (2..=3).contains(&self.ss_set_number) {
+            let table = self.gset_translation_tables[self.ss_set_number];
+            self.ss_set_number = 0;
+            let translated = translate_with(table, ch, 0x20);
+            if translated != ch {
+                return translated;
+            }
+            return translate_with(table, ch, 0xA0);
+        }
+
         let code = ch as u32;
         if (0x20..=0x7E).contains(&code) {
             return translate_with(self.gl_translation_table, ch, 0x20);
@@ -281,7 +292,7 @@ impl TerminalOutput {
         self.apply_locking_shifts();
     }
 
-    fn lookup_translation_table_94(&self, charset_id: &VTID) -> &'static [u8] {
+    fn lookup_translation_table_94(&self, charset_id: &VTID) -> &'static [char] {
         match charset_id.as_bytes() {
             [b'B'] | [b'1'] => charsets::ASCII,
             [b'0'] | [b'2'] => charsets::DEC_SPECIAL_GRAPHICS,
@@ -302,7 +313,7 @@ impl TerminalOutput {
         }
     }
 
-    fn lookup_translation_table_96(&self, charset_id: &VTID) -> &'static [u8] {
+    fn lookup_translation_table_96(&self, charset_id: &VTID) -> &'static [char] {
         match charset_id.as_bytes() {
             [b'C'] => charsets::DEC_SPECIAL_GRAPHICS,
             [b'0'] => charsets::LATIN1,
@@ -317,7 +328,7 @@ impl TerminalOutput {
         }
     }
 
-    fn _replace_drcs_table(&mut self, old_table: &'static [u8], new_table: &'static [u8]) {
+    fn _replace_drcs_table(&mut self, old_table: &'static [char], new_table: &'static [char]) {
         // In the C++ implementation, this replaces DRCS entries.
         // For now, just update the translation table directly.
         let _ = old_table;
@@ -327,12 +338,12 @@ impl TerminalOutput {
 
 /// Applies a 94- or 96-character table to `ch`, returning it unchanged when
 /// the table has no mapping.
-fn translate_with(table: &[u8], ch: char, base: u32) -> char {
+fn translate_with(table: &[char], ch: char, base: u32) -> char {
     let Some(offset) = (ch as u32).checked_sub(base) else {
         return ch;
     };
     match table.get(offset as usize) {
-        Some(&translated) if translated != 0 => char::from(translated),
+        Some(&translated) if translated != '\0' => translated,
         _ => ch,
     }
 }
@@ -356,8 +367,8 @@ mod tests {
 
     #[test]
     fn test_terminal_output_translate() {
-        let output = TerminalOutput::new(false);
-        // Without GR translation, characters should pass through
+        let mut output = TerminalOutput::new(false);
+        // Without a designated set, characters should pass through
         assert_eq!(output.translate_key('A'), 'A');
         assert_eq!(output.translate_key('a'), 'a');
         assert_eq!(output.translate_key('0'), '0');
@@ -376,6 +387,30 @@ mod tests {
         let mut output = TerminalOutput::new(false);
         output.locking_shift(1);
         assert_eq!(output.get_left_set_number(), 1);
+    }
+
+    #[test]
+    fn the_graphics_set_maps_the_drawing_characters() {
+        let mut output = TerminalOutput::new(false);
+        output.designate_94_charset(0, VTID::from_byte(b'0'));
+
+        assert_eq!(output.translate_key('q'), '\u{2500}');
+        assert_eq!(output.translate_key('x'), '\u{2502}');
+        assert_eq!(output.translate_key('l'), '\u{250c}');
+        assert_eq!(output.translate_key('~'), '\u{00b7}');
+        // Below the drawing block the set is ASCII.
+        assert_eq!(output.translate_key('A'), 'A');
+    }
+
+    #[test]
+    fn a_single_shift_applies_to_one_character() {
+        let mut output = TerminalOutput::new(false);
+        output.designate_94_charset(2, VTID::from_byte(b'0'));
+        output.single_shift(2);
+
+        assert_eq!(output.translate_key('q'), '\u{2500}');
+        // The shift was consumed, so the next character uses GL again.
+        assert_eq!(output.translate_key('q'), 'q');
     }
 
     #[test]

@@ -2336,7 +2336,7 @@ impl ITermDispatch for AdaptDispatch {
 
     fn print_string(&mut self, string: &str) {
         let translated = {
-            let output = self.term_output.lock().unwrap_or_else(|e| e.into_inner());
+            let mut output = self.term_output.lock().unwrap_or_else(|e| e.into_inner());
             if output.needs_translation() {
                 Some(string.chars().map(|ch| output.translate_key(ch)).collect::<String>())
             } else {
