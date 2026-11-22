@@ -29,7 +29,10 @@ jobs:
         # GitHub offers for public repositories: `macos-latest` is arm64 and
         # overruns its capacity, and a job that never starts is not a gate. The
         # point of the matrix is a second host, not a second queue.
-        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        #
+        # Two Linux architectures: the release ships both, and an archive is
+        # built on the host that tested it, so arm64 is a gate of its own.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v7
       # `rustup show` reads rust-toolchain.toml, so the pin in the repository is

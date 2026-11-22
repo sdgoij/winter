@@ -52,11 +52,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The same three hosts the gate ran on, so an archive is made by the
-        # platform that tested it. `macos-15-intel` is the Intel image GitHub
-        # offers for public repositories; Apple Silicon runs the result under
-        # Rosetta.
-        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        # The same hosts the gate ran on, so an archive is made by the platform
+        # that tested it. `macos-15-intel` is the Intel image GitHub offers for
+        # public repositories; Apple Silicon runs the result under Rosetta.
+        # Linux is built for both architectures, natively.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v7
       # `rustup show` reads rust-toolchain.toml, so the archive is built with

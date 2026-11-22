@@ -1708,7 +1708,7 @@ state at a glance, with the owning crate's measured test count.
 | **11. Audio** | ✅ DONE | 7 tests; bell and DECPS tones (ADR 033) |
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
-| **14. CI/CD** | ✅ DONE | The gate on Linux, Windows and an Intel macOS host (`macos-15-intel`, `gate.yml`); a `v*` tag publishes a versioned archive per platform (`release.yml`, `just package`) |
+| **14. CI/CD** | ✅ DONE | The gate on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`, `gate.yml`); a `v*` tag publishes a versioned archive per platform (`release.yml`, `just package`) |
 
 ## Test coverage
 

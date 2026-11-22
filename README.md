@@ -174,8 +174,8 @@ runs on all three platforms first, then each platform packages the binary it
 tested (`.github/workflows/release.yml`).
 
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
-Linux, Windows, and macOS, from the shared `gate.yml`. `cargo-deny` is required
-for `just deny`:
+x86-64 and arm64 Linux, Windows, and macOS, from the shared `gate.yml`.
+`cargo-deny` is required for `just deny`:
 
 ```sh
 cargo install cargo-deny --locked
