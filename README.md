@@ -29,7 +29,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
 | [`crates/winterm`](crates/winterm) | The application: pty session with its pump, buffer snapshot, scroll/selection view, egui shell | Phase 8 shell (ADRs 018, 019) |
 
-1353 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1355 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 

@@ -4,7 +4,7 @@
 //! vocabulary and `grid` snapshots into paint calls. Replacing egui with a
 //! native backend means replacing this file, not the session or the grid.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use eframe::egui;
 use server::pty::{PtyCommand, PtySize};
@@ -39,7 +39,7 @@ pub fn run() -> eframe::Result {
         ..Default::default()
     };
 
-    eframe::run_native("winterm", options, Box::new(|_cc| Ok(Box::new(App::new()?))))
+    eframe::run_native("winterm", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)?))))
 }
 
 struct App {
@@ -61,9 +61,10 @@ struct App {
 }
 
 impl App {
-    fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let size = PtySize::DEFAULT;
-        let session = Session::spawn(&default_command(), size)?;
+        let repaint = ctx.clone();
+        let session = Session::spawn_with(&default_command(), size, move || repaint.request_repaint())?;
         let mut terminal = Terminal::new();
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
 
@@ -499,14 +500,9 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // The pump asks for a repaint when output arrives; there is no poll.
         self.pump_output();
-        if !self.exited {
-            // The pump thread has no handle to the context yet, so the frame
-            // loop polls. A repaint waker replaces this when the session learns
-            // to signal the window.
-            ctx.request_repaint_after(Duration::from_millis(8));
-        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

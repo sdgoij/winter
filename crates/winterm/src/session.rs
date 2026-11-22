@@ -48,12 +48,23 @@ pub struct Session {
 impl Session {
     /// Spawns `command` at `size` and starts forwarding its output.
     pub fn spawn(command: &PtyCommand, size: PtySize) -> io::Result<Self> {
+        Self::spawn_with(command, size, || {})
+    }
+
+    /// Spawns `command` and calls `wake` whenever output arrives or ends.
+    ///
+    /// The window passes a closure that asks for a repaint, so the frame loop
+    /// does not have to poll.
+    pub fn spawn_with<F>(command: &PtyCommand, size: PtySize, wake: F) -> io::Result<Self>
+    where
+        F: Fn() + Send + 'static,
+    {
         let pty = Pty::spawn(command, size)?;
         let reader = pty.try_clone_reader()?;
         Ok(Self {
             pty,
             output: Output {
-                chunks: spawn_pump(reader),
+                chunks: spawn_pump_with(reader, wake),
                 ended: false,
             },
         })
@@ -101,25 +112,39 @@ impl Session {
 /// The thread stops at end of input, on an error, or when the receiver is
 /// dropped. Interrupted reads are retried, as a signal delivering no data is
 /// not the end of the stream.
-pub fn spawn_pump<R>(mut reader: R) -> Receiver<Vec<u8>>
+pub fn spawn_pump<R>(reader: R) -> Receiver<Vec<u8>>
 where
     R: Read + Send + 'static,
+{
+    spawn_pump_with(reader, || {})
+}
+
+/// Like [`spawn_pump`], but calls `wake` after each chunk and at the end.
+///
+/// The final call matters as much as the others: it is how the window learns
+/// that the stream ended, without a timer.
+pub fn spawn_pump_with<R, F>(mut reader: R, wake: F) -> Receiver<Vec<u8>>
+where
+    R: Read + Send + 'static,
+    F: Fn() + Send + 'static,
 {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut buffer = [0u8; 8192];
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => return,
+                Ok(0) => break,
                 Ok(count) => {
                     if sender.send(buffer[..count].to_vec()).is_err() {
-                        return;
+                        break;
                     }
+                    wake();
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => return,
+                Err(_) => break,
             }
         }
+        wake();
     });
     receiver
 }
@@ -197,6 +222,42 @@ mod tests {
             received.extend_from_slice(&chunk);
         }
         assert_eq!(received, b"kept");
+    }
+
+    #[test]
+    fn the_pump_wakes_the_window_for_output_and_for_the_end() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&wakes);
+        let chunks = spawn_pump_with(Cursor::new(b"hi".to_vec()), move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let mut received = Vec::new();
+        while let Ok(chunk) = chunks.recv() {
+            received.extend_from_slice(&chunk);
+        }
+
+        assert_eq!(received, b"hi");
+        // One wake for the chunk, one for the end of the stream.
+        assert_eq!(wakes.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn an_empty_stream_still_wakes_the_window() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&wakes);
+        let chunks = spawn_pump_with(Cursor::new(Vec::new()), move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+
+        while chunks.recv().is_ok() {}
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(windows)]

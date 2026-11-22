@@ -18,10 +18,10 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `winterm` | ~1.6k | 24 | Phase 8's shell (ADRs 018, 019): `session` (the pty and its pump), `grid` (a buffer snapshot: runs, text, cursor, history), `view` (scroll offset and selection) and `ui` (egui on winit/wgpu). Mouse selection and a tracking application's mouse, copy/paste and scrollback work; scrollback selection, a repaint waker and the rest of the app are next |
+| `winterm` | ~1.6k | 26 | Phase 8's shell (ADRs 018, 019): `session` (the pty, its pump and the repaint wake), `grid` (a buffer snapshot: runs, text, cursor, history), `view` (scroll offset and selection) and `ui` (egui on winit/wgpu). Mouse selection and a tracking application's mouse, copy/paste and scrollback work; scrollback selection and the rest of the app are next |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1353 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1355 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phases 9–14
@@ -1125,8 +1125,9 @@ everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
 ### Application Shell
 
 - [x] `winterm/crates/winterm/src/session.rs` — the pty and its pump
-  - **Tests:** chunk order and end of stream, an error after data, and a real
-    `cmd`/`sh` session through the pty.
+  - **Tests:** chunk order and end of stream, an error after data, the repaint
+    wake for a chunk and for the end, and a real `cmd`/`sh` session through
+    the pty.
 - [x] `winterm/crates/winterm/src/grid.rs` — a buffer snapshot for a painter
   - **Tests:** row runs, the cursor, a hidden cursor, and the history revealed
     by scrolling.
@@ -1143,9 +1144,9 @@ everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
     selection. Ctrl+Shift+C/V copy and paste; Ctrl+C/X/V reach the shell
     because eframe's clipboard shortcuts are off.
   - **Tests:** the key map, modifier sides and the AltGr chord, palette
-    resolution, and the pty cell clamp.
-  - The frame loop polls the pump every 8 ms; a repaint waker replaces the poll
-    when the session learns to signal the window.
+    resolution, the pty cell clamp, the Shift override and the button map.
+  - The pump wakes the window with `request_repaint` after each chunk and at
+    end of stream, so the frame loop does not poll.
 
 ---
 
