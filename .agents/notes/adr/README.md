@@ -49,3 +49,4 @@ Rules:
 | [018](018-egui-first-shell.md) | egui is the first shell; native backends come later | Accepted |
 | [019](019-terminal-selection-is-app-state.md) | The terminal's viewport and selection are application state | Accepted |
 | [020](020-selection-adds-document-rows.md) | Selection addresses document rows (history first) | Accepted |
+| [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |

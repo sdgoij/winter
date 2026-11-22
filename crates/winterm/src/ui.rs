@@ -4,6 +4,8 @@
 //! vocabulary and `grid` snapshots into paint calls. Replacing egui with a
 //! native backend means replacing this file, not the session or the grid.
 
+use std::io;
+use std::path::Path;
 use std::time::Instant;
 
 use eframe::egui;
@@ -17,7 +19,7 @@ use types::CursorType;
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
-use crate::{blink::Blink, grid, session::Session, view::View};
+use crate::{blink::Blink, grid, session::Session, tabs::Tabs, view::View};
 
 /// The font size the grid is measured and painted at.
 const FONT_SIZE: f32 = 16.0;
@@ -43,34 +45,28 @@ pub fn run() -> eframe::Result {
     eframe::run_native("winterm", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)?))))
 }
 
-struct App {
+/// One shell, its parser and its viewport.
+struct Tab {
     terminal: Terminal,
     session: Session,
     view: View,
-    clipboard: Option<arboard::Clipboard>,
-    blink: Blink,
-    /// Whether the cursor is drawn this frame.
-    cursor_on: bool,
-    /// The title last sent to the window.
-    title: Option<String>,
+    /// The title the shell set with OSC 0/2.
+    osc_title: Option<String>,
+    /// The title to show until the shell sets one.
+    fallback_title: String,
     /// The grid size the terminal and pty were last told about.
     size: (i32, i32),
     /// The cell the pointer was last forwarded from, for motion deduplication.
     last_mouse_cell: Option<(i32, i32)>,
-    /// Right Alt is held, which is what makes an AltGr chord distinct from
-    /// Ctrl+Alt (ADR 017's `is_alt_gr`).
-    right_alt: bool,
-    /// Right Control is held.
-    right_ctrl: bool,
     /// The output stream ended.
     exited: bool,
 }
 
-impl App {
-    fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+impl Tab {
+    fn new(ctx: &egui::Context, command: PtyCommand, fallback_title: String) -> io::Result<Self> {
         let size = PtySize::DEFAULT;
         let repaint = ctx.clone();
-        let session = Session::spawn_with(&default_command(), size, move || repaint.request_repaint())?;
+        let session = Session::spawn_with(&command, size, move || repaint.request_repaint())?;
         let mut terminal = Terminal::new();
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
 
@@ -78,16 +74,22 @@ impl App {
             terminal,
             session,
             view: View::new(),
-            clipboard: arboard::Clipboard::new().ok(),
-            blink: Blink::new(Instant::now()),
-            cursor_on: true,
-            title: None,
+            osc_title: None,
+            fallback_title,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
-            right_alt: false,
-            right_ctrl: false,
             exited: false,
         })
+    }
+
+    /// The title the tab strip shows.
+    fn display_title(&self) -> &str {
+        self.osc_title.as_deref().unwrap_or(&self.fallback_title)
+    }
+
+    /// Takes the bell count so the window can ask for attention once.
+    fn take_bells(&mut self) -> usize {
+        self.terminal.take_bell_requests()
     }
 
     /// Moves bytes from the pty into the parser and answers from the adapter.
@@ -104,10 +106,15 @@ impl App {
         for response in self.terminal.take_responses() {
             self.write(&response);
         }
+
+        if let Some(title) = self.terminal.window_title()
+            && self.osc_title.as_deref() != Some(title)
+        {
+            self.osc_title = Some(title.to_string());
+        }
     }
 
-    fn handle_input(&mut self, ctx: &egui::Context) {
-        let events = ctx.input(|input| input.events.clone());
+    fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
         for event in events {
             // Typing returns to the live screen, as upstream's TrySnapOnInput.
             if self.view.scroll() != 0
@@ -117,25 +124,6 @@ impl App {
             }
 
             match event {
-                egui::Event::Copy => {
-                    self.copy_selection();
-                }
-                egui::Event::Key {
-                    key: egui::Key::C,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if modifiers.ctrl && modifiers.shift => {
-                    self.copy_selection();
-                }
-                egui::Event::Key {
-                    key: egui::Key::V,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if modifiers.ctrl && modifiers.shift => {
-                    self.paste_clipboard();
-                }
                 egui::Event::Text(text) => {
                     for character in text.chars() {
                         self.send_key(&KeyEvent {
@@ -146,8 +134,7 @@ impl App {
                     }
                 }
                 egui::Event::Paste(text) => {
-                    let bytes = self.terminal.paste(&text);
-                    self.write(&bytes);
+                    self.paste_text(&text);
                 }
                 egui::Event::Key {
                     key,
@@ -156,7 +143,7 @@ impl App {
                     modifiers,
                     ..
                 } => {
-                    self.track_modifier(key, pressed);
+                    track_modifier(sides, key, pressed);
 
                     let Some(key) = keymap(key) else {
                         continue;
@@ -172,7 +159,7 @@ impl App {
 
                     self.send_key(&KeyEvent {
                         key,
-                        modifiers: key_modifiers(modifiers, self.right_alt, self.right_ctrl),
+                        modifiers: key_modifiers(modifiers, sides.right_alt, sides.right_ctrl),
                         pressed,
                         repeat,
                         ..KeyEvent::down(key)
@@ -180,14 +167,6 @@ impl App {
                 }
                 _ => {}
             }
-        }
-    }
-
-    fn track_modifier(&mut self, key: egui::Key, pressed: bool) {
-        match key {
-            egui::Key::AltRight => self.right_alt = pressed,
-            egui::Key::ControlRight => self.right_ctrl = pressed,
-            _ => {}
         }
     }
 
@@ -217,7 +196,7 @@ impl App {
     ///
     /// A tracking application owns the mouse; Shift is the user's override and
     /// starts a selection instead.
-    fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2) {
+    fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2, sides: ModifierSides) {
         if cell.x <= 0.0 || cell.y <= 0.0 {
             return;
         }
@@ -282,7 +261,7 @@ impl App {
             let moved = self.last_mouse_cell != Some(cell_position);
             self.last_mouse_cell = Some(cell_position);
             let buttons = mouse_buttons(input.primary_down, input.middle_down, input.secondary_down);
-            let modifiers = key_modifiers(input.modifiers, self.right_alt, self.right_ctrl);
+            let modifiers = key_modifiers(input.modifiers, sides.right_alt, sides.right_ctrl);
 
             self.send_mouse_buttons(&input, cell_position, buttons, modifiers);
 
@@ -386,37 +365,18 @@ impl App {
         buffer.read().map(|buffer| buffer.scrollback_len() as i32).unwrap_or(0)
     }
 
-    /// Copies the selected cells, using the buffer's copy path.
-    fn copy_selection(&mut self) {
-        let text = {
-            let buffer = self.terminal.page_manager_mut().active_page().buffer();
-            let Ok(buffer) = buffer.read() else {
-                return;
-            };
-            let Some(selection) = self.view.selection() else {
-                return;
-            };
-            selection.text(&buffer)
-        };
-
-        if text.is_empty() {
-            return;
-        }
-        if let Some(clipboard) = self.clipboard.as_mut() {
-            let _ = clipboard.set_text(text);
-        }
+    /// Returns the selected cells, using the buffer's copy path.
+    fn selection_text(&mut self) -> Option<String> {
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().ok()?;
+        let selection = self.view.selection()?;
+        let text = selection.text(&buffer);
+        (!text.is_empty()).then_some(text)
     }
 
-    /// Pastes the platform clipboard as filtered text for the pty.
-    fn paste_clipboard(&mut self) {
-        let Some(clipboard) = self.clipboard.as_mut() else {
-            return;
-        };
-        let Ok(text) = clipboard.get_text() else {
-            return;
-        };
-
-        let bytes = self.terminal.paste(&text);
+    /// Pastes text as the terminal would, through the bracketed-paste filter.
+    fn paste_text(&mut self, text: &str) {
+        let bytes = self.terminal.paste(text);
         self.write(&bytes);
     }
 
@@ -429,7 +389,7 @@ impl App {
         }
     }
 
-    fn paint(&self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, screen: &grid::Screen) {
+    fn paint(&self, ui: &egui::Ui, area: egui::Rect, cell: egui::Vec2, screen: &grid::Screen, cursor_on: bool) {
         let painter = ui.painter().with_clip_rect(area);
         painter.rect_filled(area, 0, FALLBACK_BACKGROUND);
 
@@ -502,7 +462,7 @@ impl App {
             }
         }
 
-        if screen.cursor_visible && self.cursor_on {
+        if screen.cursor_visible && cursor_on {
             let column = screen.cursor.0.clamp(0, screen.width.max(1) - 1);
             let row = screen.cursor.1.clamp(0, screen.height.max(1) - 1);
             let origin = egui::pos2(area.min.x + column as f32 * cell.x, area.min.y + row as f32 * cell.y);
@@ -511,20 +471,144 @@ impl App {
     }
 }
 
+/// The window: a tab strip and the active tab.
+struct App {
+    tabs: Tabs<Tab>,
+    /// The sides egui collapses but the encoder distinguishes.
+    sides: ModifierSides,
+    clipboard: Option<arboard::Clipboard>,
+    blink: Blink,
+    /// Whether the cursor is drawn this frame.
+    cursor_on: bool,
+    /// The title last sent to the window.
+    window_title: Option<String>,
+}
+
+/// What the tab strip or a chord asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabAction {
+    Select(usize),
+    Close(usize),
+    CloseActive,
+    New,
+    Next,
+    Previous,
+    Copy,
+    Paste,
+}
+
+impl App {
+    fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let command = default_command();
+        let title = command_title(&command);
+
+        Ok(Self {
+            tabs: Tabs::new(Tab::new(ctx, command, title)?),
+            sides: ModifierSides::default(),
+            clipboard: arboard::Clipboard::new().ok(),
+            blink: Blink::new(Instant::now()),
+            cursor_on: true,
+            window_title: None,
+        })
+    }
+
+    /// Opens another shell in a new tab.
+    fn open_tab(&mut self, ctx: &egui::Context) {
+        let command = default_command();
+        let title = command_title(&command);
+        if let Ok(tab) = Tab::new(ctx, command, title) {
+            self.tabs.add(tab);
+        }
+    }
+
+    fn apply(&mut self, action: TabAction, ctx: &egui::Context) {
+        match action {
+            TabAction::Select(index) => {
+                self.tabs.select(index);
+            }
+            TabAction::Close(index) => self.close_tab(index, ctx),
+            TabAction::CloseActive => self.close_tab(self.tabs.index(), ctx),
+            TabAction::New => self.open_tab(ctx),
+            TabAction::Next => self.tabs.step(1),
+            TabAction::Previous => self.tabs.step(-1),
+            TabAction::Copy => {
+                if let Some(text) = self.tabs.active_mut().and_then(Tab::selection_text)
+                    && let Some(clipboard) = self.clipboard.as_mut()
+                {
+                    let _ = clipboard.set_text(text);
+                }
+            }
+            TabAction::Paste => {
+                if let Some(clipboard) = self.clipboard.as_mut()
+                    && let Ok(text) = clipboard.get_text()
+                    && let Some(tab) = self.tabs.active_mut()
+                {
+                    tab.paste_text(&text);
+                }
+            }
+        }
+    }
+
+    fn close_tab(&mut self, index: usize, ctx: &egui::Context) {
+        if !self.tabs.close(index) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// Draws the tab strip and returns what the user clicked.
+    fn tab_bar(&self, ui: &mut egui::Ui) -> Vec<TabAction> {
+        let mut actions = Vec::new();
+        let active = self.tabs.index();
+
+        egui::Panel::top("winterm-tabs").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for index in 0..self.tabs.len() {
+                    let Some(tab) = self.tabs.get(index) else {
+                        continue;
+                    };
+                    if ui.selectable_label(index == active, tab.display_title()).clicked() {
+                        actions.push(TabAction::Select(index));
+                    }
+                    if ui.small_button("×").clicked() {
+                        actions.push(TabAction::Close(index));
+                    }
+                }
+
+                if ui.button("+").clicked() {
+                    actions.push(TabAction::New);
+                }
+            });
+        });
+
+        actions
+    }
+}
+
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // The pump asks for a repaint when output arrives; there is no poll.
-        self.pump_output();
-
-        // OSC 0/2 titles belong to the window, not to the grid.
-        if let Some(title) = self.terminal.window_title()
-            && self.title.as_deref() != Some(title)
-        {
-            self.title = Some(title.to_string());
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_string()));
+        // Every tab keeps draining: an inactive shell must not block on a full
+        // pty buffer while its tab is in the background.
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.pump_output();
+            }
         }
 
-        if self.terminal.take_bell_requests() > 0 {
+        if let Some(tab) = self.tabs.active() {
+            let title = tab.display_title().to_string();
+            if self.window_title.as_deref() != Some(title.as_str()) {
+                self.window_title = Some(title.clone());
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+            }
+        }
+
+        let mut bells = 0;
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                bells += tab.take_bells();
+            }
+        }
+        if bells > 0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
             ));
@@ -532,31 +616,55 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let focused = ui.ctx().input(|input| input.focused);
+        let ctx = ui.ctx().clone();
+
+        for action in self.tab_bar(ui) {
+            self.apply(action, &ctx);
+        }
+
+        // Tab chords belong to the window; everything else goes to the shell.
+        let events = ctx.input(|input| input.events.clone());
+        let mut forwarded = Vec::with_capacity(events.len());
+        for event in events {
+            if let Some(action) = command_for(&event) {
+                self.apply(action, &ctx);
+            } else {
+                forwarded.push(event);
+            }
+        }
+
+        if self.tabs.is_empty() {
+            return;
+        }
+
+        let focused = ctx.input(|input| input.focused);
         let font = egui::FontId::monospace(FONT_SIZE);
-        let cell = ui
-            .ctx()
-            .fonts_mut(|fonts| egui::vec2(fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
+        let cell = ctx.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
 
         let area = ui.available_rect_before_wrap();
         let columns = ((area.width() / cell.x).floor() as i32).max(1);
         let rows = ((area.height() / cell.y).floor() as i32).max(1);
-        if (columns, rows) != self.size {
-            self.resize(columns, rows);
+
+        let sides = self.sides;
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if (columns, rows) != tab.size {
+            tab.resize(columns, rows);
         }
 
-        self.handle_pointer(ui.ctx(), area, cell);
-        self.handle_input(ui.ctx());
+        tab.handle_pointer(&ctx, area, cell, sides);
+        tab.handle_events(forwarded, &mut self.sides);
 
-        let screen = self.snapshot();
+        let screen = tab.snapshot();
         let now = Instant::now();
         self.cursor_on = self.blink.update(screen.cursor_blinking, focused, now);
         if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
-            ui.ctx().request_repaint_after(delay);
+            ctx.request_repaint_after(delay);
         }
-        self.paint(ui, area, cell, &screen);
+        tab.paint(ui, area, cell, &screen, self.cursor_on);
 
-        if self.exited {
+        if tab.exited {
             ui.painter().text(
                 area.left_bottom() + egui::vec2(4.0, -4.0),
                 egui::Align2::LEFT_BOTTOM,
@@ -566,6 +674,57 @@ impl eframe::App for App {
             );
         }
     }
+}
+
+/// The modifier sides egui collapses but the encoder distinguishes.
+#[derive(Debug, Clone, Copy, Default)]
+struct ModifierSides {
+    right_alt: bool,
+    right_ctrl: bool,
+}
+
+/// Records which side of a modifier key an event touched.
+fn track_modifier(sides: &mut ModifierSides, key: egui::Key, pressed: bool) {
+    match key {
+        egui::Key::AltRight => sides.right_alt = pressed,
+        egui::Key::ControlRight => sides.right_ctrl = pressed,
+        _ => {}
+    }
+}
+
+/// The window command a key event carries, if any.
+///
+/// These chords never reach the shell: the window consumes them before the tab
+/// sees the event.
+fn command_for(event: &egui::Event) -> Option<TabAction> {
+    let egui::Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+
+    match (*key, modifiers.ctrl, modifiers.shift) {
+        (egui::Key::T, true, true) => Some(TabAction::New),
+        (egui::Key::W, true, true) => Some(TabAction::CloseActive),
+        (egui::Key::Tab, true, false) => Some(TabAction::Next),
+        (egui::Key::Tab, true, true) => Some(TabAction::Previous),
+        (egui::Key::C, true, true) => Some(TabAction::Copy),
+        (egui::Key::V, true, true) => Some(TabAction::Paste),
+        _ => None,
+    }
+}
+
+/// The name a tab shows until its shell sets a title.
+fn command_title(command: &PtyCommand) -> String {
+    Path::new(command.program())
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("shell")
+        .to_string()
 }
 
 /// The pointer state one frame needs.
@@ -886,6 +1045,43 @@ mod tests {
             resolve(TextColor::new(), &table, ColorAlias::DefaultBackground),
             Some(egui::Color32::from_rgb(0x0C, 0x0C, 0x0C))
         );
+    }
+
+    #[test]
+    fn a_command_title_is_the_program_stem() {
+        assert_eq!(command_title(&PtyCommand::new("cmd.exe")), "cmd");
+        assert_eq!(command_title(&PtyCommand::new("/bin/sh")), "sh");
+        assert_eq!(command_title(&PtyCommand::new("")), "shell");
+    }
+
+    #[test]
+    fn tab_chords_are_the_windows_and_not_the_shells() {
+        let key = |key, ctrl, shift| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl,
+                shift,
+                ..egui::Modifiers::default()
+            },
+        };
+
+        assert_eq!(command_for(&key(egui::Key::T, true, true)), Some(TabAction::New));
+        assert_eq!(
+            command_for(&key(egui::Key::W, true, true)),
+            Some(TabAction::CloseActive)
+        );
+        assert_eq!(command_for(&key(egui::Key::Tab, true, false)), Some(TabAction::Next));
+        assert_eq!(command_for(&key(egui::Key::Tab, true, true)), Some(TabAction::Previous));
+        assert_eq!(command_for(&key(egui::Key::C, true, true)), Some(TabAction::Copy));
+        assert_eq!(command_for(&key(egui::Key::V, true, true)), Some(TabAction::Paste));
+
+        // Without both modifiers, the key belongs to the shell.
+        assert_eq!(command_for(&key(egui::Key::T, true, false)), None);
+        assert_eq!(command_for(&key(egui::Key::Tab, false, false)), None);
+        assert_eq!(command_for(&egui::Event::Text("t".into())), None);
     }
 
     #[test]
