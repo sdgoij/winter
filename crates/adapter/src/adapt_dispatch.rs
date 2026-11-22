@@ -11,6 +11,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::dispatch_types::*;
+use crate::kitty_graphics::KittyGraphics;
 use crate::sixel_parser::{DecodedImage, SIXEL_DEFAULT_CONFORMANCE};
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
@@ -215,6 +216,8 @@ pub struct AdaptDispatch {
     pending_notifications: Vec<(String, String)>,
     /// Unrecognised terminal-specific actions reported to the host.
     unknown_sequences: usize,
+    /// The kitty graphics protocol's images and chunk state (ADR 054).
+    kitty: KittyGraphics,
 }
 
 /// A MIDI note requested by DECPS.
@@ -423,6 +426,7 @@ impl AdaptDispatch {
             pending_missing_command: None,
             pending_notifications: Vec::new(),
             unknown_sequences: 0,
+            kitty: KittyGraphics::new(),
         }
     }
 
@@ -2861,6 +2865,19 @@ impl ITermDispatch for AdaptDispatch {
             StatusType::MemoryChecksum => unreachable!(),
         };
         self.push_csi(&body);
+    }
+
+    /// Handles an APC string.
+    ///
+    /// The one protocol this port carries over APC is the kitty graphics
+    /// protocol, whose control data begins with `G` (ADR 054).
+    fn apc(&mut self, apc: &[u8]) {
+        if apc.first() != Some(&b'G') {
+            return;
+        }
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|error| error.into_inner());
+        self.kitty.apply(apc, &mut buffer);
     }
 
     fn define_sixel_image(
@@ -5343,6 +5360,48 @@ mod tests {
         // The cursor visibility is restored once the image is painted.
         assert_eq!(buffer.cursor().is_visible(), initial_visibility);
         assert_eq!(buffer.cursor().position(), (0, 0));
+    }
+
+    // A kitty graphics payload arrives over APC, in chunks, and paints into the
+    // same row bands sixel uses (ADR 005, ADR 054).
+    #[test]
+    fn a_chunked_kitty_image_paints_and_deletes() {
+        let mut dispatch = AdaptDispatch::new();
+        let raw = [255u8, 0, 0, 255, 0, 0, 255, 255];
+        let payload = vt::encode(&raw);
+
+        // Two cells wide, one cell high; split the base64 at a quantum so the
+        // second chunk is the game's continuation shape (`m` only).
+        dispatch.apc(format!("Ga=T,f=32,s=2,v=1,c=2,r=1,i=7,m=1;{}", &payload[..4]).as_bytes());
+        dispatch.apc(format!("Gm=0;{}", &payload[4..]).as_bytes());
+
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let buffer = buffer.read().unwrap();
+            let image = buffer
+                .get_row_at_screen_line(0)
+                .expect("the live screen")
+                .image_slice()
+                .expect("the image lands in the first row's band");
+
+            assert_eq!(image.cell_size(), (10, 20));
+            assert_eq!(image.column_begin(), 0);
+            assert_eq!(image.column_end(), 2);
+
+            let pixels = image.pixels();
+            assert_eq!(pixels[0], 0xFFFF_0000, "the first cell is red");
+            assert_eq!(pixels[9], 0xFFFF_0000, "red fills the first cell");
+            assert_eq!(pixels[10], 0xFF00_00FF, "the second cell is blue");
+            assert_eq!(pixels[19], 0xFF00_00FF, "blue fills the second cell");
+        }
+
+        dispatch.apc(b"Ga=d,d=I,i=7");
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert!(
+            buffer.get_row_at_screen_line(0).unwrap().image_slice().is_none(),
+            "the delete clears the band"
+        );
     }
 
     // OSC 4 takes a COLORREF (0x00BBGGRR) and reports the 16-bit xterm form.

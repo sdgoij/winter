@@ -11,7 +11,9 @@ description = "Terminal adapter — VT dispatch, page management, and protocol h
 utils.workspace = true
 types.workspace = true
 buffer.workspace = true
+vt.workspace = true
 bitflags.workspace = true
+miniz_oxide.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

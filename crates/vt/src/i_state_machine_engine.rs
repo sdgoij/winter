@@ -32,7 +32,20 @@ pub trait IStateMachineEngine {
     const IS_INPUT: bool = false;
 
     /// Called when a SOS/PM/APC string begins.
+    ///
+    /// SOS and PM strings are ignored, as upstream ignores them. An APC
+    /// string is delivered through [`Self::action_apc`] instead, because a
+    /// protocol can ride it: the kitty graphics protocol does.
     fn unknown_sequence(&mut self) {}
+
+    /// Called when an APC string (`ESC _`) begins.
+    fn action_apc_start(&mut self) {}
+
+    /// One byte of an APC string, before its `ST`.
+    fn action_apc(&mut self, _ch: u8) {}
+
+    /// Called when the APC string's `ST` arrives.
+    fn action_apc_end(&mut self) {}
 
     /// Whether a win32-input-mode sequence has been seen.
     ///

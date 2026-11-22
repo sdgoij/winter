@@ -19,6 +19,7 @@ pub mod adapt_dispatch;
 pub mod adapt_dispatch_graphics;
 pub mod font_buffer;
 pub mod interact_dispatch;
+mod kitty_graphics;
 pub mod macro_buffer;
 pub mod page_manager;
 pub mod sixel_parser;

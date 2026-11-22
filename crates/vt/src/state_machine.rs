@@ -129,7 +129,11 @@ impl<E: IStateMachineEngine> StateMachine<E> {
             } else {
                 self.dispatch(ch);
             }
-        } else if ch == ascii::ESC && self.state != VtState::OscString && self.state != VtState::OscParam {
+        } else if ch == ascii::ESC
+            && self.state != VtState::OscString
+            && self.state != VtState::OscParam
+            && self.state != VtState::ApcString
+        {
             self.action_interrupt();
             self.enter_escape();
         } else {
@@ -159,6 +163,8 @@ impl<E: IStateMachineEngine> StateMachine<E> {
             VtState::DcsParam => self.event_dcs_param(ch),
             VtState::DcsPassThrough => self.event_dcs_pass_through(ch),
             VtState::SosPmApcString => {}
+            VtState::ApcString => self.event_apc_string(ch),
+            VtState::ApcTermination => self.event_apc_termination(ch),
         }
     }
 
@@ -401,6 +407,15 @@ impl<E: IStateMachineEngine> StateMachine<E> {
         self.engine.unknown_sequence();
     }
 
+    fn enter_apc_string(&mut self) {
+        self.state = VtState::ApcString;
+        self.engine.action_apc_start();
+    }
+
+    fn enter_apc_termination(&mut self) {
+        self.state = VtState::ApcTermination;
+    }
+
     // ── Events ──────────────────────────────────────────────────────
 
     fn event_ground(&mut self, ch: u8) {
@@ -435,7 +450,8 @@ impl<E: IStateMachineEngine> StateMachine<E> {
                 b']' => self.enter_osc_param(),
                 b'O' if E::IS_INPUT => self.enter_ss3_entry(),
                 b'P' => self.enter_dcs_entry(),
-                b'X' | b'^' | b'_' => self.enter_sos_pm_apc_string(),
+                b'X' | b'^' => self.enter_sos_pm_apc_string(),
+                b'_' => self.enter_apc_string(),
                 _ => {
                     self.action_esc_dispatch(ch);
                     self.enter_ground();
@@ -589,6 +605,31 @@ impl<E: IStateMachineEngine> StateMachine<E> {
             self.action_osc_dispatch();
             self.enter_ground();
         } else {
+            self.enter_escape();
+            self.event_escape(ch);
+        }
+    }
+
+    fn event_apc_string(&mut self, ch: u8) {
+        if ch == ascii::ESC {
+            self.enter_apc_termination();
+        } else if ch == ascii::BEL {
+            // APC has no BEL terminator; accepting one costs nothing and
+            // keeps a stray control byte from being parsed as content.
+            self.engine.action_apc_end();
+            self.enter_ground();
+        } else {
+            self.engine.action_apc(ch);
+        }
+    }
+
+    fn event_apc_termination(&mut self, ch: u8) {
+        if ch == b'\\' {
+            self.engine.action_apc_end();
+            self.enter_ground();
+        } else {
+            // The string was abandoned; the ESC starts a fresh sequence.
+            self.engine.action_apc_end();
             self.enter_escape();
             self.event_escape(ch);
         }
@@ -765,11 +806,20 @@ mod tests {
         dcs_data: Arc<Mutex<Vec<u8>>>,
         accept_dcs: bool,
         unknown: usize,
+        apc: Vec<u8>,
     }
 
     impl IStateMachineEngine for Recorder {
         fn unknown_sequence(&mut self) {
             self.unknown += 1;
+        }
+
+        fn action_apc_start(&mut self) {
+            self.apc.clear();
+        }
+
+        fn action_apc(&mut self, ch: u8) {
+            self.apc.push(ch);
         }
 
         fn action_execute(&mut self, ch: u8) -> bool {
@@ -1031,6 +1081,17 @@ mod tests {
         let mut machine = machine();
         machine.process_string(b"\x1bXignored\x1b\\");
         assert_eq!(machine.engine().unknown, 1);
+        assert!(machine.engine().printed.is_empty());
+        assert_eq!(machine.state(), VtState::Ground);
+    }
+
+    #[test]
+    fn apc_strings_reach_the_engine() {
+        let mut machine = machine();
+        machine.process_string(b"\x1b_Ga=T,p=1;QUJD\x1b\\");
+
+        assert_eq!(machine.engine().apc, b"Ga=T,p=1;QUJD".to_vec());
+        assert_eq!(machine.engine().unknown, 0, "an APC is not an unknown string");
         assert!(machine.engine().printed.is_empty());
         assert_eq!(machine.state(), VtState::Ground);
     }

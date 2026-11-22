@@ -26,12 +26,16 @@ const COLOR_INQUIRY: u32 = 0xfeff_ffff;
 const INVALID_COLOR: u32 = 0xffff_ffff;
 /// Upstream's cap on the URI taken from OSC 8.
 const MAX_URL_LENGTH: usize = 2083;
+/// A cap on an APC string, so a malformed graphic cannot grow without bound.
+const MAX_APC_LENGTH: usize = 32 * 1024 * 1024;
 
 /// The engine that maps parsed sequences onto an `ITermDispatch`.
 pub struct OutputStateMachineEngine<D: ITermDispatch> {
     dispatch: D,
     last_printed_char: char,
     decoder: Utf8Decoder,
+    /// The APC string being collected, if one is in flight.
+    apc: Vec<u8>,
 }
 
 impl<D: ITermDispatch> OutputStateMachineEngine<D> {
@@ -41,6 +45,7 @@ impl<D: ITermDispatch> OutputStateMachineEngine<D> {
             dispatch,
             last_printed_char: '\0',
             decoder: Utf8Decoder::new(),
+            apc: Vec::new(),
         }
     }
 
@@ -85,6 +90,27 @@ impl<D: ITermDispatch> IStateMachineEngine for OutputStateMachineEngine<D> {
         self.flush_decoder();
         self.dispatch.unknown_sequence();
         self.clear_last_char();
+    }
+
+    fn action_apc_start(&mut self) {
+        // An APC interrupts any character that was mid-decode, as a DCS does.
+        self.flush_decoder();
+        self.apc.clear();
+        self.clear_last_char();
+    }
+
+    fn action_apc(&mut self, ch: u8) {
+        if self.apc.len() < MAX_APC_LENGTH {
+            self.apc.push(ch);
+        }
+    }
+
+    fn action_apc_end(&mut self) {
+        if self.apc.is_empty() {
+            return;
+        }
+        let apc = std::mem::take(&mut self.apc);
+        self.dispatch.apc(&apc);
     }
 
     fn action_execute(&mut self, ch: u8) -> bool {
@@ -1140,6 +1166,28 @@ mod tests {
             .image_slice()
             .expect("the decoded image lands in the first row's band");
         assert_eq!(image.pixels()[0], 0xFF00_FF00);
+        assert_eq!(image.cell_size(), (10, 20));
+    }
+
+    #[test]
+    fn a_kitty_image_flows_from_the_parser_to_the_buffer() {
+        let mut machine = StateMachine::new(OutputStateMachineEngine::new(AdaptDispatch::new()));
+        let payload = vt::encode(&[255u8, 0, 0, 255]);
+        machine.process_string(format!("\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=1;{payload}\x1b\\").as_bytes());
+
+        let buffer = machine
+            .engine_mut()
+            .dispatch_mut()
+            .page_manager_mut()
+            .active_page()
+            .buffer();
+        let buffer = buffer.read().unwrap();
+        let image = buffer
+            .get_row_at_screen_line(0)
+            .unwrap()
+            .image_slice()
+            .expect("the decoded image lands in the first row's band");
+        assert_eq!(image.pixels()[0], 0xFFFF_0000);
         assert_eq!(image.cell_size(), (10, 20));
     }
 

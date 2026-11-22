@@ -47,6 +47,11 @@ pub enum VtState {
     DcsPassThrough,
     /// SOS/PM/APC string — ignored until the string terminator.
     SosPmApcString,
+    /// APC string — its bytes are delivered to the engine (the kitty
+    /// graphics protocol rides here), until ST.
+    ApcString,
+    /// APC termination — saw ESC, awaiting the `\` of ST.
+    ApcTermination,
 }
 
 impl VtState {
@@ -73,6 +78,8 @@ impl VtState {
             VtState::DcsParam => "DcsParam",
             VtState::DcsPassThrough => "DcsPassThrough",
             VtState::SosPmApcString => "SosPmApcString",
+            VtState::ApcString => "ApcString",
+            VtState::ApcTermination => "ApcTermination",
         }
     }
 }

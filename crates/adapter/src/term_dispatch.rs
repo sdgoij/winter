@@ -37,6 +37,14 @@ pub trait ITermDispatch: std::fmt::Debug {
         self.unhandled("print_string");
     }
 
+    /// An APC string, with its introducer stripped.
+    ///
+    /// APC carries no VT state of its own; a protocol that rides it reads the
+    /// bytes here. The kitty graphics protocol is one (ADR 054).
+    fn apc(&mut self, _apc: &[u8]) {
+        self.unhandled("apc");
+    }
+
     // ─── Cursor Movement ────────────────────────────────────────────
 
     /// CUU — Cursor Up.

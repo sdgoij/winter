@@ -201,7 +201,7 @@ Do not add call sites under an allowance.
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
 | `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, marks, search, images |
 | `crates/vt` | The DFA parser and its dispatch actions |
-| `crates/adapter` | `ITermDispatch`, page management, sixel, macros, charsets |
+| `crates/adapter` | `ITermDispatch`, page management, sixel and kitty graphics, macros, charsets |
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
 | `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
