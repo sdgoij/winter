@@ -919,13 +919,17 @@ porting skill requires.
     the exclusive end, the saved cursor, the line-versus-block predicate, and
     `ShouldAllowMouseDragSelection`; plus `InitializeMarkSelection`,
     `InitializeMouseSelection`, `CheckAndSetAlternateSelection`,
-    `AdjustSelection`, `ExtendSelection` and `ClearSelection`.
+    `AdjustSelection`, `ExtendSelection`, `ClearSelection`, `SelectNewRegion`
+    and `SelectAll` (whose input-line half takes the no-input-line path, so
+    "all" ends at the saved cursor or the cursor).
   - [x] **Tests:** mark and mouse start, the one-cell rectangle, the Alt flip,
     extending with clamping, adjust stopping the drag, cursor save and restore,
-    both clear paths, and the no-op clear
+    both clear paths, the no-op clear, replacing a selection through
+    `SelectNewRegion`, select-all in line and block form, its saved-cursor end,
+    and the restored viewport origin
   - Not ported: painting and the accessibility notifications (renderer and
-    window), the clipboard write and `SelectAll` (they need the cooked read's
-    line and the buffer's rectangle read), and colour selection
+    window), the clipboard write and `GetSelectionSpans` (they need the
+    buffer's rectangle-to-text read), and colour selection
 - [x] `winterm/crates/host/src/selection_input.rs` — Selection input
   - [x] Ported from `selectionInput.cpp`: `HandleKeySelectionEvent` (Escape,
     Enter and Ctrl+C/Ctrl+Insert copy, mark-mode navigation, mouse-selection

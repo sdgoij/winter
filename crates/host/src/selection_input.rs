@@ -526,7 +526,7 @@ pub fn is_within_boundaries(view: Viewport, position: Point, start: Point, end: 
 /// Upstream asks the read's pager where it placed the edit line. The pager
 /// belongs to the server layer and is not ported, so there is no pair to
 /// report and every caller takes upstream's "no input line" path.
-fn input_line_boundaries(_console: &ConsoleInformation) -> Option<(Point, Point)> {
+pub(crate) fn input_line_boundaries(_console: &ConsoleInformation) -> Option<(Point, Point)> {
     None
 }
 
