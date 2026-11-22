@@ -5,6 +5,7 @@
 //! reading, and manipulating cell data.
 
 use crate::TextAttribute;
+use crate::image_slice::ImageSlice;
 use crate::output_cell::OutputCell;
 
 /// A row of terminal cells with width and modification tracking.
@@ -28,6 +29,8 @@ pub struct Row {
     scrollbar_data: ScrollbarData,
     /// Whether the row has line rendition (scrollback buffer flag).
     has_line_rendition: bool,
+    /// The image band covering this row, if any (ADR 005).
+    image: Option<ImageSlice>,
 }
 
 /// Data for scrollbar positioning within a row.
@@ -61,6 +64,7 @@ impl Row {
             trailing_width: 0,
             scrollbar_data: ScrollbarData::default(),
             has_line_rendition: false,
+            image: None,
         }
     }
 
@@ -82,6 +86,73 @@ impl Row {
             trailing_width: 0,
             scrollbar_data: ScrollbarData::default(),
             has_line_rendition: false,
+            image: None,
+        }
+    }
+
+    /// Returns the image band covering this row, if any.
+    pub const fn image_slice(&self) -> Option<&ImageSlice> {
+        self.image.as_ref()
+    }
+
+    /// Returns the image band mutably, if any.
+    pub fn image_slice_mut(&mut self) -> Option<&mut ImageSlice> {
+        self.image.as_mut()
+    }
+
+    /// Replaces the row's image band; `None` clears it.
+    pub fn set_image_slice(&mut self, image: Option<ImageSlice>) {
+        self.image = image;
+    }
+
+    /// Copies the whole band from `source`, as `ImageSlice::CopyRow` does.
+    pub fn copy_image_from(&mut self, source: &Row) {
+        self.image = source.image.clone();
+    }
+
+    /// Erases the pixels under `column_begin..column_end` and drops the band
+    /// once it is empty.
+    pub fn erase_image_cells(&mut self, column_begin: i32, column_end: i32) {
+        if let Some(image) = &mut self.image
+            && image.erase_cells(column_begin, column_end)
+        {
+            self.image = None;
+        }
+    }
+
+    /// Ported from `ImageSlice::CopyCells`: copies the pixels for a column range
+    /// from `source`, erasing the range first, and drops an empty result.
+    pub fn copy_image_cells_from(&mut self, source: &Row, source_column: i32, dest_begin: i32, dest_end: i32) {
+        self.copy_image_cells_from_slice(source.image.as_ref(), source_column, dest_begin, dest_end);
+    }
+
+    /// The same copy, for callers holding a band rather than a whole row
+    /// (DECCRA snapshots the source before writing).
+    pub fn copy_image_cells_from_slice(
+        &mut self,
+        source_image: Option<&ImageSlice>,
+        source_column: i32,
+        dest_begin: i32,
+        dest_end: i32,
+    ) {
+        self.erase_image_cells(dest_begin, dest_end);
+        let Some(source_image) = source_image else {
+            return;
+        };
+
+        let length = dest_end - dest_begin;
+        let used_begin = source_column.max(source_image.column_begin());
+        let used_end = (source_column + length).min(source_image.column_end());
+        if used_begin >= used_end {
+            return;
+        }
+
+        let image = self
+            .image
+            .get_or_insert_with(|| ImageSlice::new(source_image.cell_size()));
+        let offset = dest_begin - source_column;
+        if image.copy_cells_from(source_image, used_begin, used_begin + offset, used_end + offset) {
+            self.image = None;
         }
     }
 
@@ -122,6 +193,17 @@ impl Row {
     pub fn write_cell(&mut self, column: i32, cell: OutputCell) {
         let idx = self.validate_column(column);
         self.cells[idx] = cell;
+        self.erase_image_cells(column, column + 1);
+        self.update_contains_text();
+    }
+
+    /// Writes a cell without touching the image band.
+    ///
+    /// Horizontal scrolling moves text only; upstream's `ScrollRectHorizontally`
+    /// leaves image content where it is.
+    pub(crate) fn write_cell_raw(&mut self, column: i32, cell: OutputCell) {
+        let idx = self.validate_column(column);
+        self.cells[idx] = cell;
         self.update_contains_text();
     }
 
@@ -151,6 +233,7 @@ impl Row {
         } else {
             let idx = self.validate_column(column);
             self.cells[idx] = cell;
+            self.erase_image_cells(column, column + 1);
             self.update_contains_text();
         }
     }
@@ -164,7 +247,7 @@ impl Row {
 
         for i in 0..actual_count {
             let src_cell = source.get_cell(src_col + i as i32);
-            self.write_cell(dest_col + i as i32, src_cell.clone());
+            self.write_cell_raw(dest_col + i as i32, src_cell.clone());
         }
 
         self.update_contains_text();
@@ -184,6 +267,7 @@ impl Row {
     pub fn clear_cell(&mut self, column: i32) {
         let idx = self.validate_column(column);
         self.cells[idx] = OutputCell::new();
+        self.erase_image_cells(column, column + 1);
         self.update_contains_text();
     }
 
@@ -195,6 +279,7 @@ impl Row {
         for i in start..end {
             self.cells[i] = OutputCell::new();
         }
+        self.erase_image_cells(start_col, end_col);
         self.update_contains_text();
     }
 
@@ -210,9 +295,12 @@ impl Row {
     pub fn replace_characters(&mut self, start_column: i32, replacement: &str) {
         let start = self.validate_column(start_column);
         let end = (self.width.max(0) as usize).min(self.cells.len());
+        let mut written = 0;
         for (offset, c) in replacement.chars().take(end.saturating_sub(start)).enumerate() {
             self.cells[start + offset] = OutputCell::from_char(c);
+            written += 1;
         }
+        self.erase_image_cells(start_column, start_column + written);
         self.update_contains_text();
     }
 
@@ -361,18 +449,24 @@ impl Row {
 
     fn write_cells_replace(&mut self, start_column: i32, cells: &[OutputCell]) {
         let start = self.validate_column(start_column);
+        let mut written = 0;
         for (i, cell) in cells.iter().enumerate() {
             let idx = start + i;
             if idx < self.cells.len() {
                 self.cells[idx] = cell.clone();
+                written += 1;
             } else {
                 break;
             }
         }
+        self.erase_image_cells(start_column, start_column + written);
     }
 
     fn write_cells_insert(&mut self, start_column: i32, cells: &[OutputCell]) {
         let start = self.validate_column(start_column);
+        if let Some(image) = &mut self.image {
+            image.shift_right_cells(start_column, cells.len() as i32);
+        }
         self.shift_right(start, cells.len());
         for (offset, cell) in cells.iter().enumerate() {
             let idx = start + offset;
@@ -380,6 +474,7 @@ impl Row {
                 self.cells[idx] = cell.clone();
             }
         }
+        self.erase_image_cells(start_column, start_column + cells.len() as i32);
     }
 
     /// Moves `cells[start..]` right by `count`, dropping what falls off the end.
@@ -400,8 +495,12 @@ impl Row {
 
     fn write_char_insert(&mut self, column: i32, cell: OutputCell) {
         let start = self.validate_column(column);
+        if let Some(image) = &mut self.image {
+            image.shift_right_cells(column, 1);
+        }
         self.shift_right(start, 1);
         self.cells[start] = cell;
+        self.erase_image_cells(column, column + 1);
     }
 }
 
@@ -514,6 +613,57 @@ mod tests {
         row.force_wrap(1);
         assert!(row.is_wrap());
         assert_eq!(row.get_trailing_width(), 1);
+    }
+
+    fn image_band(columns: i32) -> ImageSlice {
+        let mut image = ImageSlice::new((1, 1));
+        let pixels = image.mutable_pixels(0, columns);
+        for (index, pixel) in pixels.iter_mut().enumerate() {
+            *pixel = index as u32 + 1;
+        }
+        image
+    }
+
+    #[test]
+    fn writing_a_cell_erases_the_image_under_it() {
+        let mut row = Row::new(4);
+        row.set_image_slice(Some(image_band(4)));
+
+        row.write_char(1, 'x', false);
+
+        assert_eq!(row.image_slice().unwrap().pixels(), &[1, 0, 3, 4]);
+    }
+
+    #[test]
+    fn clearing_a_range_erases_its_image_pixels() {
+        let mut row = Row::new(4);
+        row.set_image_slice(Some(image_band(4)));
+
+        row.clear_range(0, 3);
+
+        assert_eq!(row.image_slice().unwrap().pixels(), &[0, 0, 0, 4]);
+    }
+
+    #[test]
+    fn copying_a_row_copies_the_image_band() {
+        let mut source = Row::new(4);
+        source.set_image_slice(Some(image_band(4)));
+        let mut destination = Row::new(4);
+
+        destination.copy_image_from(&source);
+
+        assert_eq!(destination.image_slice().unwrap().pixels(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn insert_mode_shifts_the_image_band() {
+        let mut row = Row::new(4);
+        row.set_image_slice(Some(image_band(4)));
+
+        row.write_char(1, 'x', true);
+
+        // The band grows by one column, and the pixels to the right move over.
+        assert_eq!(row.image_slice().unwrap().pixels(), &[1, 0, 2, 3, 4]);
     }
 
     #[test]

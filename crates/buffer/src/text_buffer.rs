@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::TextAttribute;
 use crate::cursor::Cursor;
 use crate::hyperlinks::HyperlinkMap;
+use crate::image_slice::ImageSlice;
 use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
@@ -46,6 +47,8 @@ pub struct LogicalLine {
     cells: Vec<OutputCell>,
     /// The index into `cells` the cursor sits on, if this is the cursor's line.
     cursor_offset: Option<usize>,
+    /// The image band of the line's first row, if any.
+    image: Option<ImageSlice>,
 }
 
 impl LogicalLine {
@@ -57,6 +60,11 @@ impl LogicalLine {
     /// Returns the cell offset of the cursor, when the cursor is on this line.
     pub fn cursor_offset(&self) -> Option<usize> {
         self.cursor_offset
+    }
+
+    /// Returns the image band of the line's first row, if any.
+    pub const fn image(&self) -> Option<&ImageSlice> {
+        self.image.as_ref()
     }
 
     /// Returns whether the line holds nothing but blanks with default attributes.
@@ -412,6 +420,7 @@ impl TextBuffer {
         let mut lines = Vec::new();
         let mut cells: Vec<OutputCell> = Vec::new();
         let mut cursor_offset: Option<usize> = None;
+        let mut line_image: Option<ImageSlice> = None;
 
         for (index, row) in self.document_rows().enumerate() {
             let is_cursor_row = index as i32 == cursor_row;
@@ -421,6 +430,12 @@ impl TextBuffer {
                 // content so the cursor keeps its distance from the text before
                 // it, even when it sits in trailing whitespace.
                 limit = limit.max(cursor_column + 1).min(row.width());
+            }
+
+            if cells.is_empty() {
+                // The first row of a line owns the image band (ADR 005);
+                // upstream's reflow copies exactly that band.
+                line_image = row.image_slice().cloned();
             }
 
             let start = cells.len();
@@ -435,12 +450,17 @@ impl TextBuffer {
                 lines.push(LogicalLine {
                     cells: std::mem::take(&mut cells),
                     cursor_offset: cursor_offset.take(),
+                    image: line_image.take(),
                 });
             }
         }
 
         if !cells.is_empty() || cursor_offset.is_some() {
-            lines.push(LogicalLine { cells, cursor_offset });
+            lines.push(LogicalLine {
+                cells,
+                cursor_offset,
+                image: line_image,
+            });
         }
 
         lines
@@ -484,10 +504,11 @@ impl TextBuffer {
     /// Fills a rectangular area with a cell.
     pub fn fill_rect(&mut self, start_row: i32, start_col: i32, end_row: i32, end_col: i32, cell: &OutputCell) {
         for r in start_row..=end_row {
-            for c in start_col..=end_col {
-                if let Some(buffer_row) = self.get_buffer_row_mut_at_screen(r, c) {
-                    buffer_row.row.write_cell(c, cell.clone());
+            if let Some(buffer_row) = self.get_buffer_row_mut_at_screen(r, start_col) {
+                for c in start_col..=end_col {
+                    buffer_row.row.write_cell_raw(c, cell.clone());
                 }
+                buffer_row.row.erase_image_cells(start_col, end_col + 1);
             }
         }
         self.mutation_id += 1;
@@ -629,7 +650,7 @@ impl TextBuffer {
                 continue;
             };
             destination.copy_text_from(left, &source, left + 1, right - left);
-            destination.write_cell(right, OutputCell::from_char(' '));
+            destination.write_cell_raw(right, OutputCell::from_char(' '));
         }
         self.mutation_id += 1;
     }
@@ -648,7 +669,7 @@ impl TextBuffer {
                 continue;
             };
             destination.copy_text_from(left + 1, &source, left, right - left);
-            destination.write_cell(left, OutputCell::from_char(' '));
+            destination.write_cell_raw(left, OutputCell::from_char(' '));
         }
         self.mutation_id += 1;
     }
@@ -681,6 +702,7 @@ impl TextBuffer {
             && let Some(dest_row) = self.get_buffer_row_mut_at_screen(dest_screen_line, 0)
         {
             dest_row.row.copy_from(&source_row);
+            dest_row.row.copy_image_from(&source_row);
         }
         self.mutation_id += 1;
     }
@@ -852,10 +874,16 @@ fn rewrap_lines(lines: &[LogicalLine], width: i32) -> (Vec<Row>, Option<(i32, i3
     let mut cursor = None;
 
     for line in lines {
+        let mut first_row = true;
         let mut cells: Vec<OutputCell> = Vec::with_capacity(width_usize);
         for (offset, cell) in line.cells.iter().enumerate() {
             if cells.len() == width_usize {
-                rows.push(Row::from_cells(width, std::mem::take(&mut cells), true));
+                let mut row = Row::from_cells(width, std::mem::take(&mut cells), true);
+                if first_row {
+                    row.set_image_slice(line.image.clone());
+                    first_row = false;
+                }
+                rows.push(row);
             }
             if line.cursor_offset == Some(offset) {
                 cursor = Some((rows.len() as i32, cells.len() as i32));
@@ -865,7 +893,11 @@ fn rewrap_lines(lines: &[LogicalLine], width: i32) -> (Vec<Row>, Option<(i32, i3
         if line.cursor_offset == Some(line.cells.len()) {
             cursor = Some((rows.len() as i32, cells.len() as i32));
         }
-        rows.push(Row::from_cells(width, cells, false));
+        let mut row = Row::from_cells(width, cells, false);
+        if first_row {
+            row.set_image_slice(line.image.clone());
+        }
+        rows.push(row);
     }
 
     (rows, cursor)
@@ -1337,6 +1369,80 @@ mod tests {
                 ("      ", false),
             ],
         );
+    }
+
+    #[test]
+    fn copy_row_moves_the_image_band() {
+        let mut buffer = TextBuffer::with_dimensions(4, 3, 0);
+        {
+            let row = buffer.get_row_at_screen_line_mut(0).unwrap();
+            row.set_image_slice(Some(test_image_band(4)));
+        }
+
+        buffer.copy_row(2, 0);
+
+        let image = buffer.get_row_at_screen_line(2).unwrap().image_slice().unwrap();
+        assert_eq!(image.pixels(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn filling_a_rectangle_erases_the_band() {
+        let mut buffer = TextBuffer::with_dimensions(4, 3, 0);
+        {
+            let row = buffer.get_row_at_screen_line_mut(0).unwrap();
+            row.set_image_slice(Some(test_image_band(4)));
+        }
+
+        buffer.fill_rect(0, 1, 0, 2, &OutputCell::from_char(' '));
+
+        let image = buffer.get_row_at_screen_line(0).unwrap().image_slice().unwrap();
+        assert_eq!(image.pixels(), &[1, 0, 0, 4]);
+    }
+
+    #[test]
+    fn scrolling_up_moves_the_image_band() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 0);
+        {
+            let row = buffer.get_row_at_screen_line_mut(1).unwrap();
+            row.set_image_slice(Some(test_image_band(4)));
+        }
+
+        buffer.scroll_region_up(0, 1);
+
+        assert_eq!(
+            buffer
+                .get_row_at_screen_line(0)
+                .unwrap()
+                .image_slice()
+                .unwrap()
+                .pixels(),
+            &[1, 2, 3, 4]
+        );
+        assert!(buffer.get_row_at_screen_line(1).unwrap().image_slice().is_none());
+    }
+
+    #[test]
+    fn reflow_keeps_the_first_rows_image_band() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 0);
+        {
+            let row = buffer.get_row_at_screen_line_mut(0).unwrap();
+            row.set_image_slice(Some(test_image_band(4)));
+        }
+
+        buffer.resize(2, 2);
+
+        let image = buffer.get_row_at_screen_line(0).unwrap().image_slice().unwrap();
+        assert_eq!(image.pixels(), &[1, 2, 3, 4]);
+        assert!(buffer.get_row_at_screen_line(1).unwrap().image_slice().is_none());
+    }
+
+    fn test_image_band(columns: i32) -> ImageSlice {
+        let mut image = ImageSlice::new((1, 1));
+        let pixels = image.mutable_pixels(0, columns);
+        for (index, pixel) in pixels.iter_mut().enumerate() {
+            *pixel = index as u32 + 1;
+        }
+        image
     }
 
     #[test]

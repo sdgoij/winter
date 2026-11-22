@@ -11,12 +11,12 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
 | `types` | ~2.6k | 85 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables, `SgrStack` and the colour table |
-| `buffer` | ~5.6k | 192 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed; OSC 8 hyperlink registry |
+| `buffer` | ~6.2k | 200 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005) |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~9.5k | 139 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, save-restore and tab handlers ported |
+| `adapter` | ~9.7k | 140 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, colour table, macro, window, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-676 tests, doc tests. Phases 5–14 are not started.
+685 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -50,8 +50,8 @@ settled.
    reports answered from the visible page), and the colour table (OSC
    4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report).
    Still ported nowhere: DECAC colour assignment, presentation state
-   (DECRQPSR/DECRSPS), sixel/DCS and DRCS (the storage model is decided by
-   ADR 005; the decoders wait for it), and the ConEmu/iTerm2/FinalTerm/VS
+   (DECRQPSR/DECRSPS), sixel/DCS and DRCS (storage exists per ADR 005; the
+   decoders are the next step), and the ConEmu/iTerm2/FinalTerm/VS
    Code/WT action strings.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
@@ -61,6 +61,16 @@ settled.
 
 - **The stray `adapter/src/main.rs` binary is gone.** The crate is a library
   only again.
+
+- **Images have a home (ADR 005).** `ImageSlice` owns the pixel buffer and the
+  cell size, tracks its covered columns, and supports growing, erasing,
+  copying and insert-shift; `Row` carries an optional band. Writing a cell or
+  clearing a range erases the pixels under it, `fill_rect` erases the block,
+  `copy_row` and the vertical scroll move the band, horizontal scroll leaves it
+  alone (as upstream does), reflow keeps the first row's band on the first
+  destination row, and DECCRA copies bands across pages from a snapshot. The
+  sixel and DRCS decoders are the remaining step and now have
+  `ImageSlice::mutable_pixels` to write through.
 
 - **The colour table and its reports are ported.** `types::ColorTable` is the
   real VT table: the Campbell palette for 0–15, the 6×6×6 cube for 16–231, 24
@@ -94,10 +104,10 @@ settled.
   its own state machine; with no parser here the bytes go to the application
   through `take_macro_input`, so the re-entrancy guard is the application's job.
 
-  Sixel has no handler because there is nowhere to put an image: `Row` and
-  `TextBuffer` store no image data and the renderer does not exist yet. ADR 005
-  decides the model (per-row bands, carried by every cell operation) and sets the
-  order: storage first, then the decoder.
+  Sixel and DRCS have no handler yet: the storage now exists (see the image
+  entry above), so the next step is the decoder itself, writing through
+  `ImageSlice::mutable_pixels` and creating one band per affected row. The
+  renderer is still required before any of it can be seen.
 
 - **Hyperlinks and OSC 0/2, 7 and 52 are ported.** OSC 8 allocates a numeric id
   (`TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`, which every upstream

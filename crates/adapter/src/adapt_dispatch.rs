@@ -1569,9 +1569,14 @@ impl ITermDispatch for AdaptDispatch {
         // the rectangles may overlap, so every source cell must be read before
         // any destination cell is overwritten.
         let mut cells = Vec::with_capacity((width * height) as usize);
+        let mut images = Vec::with_capacity(height as usize);
         {
             let src = src_buffer.read().unwrap_or_else(|e| e.into_inner());
             for row in 0..height {
+                images.push(
+                    src.get_row_at_screen_line(src_top + row)
+                        .and_then(|src_row| src_row.image_slice().cloned()),
+                );
                 for column in 0..width {
                     cells.push(src.get_cell_data_at(src_top + row, src_left + column).cloned());
                 }
@@ -1590,6 +1595,12 @@ impl ITermDispatch for AdaptDispatch {
                 };
                 buffer_row.write_cell(dst_left + column, cell.clone());
             }
+            buffer_row.copy_image_cells_from_slice(
+                images.get(row as usize).and_then(Option::as_ref),
+                src_left,
+                dst_left,
+                dst_right,
+            );
         }
     }
 
@@ -2935,6 +2946,33 @@ mod tests {
         assert_eq!(cell_text(&mut dispatch, 2, 0), "B");
         assert_eq!(cell_text(&mut dispatch, 3, 0), "C");
         assert_eq!(cell_text(&mut dispatch, 4, 0), "Z");
+    }
+
+    // ADR 005: DECCRA moves the destination band's pixels with the cells.
+    #[test]
+    fn deccra_copies_the_image_band() {
+        let mut dispatch = AdaptDispatch::new();
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let mut buffer = buffer.write().unwrap();
+            let mut image = buffer::ImageSlice::new((1, 1));
+            let pixels = image.mutable_pixels(2, 4);
+            pixels[0] = 0xFFFF_0000;
+            pixels[1] = 0xFF00_FF00;
+            buffer
+                .get_row_at_screen_line_mut(5)
+                .unwrap()
+                .set_image_slice(Some(image));
+        }
+
+        // Source 6;1..4 (row 5, columns 0..4) to 1;1 (row 0).
+        dispatch.copy_rectangular_area(6, 1, 6, 4, 1, 1, 1, 1);
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let image = buffer.get_row_at_screen_line(0).unwrap().image_slice().unwrap();
+        assert_eq!(image.pixels(), &[0xFFFF_0000, 0xFF00_FF00]);
+        assert_eq!(image.column_begin(), 2);
     }
 
     #[test]
