@@ -16,10 +16,10 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
-| `host` | ~5.5k | 153 | Phase 6 under way: `CommandHistory`, `InputBuffer`, `CookedReadData`, `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, and the alias table and expansion from `alias.cpp` |
+| `host` | ~5.6k | 157 | Phase 6 under way: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, and the alias table from `alias.cpp` |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1206 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
+1210 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
 7–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
@@ -824,11 +824,11 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 **Estimated effort:** 3.5 weeks (0.5 wks for tests)
 
-Order: `history`, `input_buffer`, `read_data_cooked`,
-`input_state_machine_engine`, `console_information`, `screen_info`, `settings`
-and `alias` are done. `input_key_info` is next, then `scrolling`. Each module
-lands with its tests and its declaration in `lib.rs`, as the porting skill
-requires.
+Order: `history`, `input_buffer`, `read_data_cooked` (alias expansion now wired
+through `alias`), `input_state_machine_engine`, `console_information`,
+`screen_info`, `settings` and `alias` are done. `input_key_info` is next, then
+`scrolling`. Each module lands with its tests and its declaration in `lib.rs`, as
+the porting skill requires.
 
 ### Core Console State
 
@@ -877,10 +877,10 @@ requires.
   - [x] Ported from `readDataCooked.cpp`: the edit line (grapheme and
     overwrite-aware insert, backspace, Ctrl+Backspace, Home/End with Ctrl to
     erase, Delete, Escape, Insert), the word-wise cursor movement, history
-    recall (Up/Down, PgUp/PgDn, Right-at-end, F3, F5, F8), and the F2/F4/F7/F9
-    popups' state and input. The pager, the popups' drawing, the
-    `IWaitRoutine::Notify` path and doskey aliases are not in this module; see
-    its doc comment.
+    recall (Up/Down, PgUp/PgDn, Right-at-end, F3, F5, F8), history expansion
+    through `alias.cpp` when the read has an alias source, and the F2/F4/F7/F9
+    popups' state and input. The pager, the popups' drawing and the
+    `IWaitRoutine::Notify` path are not in this module; see its doc comment.
   - [x] **Tests:** edit, overwrite and insert modes, grapheme backspace,
     combining marks, word movement, erase-to-edge, history recall, prefix
     search, command completion, every popup, the wakeup mask, CR/CRLF, echo

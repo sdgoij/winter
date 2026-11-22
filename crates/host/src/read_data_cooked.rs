@@ -2,16 +2,17 @@
 //!
 //! Ported from `src/host/readDataCooked.cpp`. Upstream also owns the pager that
 //! paints the line by emitting VT, the drawing half of the four history
-//! popups, the `ReadData` / `IWaitRoutine` completion path, and doskey alias
-//! expansion. Painting belongs to the screen layer, the wait path to `server`
-//! (Phase 7), aliases to `alias.cpp`; this module is the model they drive: the
-//! edit line, the popups' state and input handling, and the text a finished
-//! read hands back.
+//! popups, and the `ReadData` / `IWaitRoutine` completion path. Painting belongs
+//! to the screen layer and the wait path to `server` (Phase 7); this module is
+//! the model they drive: the edit line, the popups' state and input handling,
+//! the alias expansion of a finished line (`alias.cpp`), and the text the read
+//! hands back.
 //!
 //! The key classification is ported from `IsCommandLineEditingKey` and
 //! `IsCommandLinePopupKey` in `_stream.cpp`, which is what `GetChar` uses to
 //! decide whether a key record is a character or an editing action.
 
+use crate::alias::AliasTable;
 use crate::history::{CommandHistory, Index, SearchDirection};
 use crate::input_buffer::{InputBuffer, InputMode};
 use types::virtual_key::{
@@ -83,10 +84,17 @@ pub enum Popup {
 /// The text a finished read returns to its client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CookedReadOutput {
-    /// The line, with the newline a carriage return adds.
+    /// The line, with the newline a carriage return adds or with its alias
+    /// expansion applied.
     pub text: String,
     /// The modifiers of the key that ended the read.
     pub control_key_state: ControlKeyState,
+    /// The rest of a multi-line alias expansion, to start the next read with as
+    /// its initial text.
+    ///
+    /// Upstream saves this through `INPUT_READ_HANDLE_DATA`, which needs the
+    /// server layer; a portable host hands it back instead.
+    pub pending_input: Option<String>,
 }
 
 /// A cooked read's edit line and popups.
@@ -98,6 +106,8 @@ pub struct CookedReadData<'a> {
     ctrl_wakeup_mask: u32,
     control_key_state: ControlKeyState,
     history: Option<&'a mut CommandHistory>,
+    aliases: Option<&'a AliasTable>,
+    exe_name: String,
     popups: Vec<Popup>,
     processed_input: bool,
     echo_input: bool,
@@ -128,6 +138,8 @@ impl<'a> CookedReadData<'a> {
             ctrl_wakeup_mask,
             control_key_state: ControlKeyState::default(),
             history,
+            aliases: None,
+            exe_name: String::new(),
             popups: Vec::new(),
             processed_input: modes.contains(InputMode::PROCESSED),
             echo_input: modes.contains(InputMode::ECHO),
@@ -151,6 +163,19 @@ impl<'a> CookedReadData<'a> {
         self.processed_input = modes.contains(InputMode::PROCESSED);
         self.echo_input = modes.contains(InputMode::ECHO);
         self.virtual_terminal_input = modes.contains(InputMode::VIRTUAL_TERMINAL);
+    }
+
+    /// Expands a finished line through `aliases` when the application is
+    /// `exe_name`.
+    ///
+    /// Upstream holds the alias table as process state and consults it from the
+    /// read's completion path; the portable form takes it as a dependency, so a
+    /// test and a host can supply their own.
+    pub fn with_aliases(mut self, aliases: &'a AliasTable, exe_name: &str) -> Self {
+        self.aliases = Some(aliases);
+        self.exe_name.clear();
+        self.exe_name.push_str(exe_name);
+        self
     }
 
     /// Returns the edit line.
@@ -455,20 +480,41 @@ impl<'a> CookedReadData<'a> {
 
     fn finish_read(&mut self) -> CookedReadOutput {
         let mut text = self.text();
+        let mut pending_input = None;
 
         if self.state == State::DoneWithCarriageReturn {
             let newline = if self.processed_input { "\r\n" } else { "\r" };
-            if self.echo_input
-                && let Some(history) = self.history.as_mut()
-            {
-                history.add(&text, false);
+
+            // Upstream records the line the user typed, then expands it; the
+            // history therefore holds the alias name, not its expansion.
+            let mut expansion = None;
+            if self.echo_input {
+                if let Some(history) = self.history.as_mut() {
+                    history.add(&text, false);
+                }
+                if let Some(aliases) = self.aliases {
+                    expansion = aliases.expand(&text, &self.exe_name);
+                }
             }
-            text.push_str(newline);
+
+            if let Some(expansion) = expansion {
+                text = expansion.text;
+                if expansion.line_count > 1 {
+                    // Only the first line belongs to this read; the rest starts
+                    // the next one. Upstream parks it in the read handle.
+                    let first_line_end = text.find('\n').map_or(text.len(), |index| index + 1);
+                    pending_input = Some(text[first_line_end..].to_string());
+                    text.truncate(first_line_end);
+                }
+            } else {
+                text.push_str(newline);
+            }
         }
 
         CookedReadOutput {
             text,
             control_key_state: self.control_key_state,
+            pending_input,
         }
     }
 
@@ -1378,5 +1424,67 @@ mod tests {
         }
         assert_eq!(read.text(), "ab");
         assert!(!read.presenting_popup());
+    }
+
+    #[test]
+    fn an_alias_expands_the_finished_line() {
+        let mut aliases = AliasTable::new();
+        aliases.add("cmd.exe", "foo", "echo $1").expect("a name");
+        let mut history = CommandHistory::new("cmd.exe", 50);
+
+        {
+            let mut read = cooked(Some(&mut history)).with_aliases(&aliases, "cmd.exe");
+            type_text(&mut read, "foo bar");
+            read.handle_char('\r', ControlKeyState::default());
+
+            let output = read.read(&mut InputBuffer::new()).expect("the read finished");
+            assert_eq!(output.text, "echo bar\r\n");
+            assert_eq!(output.pending_input, None);
+        }
+
+        // The history records what the user typed, not the expansion.
+        assert_eq!(history.commands().collect::<Vec<_>>(), ["foo bar"]);
+    }
+
+    #[test]
+    fn an_alias_is_not_expanded_without_echo() {
+        let modes = InputMode::new_console().without(InputMode::ECHO);
+        let mut aliases = AliasTable::new();
+        aliases.add("cmd.exe", "foo", "echo $1").expect("a name");
+
+        let mut read = CookedReadData::new(modes, 24, 0, "", None).with_aliases(&aliases, "cmd.exe");
+        type_text(&mut read, "foo bar");
+        read.handle_char('\r', ControlKeyState::default());
+
+        let output = read.read(&mut InputBuffer::new()).expect("the read finished");
+        assert_eq!(output.text, "foo bar\r\n");
+    }
+
+    #[test]
+    fn a_multiline_expansion_leaves_the_rest_pending() {
+        let mut aliases = AliasTable::new();
+        aliases.add("cmd.exe", "foo", "a$tb").expect("a name");
+
+        let mut read = cooked(None).with_aliases(&aliases, "cmd.exe");
+        type_text(&mut read, "foo");
+        read.handle_char('\r', ControlKeyState::default());
+
+        let output = read.read(&mut InputBuffer::new()).expect("the read finished");
+        assert_eq!(output.text, "a\r\n");
+        assert_eq!(output.pending_input.as_deref(), Some("b\r\n"));
+    }
+
+    #[test]
+    fn an_unknown_alias_still_finishes_with_the_line() {
+        let mut aliases = AliasTable::new();
+        aliases.add("cmd.exe", "foo", "echo $1").expect("a name");
+
+        let mut read = cooked(None).with_aliases(&aliases, "cmd.exe");
+        type_text(&mut read, "bar");
+        read.handle_char('\r', ControlKeyState::default());
+
+        let output = read.read(&mut InputBuffer::new()).expect("the read finished");
+        assert_eq!(output.text, "bar\r\n");
+        assert_eq!(output.pending_input, None);
     }
 }
