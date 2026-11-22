@@ -147,13 +147,17 @@ impl Scheme {
         ]
     }
 
-    /// Writes the colours this scheme names into `table`.
+    /// Makes `table` the built-in palette with this scheme's colours on top.
     ///
-    /// A colour the scheme leaves out keeps the table's built-in value. The
-    /// defaults go into the reserved slots — the ones OSC 10/11 also use — so a
-    /// program that later sets its own default foreground overrides the scheme
-    /// instead of fighting it.
+    /// A scheme describes the whole palette, not an edit of it, so the table is
+    /// reset first: a colour the scheme leaves out gets its built-in value
+    /// rather than keeping one from a scheme that ran before, or a program's
+    /// OSC 4. The defaults go into the reserved slots — the ones OSC 10/11 also
+    /// use — so a program that later sets its own default foreground overrides
+    /// the scheme instead of fighting it.
     pub fn apply(&self, table: &mut ColorTable) {
+        table.reset();
+
         for (index, color) in self.ansi().into_iter().enumerate() {
             if let Some(color) = color {
                 table.set(index, color.text_color());
@@ -248,6 +252,26 @@ mod tests {
         assert_eq!(table.alias_index(ColorAlias::DefaultBackground), DEFAULT_BACKGROUND);
         assert_eq!(table.get(DEFAULT_FOREGROUND), Some(TextColor::rgb(1, 2, 3)));
         assert_eq!(table.get(DEFAULT_BACKGROUND), Some(TextColor::rgb(0x10, 0x11, 0x12)));
+    }
+
+    #[test]
+    fn a_second_scheme_drops_the_colours_the_first_one_set() {
+        let mut table = ColorTable::new();
+        scheme().apply(&mut table);
+        assert_eq!(table.get(1), Some(TextColor::rgb(0xFF, 0, 0)));
+
+        // A program's OSC 4 is gone too: the file is the user's answer.
+        table.set(2, TextColor::rgb(1, 1, 1));
+
+        let bare: Scheme = serde_json::from_str(r#"{"name": "bare"}"#).expect("scheme");
+        bare.apply(&mut table);
+
+        assert_eq!(table.get(1), Some(TextColor::rgb(0xC5, 0x0F, 0x1F)));
+        assert_eq!(table.get(2), Some(TextColor::rgb(0x13, 0xA1, 0x0E)));
+        assert_eq!(
+            table.alias_index(ColorAlias::DefaultForeground),
+            TextColor::DARK_WHITE.get_index() as usize
+        );
     }
 
     #[test]

@@ -82,15 +82,7 @@ impl Pane {
         let mut terminal = Terminal::new();
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
 
-        // The scheme fills the table before the shell can write to it, so a
-        // program's OSC 10/11 arrives later and wins, as it does upstream.
-        if let Some(scheme) = scheme
-            && let Ok(mut table) = terminal.dispatch().color_table().lock()
-        {
-            scheme.apply(&mut table);
-        }
-
-        Ok(Self {
+        let mut pane = Self {
             id,
             terminal,
             session,
@@ -99,7 +91,26 @@ impl Pane {
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
             exited: false,
-        })
+        };
+        pane.apply_scheme(scheme);
+
+        Ok(pane)
+    }
+
+    /// Makes the pane's palette the built-in table plus `scheme`.
+    ///
+    /// At creation the scheme fills the table before the shell can write to it,
+    /// so a program's OSC 10/11 arrives later and wins. On a reload the file is
+    /// the later word, so the table is rebuilt and a program's OSC colours go.
+    fn apply_scheme(&mut self, scheme: Option<&settings::Scheme>) {
+        let handle = self.terminal.dispatch().color_table();
+        let Ok(mut table) = handle.lock() else {
+            return;
+        };
+        match scheme {
+            Some(scheme) => scheme.apply(&mut table),
+            None => table.reset(),
+        }
     }
 
     /// Takes the bell count so the window can ask for attention once.
@@ -751,6 +762,13 @@ impl Tab {
         }
     }
 
+    /// Rebuilds every pane's palette from the scheme.
+    fn apply_scheme(&mut self, scheme: Option<&settings::Scheme>) {
+        for pane in &mut self.panes {
+            pane.apply_scheme(scheme);
+        }
+    }
+
     /// Sizes every pane's grid to the rectangle it occupies.
     fn fit_panes(&mut self, area: egui::Rect, cell: egui::Vec2) {
         for (id, fraction) in self.layout.rects() {
@@ -859,6 +877,8 @@ struct App {
     settings_error: Option<String>,
     /// Whether the settings window is showing.
     settings_open: bool,
+    /// The settings file's stamp when it was last read, so a save is noticed.
+    settings_stamp: Option<settings::Stamp>,
     /// The sides egui collapses but the encoder distinguishes.
     sides: ModifierSides,
     clipboard: Option<arboard::Clipboard>,
@@ -889,6 +909,7 @@ enum TabAction {
 impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let loaded = settings::load_with_report();
+        let settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
         let settings = loaded.settings;
         let scheme = settings.scheme().cloned();
         let font_size = settings.font.size;
@@ -903,6 +924,7 @@ impl App {
             settings_path: loaded.path,
             settings_error: loaded.error.map(|error| error.to_string()),
             settings_open: false,
+            settings_stamp,
             sides: ModifierSides::default(),
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
@@ -1001,7 +1023,7 @@ impl App {
                     });
 
                 ui.separator();
-                ui.label("Edit the file and restart to apply changes.");
+                ui.label("Changes are picked up when the file is saved.");
             });
         self.settings_open = open;
     }
@@ -1037,6 +1059,34 @@ impl App {
 
         actions
     }
+
+    /// Re-reads the settings file and applies what changed.
+    ///
+    /// Chords and the font size take effect at once, a scheme repaints every
+    /// pane, and a changed profile affects the next tab: a running shell keeps
+    /// the command it started with.
+    fn reload_settings(&mut self) {
+        let loaded = settings::load_with_report();
+        if let Some(error) = loaded.error {
+            // A half-written save must not wipe a running session: the previous
+            // settings stay in force and the window reports the error.
+            self.settings_error = Some(error.to_string());
+            return;
+        }
+
+        self.settings = loaded.settings;
+        self.settings_path = loaded.path;
+        self.settings_error = None;
+        self.font_size = self.settings.font.size;
+        self.scheme = self.settings.scheme().cloned();
+
+        let scheme = self.scheme.clone();
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.apply_scheme(scheme.as_ref());
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -1067,6 +1117,19 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
             ));
+        }
+
+        // Poll the settings file: a changed stamp means a save, and the reload
+        // applies the new chords, font, scheme and profile. The poll is the
+        // watcher (ADR 025), so the window wakes once a second while a settings
+        // path exists.
+        if let Some(path) = &self.settings_path {
+            let stamp = settings::stamp(path);
+            if stamp != self.settings_stamp {
+                self.settings_stamp = stamp;
+                self.reload_settings();
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
     }
 

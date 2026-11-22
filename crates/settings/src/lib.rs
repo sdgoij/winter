@@ -12,6 +12,7 @@ mod keybindings;
 mod palette;
 mod parser;
 mod profiles;
+mod watch;
 
 pub use actions::Action;
 pub use fonts::Font;
@@ -19,6 +20,7 @@ pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, M
 pub use palette::{Color, ColorError, Scheme};
 pub use parser::{LoadError, Loaded, load, load_with_report, parse, settings_path, to_json};
 pub use profiles::{Profile, default_shell};
+pub use watch::{Stamp, stamp};
 
 use serde::{Deserialize, Serialize};
 
