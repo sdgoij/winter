@@ -1325,12 +1325,14 @@ struct App {
 }
 
 /// What the tab strip or a chord asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum TabAction {
     Select(usize),
     Close(usize),
     CloseActive,
     New,
+    /// Open the named profile in a new tab.
+    NewProfile(String),
     Next,
     Previous,
     Copy,
@@ -1373,9 +1375,26 @@ impl App {
         })
     }
 
-    /// Opens another shell in a new tab.
+    /// Opens another shell in a new tab: the default profile's.
     fn open_tab(&mut self, ctx: &egui::Context) {
         let (command, title) = profile_command(self.settings.profile());
+        self.add_tab(ctx, command, title);
+    }
+
+    /// Opens the named profile's shell in a new tab.
+    ///
+    /// The name came from the tab strip's menu, so it is only as good as the
+    /// settings that drew it: a name they no longer hold starts nothing rather
+    /// than some other profile.
+    fn open_profile(&mut self, ctx: &egui::Context, name: &str) {
+        let Some(profile) = self.settings.profile_named(name) else {
+            return;
+        };
+        let (command, title) = profile_command(Some(profile));
+        self.add_tab(ctx, command, title);
+    }
+
+    fn add_tab(&mut self, ctx: &egui::Context, command: PtyCommand, title: String) {
         if let Ok(tab) = Tab::new(ctx, command, title, self.scheme.as_ref()) {
             self.tabs.add(tab);
         }
@@ -1397,6 +1416,7 @@ impl App {
                 }
             }
             TabAction::New => self.open_tab(ctx),
+            TabAction::NewProfile(name) => self.open_profile(ctx, &name),
             TabAction::Next => self.tabs.step(1),
             TabAction::Previous => self.tabs.step(-1),
             TabAction::Split(axis) => {
@@ -1564,9 +1584,18 @@ impl App {
                     }
                 }
 
-                if ui.button("+").clicked() {
-                    actions.push(TabAction::New);
-                }
+                ui.menu_button("+", |ui| {
+                    for profile in &self.settings.profiles {
+                        if ui
+                            .button(profile.name.as_str())
+                            .on_hover_text(profile.command.as_str())
+                            .clicked()
+                        {
+                            actions.push(TabAction::NewProfile(profile.name.clone()));
+                            ui.close();
+                        }
+                    }
+                });
 
                 if ui.button("⚙").on_hover_text("Settings").clicked() {
                     actions.push(TabAction::ToggleSettings);
@@ -2683,6 +2712,19 @@ mod tests {
             ..profile
         }));
         assert_eq!(title, "Named");
+    }
+
+    #[test]
+    fn a_named_profile_chooses_the_command_its_tab_starts() {
+        let settings = settings::parse(
+            "[[profiles]]\nname = \"one\"\ncommand = \"sh\"\n\n[[profiles]]\nname = \"two\"\ncommand = \"zsh\"\n",
+        )
+        .expect("settings");
+
+        // The tab strip's menu names a profile; its entry starts that command.
+        let (command, title) = profile_command(settings.profile_named("two"));
+        assert_eq!(command.program(), std::ffi::OsStr::new("zsh"));
+        assert_eq!(title, "zsh");
     }
 
     #[test]

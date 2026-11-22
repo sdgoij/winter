@@ -90,12 +90,21 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Returns the profile a new tab should use.
+    /// Returns the profile a new tab starts by default.
     pub fn profile(&self) -> Option<&Profile> {
         self.default_profile
             .as_deref()
-            .and_then(|name| self.profiles.iter().find(|profile| profile.name == name))
+            .and_then(|name| self.profile_named(name))
             .or_else(|| self.profiles.first())
+    }
+
+    /// Returns the profile `name` selects, if the settings hold one.
+    ///
+    /// This is how the window honors a name that did not come from
+    /// `default_profile` — a menu entry, in particular. An unknown name finds
+    /// nothing rather than another profile.
+    pub fn profile_named(&self, name: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|profile| profile.name == name)
     }
 
     /// Returns the scheme the window should paint with, or None for the
@@ -302,6 +311,20 @@ mod tests {
         let settings = parse(toml).expect("parse");
         assert_eq!(settings.default_profile.as_deref(), Some("one"));
         assert_eq!(settings.profile().map(|profile| profile.name.as_str()), Some("one"));
+    }
+
+    #[test]
+    fn a_profile_is_found_by_name() {
+        let settings = parse(
+            "[[profiles]]\nname = \"one\"\ncommand = \"sh\"\n\n[[profiles]]\nname = \"two\"\ncommand = \"zsh\"\n",
+        )
+        .expect("parse");
+
+        assert_eq!(
+            settings.profile_named("two").map(|profile| profile.command.as_str()),
+            Some("zsh")
+        );
+        assert!(settings.profile_named("three").is_none());
     }
 
     #[test]

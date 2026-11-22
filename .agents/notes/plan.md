@@ -18,11 +18,11 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 123 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `settings` | ~1.8k | 50 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
-| `winterm` | ~5.1k | 75 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a configurable shell, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
+| `settings` | ~1.8k | 53 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
+| `winterm` | ~5.1k | 77 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1462 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1464 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1191,7 +1191,8 @@ the rest of `src/cascadia` remain.
 
 - [x] ~~`winterm/crates/winterm/src/tab_bar.rs`~~ — Tab row
   - Drawn in `ui.rs`: one selectable title per tab, a close button and a plus
-    button. **Tests:** the chord map (Ctrl+Shift+T/W, Ctrl+Tab), not the pixels.
+    menu that starts any profile by name. **Tests:** the chord map
+    (Ctrl+Shift+T/W, Ctrl+Tab) and the profile a name selects, not the pixels.
 - [x] ~~`winterm/crates/winterm/src/tab.rs`~~ — Tab state
   - Landed as `tabs.rs` (the list) plus `Tab` in `ui.rs` (one session, its
     terminal and its view). **Tests:** add, close, select and wrap, including
