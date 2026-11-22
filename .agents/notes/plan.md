@@ -18,11 +18,13 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
+| `winterm` | ~0.9k | 12 | Phase 8's shell (ADR 018): `session` (the pty and its pump), `grid` (a buffer snapshot: runs, text, cursor) and `ui` (egui on winit/wgpu). A shell is typeable; selection, clipboard integration and a repaint waker are next |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1328 tests, doc tests. Phases 1–7 are complete. Phase 8 has begun with the last of
-`Terminal.cpp`'s input surface; its keyboard, mouse and kitty rows are retired into
-`term` (ADR 017), and the window backends are next. Phases 9–14 are not started.
+1340 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+`Terminal.cpp`'s input surface and a runnable egui shell; its keyboard, mouse and
+kitty rows are retired into `term` (ADR 017), and native window backends are
+deferred (ADR 018). Phases 9–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1104,20 +1106,33 @@ last-click position — goes with it, not into `term`.
 
 ### Platform Backends
 
-The windowing stack is the first decision this phase needs. These rows assume
-hand-written backends; Phase 9 names egui and wgpu, which bring their own. Do
-not start a row before that is settled in an ADR.
+The first shell is egui on winit and wgpu (ADR 018), in
+`crates/winterm/src/ui.rs`. The rows below are retired: they assume four
+hand-written backends, and ADR 018 defers them until the application works
+everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
+`grid.rs`.
 
-### Platform Backends
+- [x] ~~`winterm/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
+  - Retired: winit supplies the window, event loop, DPI and clipboard (ADR 018).
+- [x] ~~`winterm/crates/ui/src/platform/x11_window.rs`~~ — X11 backend
+  - Retired for the same reason.
+- [x] ~~`winterm/crates/ui/src/platform/wayland_window.rs`~~ — Wayland backend
+  - Retired for the same reason.
+- [x] ~~`winterm/crates/ui/src/platform/cocoa_window.rs`~~ — macOS backend
+  - Retired for the same reason.
 
-- [ ] `winterm/crates/ui/src/platform/win32_window.rs` — Win32 backend
-  - [ ] **Tests:** window create/destroy/resize, cursor, clipboard, DPI, transparency, focus
-- [ ] `winterm/crates/ui/src/platform/x11_window.rs` — X11 backend
-  - [ ] **Tests:** window create/destroy/resize, cursor, clipboard, DPI, focus
-- [ ] `winterm/crates/ui/src/platform/wayland_window.rs` — Wayland backend
-  - [ ] **Tests:** window creation, surface presentation, input events
-- [ ] `winterm/crates/ui/src/platform/cocoa_window.rs` — macOS backend
-  - [ ] **Tests:** window create/destroy/resize, cursor, clipboard, DPI, focus, transparency
+### Application Shell
+
+- [x] `winterm/crates/winterm/src/session.rs` — the pty and its pump
+  - **Tests:** chunk order and end of stream, an error after data, and a real
+    `cmd`/`sh` session through the pty.
+- [x] `winterm/crates/winterm/src/grid.rs` — a buffer snapshot for a painter
+  - **Tests:** row runs, the cursor, a hidden cursor.
+- [x] `winterm/crates/winterm/src/ui.rs` — the egui shell
+  - **Tests:** the key map, modifier sides and the AltGr chord, palette
+    resolution, and the pty cell clamp.
+  - The frame loop polls the pump every 8 ms; a repaint waker replaces the poll
+    when the session learns to signal the window.
 
 ---
 

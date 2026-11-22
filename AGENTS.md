@@ -221,8 +221,10 @@ the server, renderer and window layers; `outputStream.cpp` has no counterpart
 layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules). Phase 8 has
 the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
-The window backends and the app's interactivity layer are next; Phases 9–14 are
-not started.
+It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
+paints the buffer through egui on winit and wgpu (ADR 018). The app's
+interactivity layer and the native backends are next; Phases 9–14 are not
+started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

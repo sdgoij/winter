@@ -10,6 +10,7 @@ members = [
     "crates/renderer",
     "crates/host",
     "crates/server",
+    "crates/winterm",
 ]
 
 [workspace.package]
@@ -26,9 +27,10 @@ publish = false
 # other not at all. `adapter` sees all three. `renderer` sees `utils`, `types`
 # and `buffer`, so `adapter` may later call into it. `host` sees `types`, `vt`
 # and `adapter`: it consumes the parser and the console interfaces. `server`
-# sits on `host` and exposes the console's API surface. A crate that needs
-# something from a crate to its right is a design error, not a manifest to
-# edit; see .agents/notes/adr/001-workspace-layering.md.
+# sits on `host` and exposes the console's API surface. `winterm` is the
+# application: it sees everything and is the only crate allowed to (ADR 018).
+# A crate that needs something from a crate to its right is a design error, not
+# a manifest to edit; see .agents/notes/adr/001-workspace-layering.md.
 [workspace.dependencies]
 utils = { path = "crates/utils" }
 types = { path = "crates/types" }
@@ -38,8 +40,10 @@ adapter = { path = "crates/adapter" }
 term = { path = "crates/term" }
 renderer = { path = "crates/renderer" }
 server = { path = "crates/server" }
+winterm = { path = "crates/winterm" }
 
 bitflags = "2"
+eframe = "0.37"
 fontdue = "0.9"
 libc = "0.2"
 proptest = "1"

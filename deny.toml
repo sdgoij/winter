@@ -21,8 +21,16 @@ yanked = "deny"
 # fontdue 0.9 pulls ttf-parser, which its author has marked unmaintained. It is
 # not a vulnerability, and this rasteriser only parses fonts the user chose.
 # Revisit when fontdue moves to skrifa or this rasteriser is replaced.
+#
+# The Linux accessibility path (eframe → accesskit → atspi → zbus 5) still uses
+# the standalone zvariant and zbus_names crates, which were folded into zbus 6.
+# They are unmaintained, not vulnerable, and are reachable on the Linux target
+# only. Revisit when accesskit's atspi dependency moves to zbus 6.
 ignore = [
     "RUSTSEC-2026-0192",
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
 
 [licenses]
@@ -48,6 +56,10 @@ allow = [
     "MPL-2.0",
     "BSL-1.0",
     "Unlicense",
+    # The fonts egui bundles. Both permit redistribution, which is all a
+    # linked binary needs; the font itself is not modified.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
 ]
 
 [bans]

@@ -46,3 +46,4 @@ Rules:
 | [015](015-server-portable-scope.md) | The server layer keeps the console API's portable halves | Accepted |
 | [016](016-pty-ffi.md) | The pty layer is hand-written FFI, confined to two modules | Accepted |
 | [017](017-input-encoders-stay-in-term.md) | The input encoders stay in `term`; there is no `input` crate | Accepted |
+| [018](018-egui-first-shell.md) | egui is the first shell; native backends come later | Accepted |

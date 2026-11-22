@@ -11,9 +11,10 @@ shared by all three.
 ## Status
 
 Early but coherent. The terminal core — parsing, the buffer, dispatch, the
-renderer, the input encoders, the console host, and a working pty layer — is
-written and tested; the emulator is not runnable yet because there is no window
-and no event loop.
+renderer, the input encoders, the console host, a working pty layer — is
+written and tested, and `cargo run -p winterm` opens a shell in an egui window
+on Windows, Linux and macOS (ADR 018). That shell is a first shell, not the
+final GUI: native backends come after the behaviour is right.
 
 | Crate | What it is | State |
 |---|---|---|
@@ -26,8 +27,9 @@ and no event loop.
 | [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames | GPU backend deferred (ADR 007) |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
+| [`crates/winterm`](crates/winterm) | The application: pty session with its pump, buffer snapshot, egui shell | Phase 8 shell (ADR 018) |
 
-1328 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1340 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
