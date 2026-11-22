@@ -217,6 +217,10 @@ pub const DEFAULT_KEYBINDINGS: &[Keybinding] = &[
         action: Action::CommandPalette,
     },
     Keybinding {
+        keys: chord(Key::Char('f'), true, true, false),
+        action: Action::Find,
+    },
+    Keybinding {
         keys: chord(Key::Left, false, false, true),
         action: Action::FocusLeft,
     },

@@ -13,6 +13,7 @@ use crate::image_slice::ImageSlice;
 use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
+use crate::search::TextMatch;
 use types::LineRendition;
 use types::UnderlineStyle;
 use types::Viewport;
@@ -699,6 +700,23 @@ impl TextBuffer {
     /// Returns how many rows the document holds: history plus the screen.
     pub fn document_height(&self) -> i32 {
         self.scrollback.len() as i32 + self.screen_height
+    }
+
+    /// Finds every occurrence of `pattern`, in document order.
+    ///
+    /// The search is per row: a row ends where [`Row::measure_right`] says, so
+    /// padding does not match, and a phrase split by an autowrap is two rows.
+    /// ASCII letters match ignoring case; other scripts compare exactly.
+    pub fn find_text(&self, pattern: &str) -> Vec<TextMatch> {
+        let needle: Vec<char> = pattern.chars().collect();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+
+        self.document_rows()
+            .enumerate()
+            .flat_map(|(index, row)| crate::search::find_in_row(row, &needle, index as i32))
+            .collect()
     }
 
     /// Returns the row at `line` in document order: history first, then the
@@ -1837,6 +1855,60 @@ mod tests {
         let mut buf = TextBuffer::new();
         buf.cursor_mut().set_position(10, 20);
         assert_eq!(buf.cursor().position(), (10, 20));
+    }
+
+    #[test]
+    fn find_text_reports_every_row_it_matches() {
+        let mut buffer = TextBuffer::with_dimensions(10, 3, 0);
+        buffer.write_string("one");
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("two ONE");
+
+        assert_eq!(
+            buffer.find_text("one"),
+            vec![
+                TextMatch {
+                    row: 0,
+                    column: 0,
+                    cells: 3
+                },
+                TextMatch {
+                    row: 1,
+                    column: 4,
+                    cells: 3
+                },
+            ]
+        );
+
+        // The padding past a row's text is not content.
+        assert!(buffer.find_text("   ").is_empty());
+    }
+
+    #[test]
+    fn find_text_reads_the_history_too() {
+        let mut buffer = TextBuffer::with_dimensions(6, 2, 4);
+        buffer.write_string("old");
+        buffer.scroll_region_up(0, 1);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("new");
+        assert_eq!(buffer.scrollback_len(), 1);
+
+        assert_eq!(
+            buffer.find_text("old"),
+            vec![TextMatch {
+                row: 0,
+                column: 0,
+                cells: 3
+            }]
+        );
+        assert_eq!(
+            buffer.find_text("new"),
+            vec![TextMatch {
+                row: 2,
+                column: 0,
+                cells: 3
+            }]
+        );
     }
 
     #[test]

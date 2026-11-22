@@ -11,7 +11,7 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~6.5k | 211 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
 | `types` | ~6.0k | 121 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor, the X11 colour-name tables, `InputModes`, the console `InputRecord` vocabulary and `FilterStringForPaste` |
-| `buffer` | ~7.1k | 208 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), and document rows for copies that cross history (ADR 020) |
+| `buffer` | ~7.3k | 216 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), document rows for copies that cross history (ADR 020), and `find_text`, which reports every match in document coordinates |
 | `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
 | `adapter` | ~9.7k | 180 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~5.5k | 186 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
@@ -19,10 +19,10 @@ Verified by running the gate, not by reading the previous status:
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~1.8k | 53 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
-| `winterm` | ~5.3k | 82 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
+| `winterm` | ~5.4k | 85 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1469 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1480 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1175,9 +1175,9 @@ Phase 9 has started inside the Phase 8 shell: `crates/winterm/src/tabs.rs` is
 the tab list (add, close, select, wrap), `layout.rs` is the pane tree, and
 `ui.rs` draws the strip, splits the panes and owns the window-level chords:
 Ctrl+Shift+T/W (tab), Ctrl+Shift+D/E (split), Ctrl+Tab (switch), Alt+Arrow
-(focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard) and Ctrl+Shift+P
-(the command palette). The plus menu starts any profile by name. Search, the
-scrollbar and the rest of `src/cascadia` remain.
+(focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard), Ctrl+Shift+P
+(the command palette) and Ctrl+Shift+F (the find bar). The plus menu starts any
+profile by name. The scrollbar and the rest of `src/cascadia` remain.
 
 ### Application Core
 
@@ -1226,8 +1226,18 @@ scrollbar and the rest of `src/cascadia` remain.
     chord and scheme round-trips, and the invalid chord and colour blocks, in
     `ui.rs`; directory creation and overwrite in `parser.rs`.
   - [ ] A preview of the document as it will be written.
-- [ ] `winterm/crates/winterm/src/search.rs` — In-terminal search overlay
-  - [ ] **Tests:** open/close, input, results navigation, replace, highlight
+- [x] ~~`winterm/crates/winterm/src/search.rs`~~ — In-terminal search overlay
+  - Landed as the find bar in `ui.rs`, on Ctrl+Shift+F (the `find` action) over
+    `TextBuffer::find_text`: every match in the document, history included, is
+    highlighted and the current one more strongly; Enter and Shift+Enter wrap
+    through them and scroll each into the middle of the view, and Escape closes
+    the bar. The query never reaches the shell. There is nothing to replace: a
+    terminal's text belongs to its program.
+  - Matching is per row and case-insensitive for ASCII: `measure_right` decides
+    where a row ends, so padding does not match and a phrase split by an
+    autowrap is two rows. **Tests:** the row matcher (case, overlap, padding,
+    wide characters), history, the scroll, the wrapping, and the bar's state,
+    not the pixels.
 - [ ] `winterm/crates/winterm/src/scrollbar.rs` — Scrollbar with marks
   - [ ] **Tests:** drag, click, scroll mark indicators, mark categories
 

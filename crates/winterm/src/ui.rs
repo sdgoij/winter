@@ -209,12 +209,50 @@ pub fn run() -> eframe::Result {
     )
 }
 
+/// The find bar's state.
+#[derive(Debug, Default)]
+struct FindBar {
+    /// Whether the bar is showing.
+    open: bool,
+    /// What the user is looking for.
+    query: String,
+    /// The query `matches` were computed for.
+    searched: String,
+    /// Every match in the document, in reading order.
+    matches: Vec<buffer::TextMatch>,
+    /// The match Enter moved to, if any.
+    current: Option<usize>,
+    /// The document height when the matches were computed.
+    document_height: i32,
+    /// Whether the field still needs the keyboard focus.
+    focus: bool,
+}
+
+impl FindBar {
+    fn show(&mut self) {
+        self.open = true;
+        self.focus = true;
+    }
+
+    fn hide(&mut self) {
+        self.open = false;
+        self.focus = false;
+        self.current = None;
+    }
+
+    fn toggle(&mut self) {
+        if self.open { self.hide() } else { self.show() }
+    }
+}
+
 /// One pane: a shell, its parser and its viewport.
 struct Pane {
     id: PaneId,
     terminal: Terminal,
     session: Session,
     view: View,
+    /// The find bar's query and matches.
+    find: FindBar,
     /// The title the shell set with OSC 0/2.
     osc_title: Option<String>,
     /// The grid size the terminal and pty were last told about.
@@ -243,6 +281,7 @@ impl Pane {
             terminal,
             session,
             view: View::new(),
+            find: FindBar::default(),
             osc_title: None,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
@@ -601,6 +640,111 @@ impl Pane {
         }
     }
 
+    /// Shows or hides this pane's find bar.
+    fn toggle_find(&mut self) {
+        self.find.toggle();
+    }
+
+    /// Recomputes the matches after the query changed and scrolls to the first.
+    fn refresh_find(&mut self) {
+        let (matches, document_height) = {
+            let buffer = self.terminal.page_manager_mut().active_page().buffer();
+            let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            (buffer.find_text(&self.find.query), buffer.document_height())
+        };
+
+        self.find.matches = matches;
+        self.find.document_height = document_height;
+        self.find.searched = self.find.query.clone();
+        self.find.current = (!self.find.matches.is_empty()).then_some(0);
+        self.scroll_to_find();
+    }
+
+    /// Moves to the next (or previous) match, wrapping at both ends.
+    fn step_find(&mut self, forward: bool) {
+        self.find.current = next_match(self.find.current, self.find.matches.len(), forward);
+        self.scroll_to_find();
+    }
+
+    /// Brings the current match into the middle of the view.
+    fn scroll_to_find(&mut self) {
+        let Some(found) = self.find.current.and_then(|index| self.find.matches.get(index)) else {
+            return;
+        };
+        let (row, height, total) = (found.row, self.size.1, self.find.document_height);
+        self.view.scroll_to_row(row, height, total);
+    }
+
+    /// Draws the find bar and takes its keys.
+    fn find_bar(&mut self, ctx: &egui::Context) {
+        if !self.find.open {
+            return;
+        }
+
+        // Read the keys before the field draws: Enter and Escape belong to the
+        // bar, not to the text the field would otherwise consume.
+        let (enter, shift, escape) = ctx.input(|input| {
+            (
+                input.key_pressed(egui::Key::Enter),
+                input.modifiers.shift,
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape {
+            self.find.hide();
+            return;
+        }
+
+        let mut step = None;
+        egui::Window::new("Find")
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 64.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.find.query)
+                            .hint_text("Find")
+                            .desired_width(180.0),
+                    );
+                    if self.find.focus {
+                        field.request_focus();
+                        self.find.focus = false;
+                    }
+                    if ui.small_button("↑").on_hover_text("Previous").clicked() {
+                        step = Some(false);
+                    }
+                    if ui.small_button("↓").on_hover_text("Next").clicked() {
+                        step = Some(true);
+                    }
+                });
+
+                if self.find.searched != self.find.query {
+                    self.refresh_find();
+                }
+
+                let count = self.find.matches.len();
+                let shown = self.find.current.map_or(0, |index| index + 1);
+                let status = if count == 0 && !self.find.query.is_empty() {
+                    "No matches".to_string()
+                } else {
+                    format!("{shown} of {count}")
+                };
+                ui.label(egui::RichText::new(status).weak());
+            });
+
+        if enter {
+            step = Some(!shift);
+        }
+        if let Some(forward) = step {
+            // A query typed this frame has matches only after the refresh.
+            if self.find.searched != self.find.query {
+                self.refresh_find();
+            }
+            self.step_find(forward);
+        }
+    }
+
     /// Adds the pane's grid size to the pane's own rect.
     fn fit(&mut self, rect: egui::Rect, cell: egui::Vec2) {
         let columns = ((rect.width() / cell.x).floor() as i32).max(1);
@@ -674,6 +818,29 @@ impl Pane {
                     egui::vec2((end - start + 1) as f32 * cell.x, cell.y),
                 );
                 painter.rect_filled(rect, 0, fill);
+            }
+        }
+
+        if self.find.open && !self.find.matches.is_empty() {
+            let fill = table
+                .get(SELECTION_SLOT)
+                .and_then(egui_color)
+                .unwrap_or(FALLBACK_SELECTION);
+            let dim = egui::Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 90);
+            for (index, found) in self.find.matches.iter().enumerate() {
+                // Matches are in document coordinates, like the selection.
+                let row = found.row - screen.top;
+                if row < 0 || row >= screen.height {
+                    continue;
+                }
+                let column = found.column.clamp(0, (screen.width - 1).max(0));
+                let cells = found.cells.min(screen.width - column).max(1);
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(area.min.x + column as f32 * cell.x, area.min.y + row as f32 * cell.y),
+                    egui::vec2(cells as f32 * cell.x, cell.y),
+                );
+                let color = if self.find.current == Some(index) { fill } else { dim };
+                painter.rect_filled(rect, 0, color);
             }
         }
 
@@ -871,6 +1038,20 @@ impl Tab {
     fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
         if let Some(pane) = self.focused_pane_mut() {
             pane.handle_events(events, sides);
+        }
+    }
+
+    /// Shows or hides the focused pane's find bar.
+    fn toggle_find(&mut self) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.toggle_find();
+        }
+    }
+
+    /// Draws the focused pane's find bar.
+    fn find_bar(&mut self, ctx: &egui::Context) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.find_bar(ctx);
         }
     }
 
@@ -1379,6 +1560,7 @@ enum TabAction {
     Resize(Direction),
     ToggleSettings,
     TogglePalette,
+    Find,
 }
 
 impl App {
@@ -1491,6 +1673,11 @@ impl App {
             }
             TabAction::ToggleSettings => self.toggle_settings(),
             TabAction::TogglePalette => self.palette.toggle(),
+            TabAction::Find => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.toggle_find();
+                }
+            }
         }
     }
 
@@ -1867,6 +2054,7 @@ impl eframe::App for App {
             ctx.request_repaint_after(delay);
         }
         tab.paint(ui, area, cell, self.cursor_on, self.font_size, self.faces);
+        tab.find_bar(&ctx);
 
         if self.settings_open {
             self.settings_window(&ctx);
@@ -1942,6 +2130,7 @@ fn action_for(action: settings::Action) -> Option<TabAction> {
         settings::Action::Paste => TabAction::Paste,
         settings::Action::OpenSettings => TabAction::ToggleSettings,
         settings::Action::CommandPalette => TabAction::TogglePalette,
+        settings::Action::Find => TabAction::Find,
         // `unbound` is resolved away when the file loads.
         settings::Action::Unbound => return None,
     })
@@ -2013,6 +2202,7 @@ fn action_label(action: settings::Action) -> &'static str {
         Action::Paste => "Paste",
         Action::OpenSettings => "Settings",
         Action::CommandPalette => "Command palette",
+        Action::Find => "Find",
         Action::Unbound => "Unbound",
     }
 }
@@ -2021,6 +2211,20 @@ fn action_label(action: settings::Action) -> &'static str {
 fn matches_filter(label: &str, filter: &str) -> bool {
     let filter = filter.trim();
     filter.is_empty() || label.to_lowercase().contains(&filter.to_lowercase())
+}
+
+/// The match Enter moves to, wrapping at both ends.
+fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+
+    Some(match current {
+        Some(index) if forward => (index + 1) % len,
+        Some(index) => (index + len - 1) % len,
+        None if forward => 0,
+        None => len - 1,
+    })
 }
 
 /// Whether this frame's key events belong to the shell.
@@ -2963,6 +3167,37 @@ mod tests {
             command_for(settings::DEFAULT_KEYBINDINGS, &key(egui::Key::P, true, true)),
             Some(TabAction::TogglePalette)
         );
+        assert_eq!(
+            command_for(settings::DEFAULT_KEYBINDINGS, &key(egui::Key::F, true, true)),
+            Some(TabAction::Find)
+        );
+    }
+
+    #[test]
+    fn the_next_match_wraps_at_both_ends() {
+        assert_eq!(next_match(None, 0, true), None);
+        assert_eq!(next_match(None, 3, true), Some(0));
+        assert_eq!(next_match(None, 3, false), Some(2));
+        assert_eq!(next_match(Some(1), 3, true), Some(2));
+        assert_eq!(next_match(Some(2), 3, true), Some(0));
+        assert_eq!(next_match(Some(0), 3, false), Some(2));
+    }
+
+    #[test]
+    fn the_find_bar_keeps_its_query_between_openings() {
+        let mut find = FindBar {
+            query: "error".to_string(),
+            ..FindBar::default()
+        };
+
+        find.toggle();
+        assert!(find.open);
+        assert!(find.focus);
+
+        find.toggle();
+        assert!(!find.open);
+        assert!(!find.focus);
+        assert_eq!(find.query, "error");
     }
 
     #[test]
@@ -2990,6 +3225,13 @@ mod tests {
             .find(|entry| entry.action == TabAction::Copy)
             .expect("a copy entry");
         assert_eq!(copy.chord.as_deref(), Some("ctrl+shift+c"));
+
+        let find = entries
+            .iter()
+            .find(|entry| entry.action == TabAction::Find)
+            .expect("a find entry");
+        assert_eq!(find.label, "Find");
+        assert_eq!(find.chord.as_deref(), Some("ctrl+shift+f"));
 
         // The palette is not a command to run from the palette.
         assert!(!entries.iter().any(|entry| entry.action == TabAction::TogglePalette));
@@ -3408,7 +3650,7 @@ mod tests {
         assert_eq!(value("File"), "/cfg/settings.toml");
         assert_eq!(value("Status"), "loaded");
         assert_eq!(value("Profile"), "zsh (/bin/zsh)");
-        assert_eq!(value("Keybindings"), "18");
+        assert_eq!(value("Keybindings"), "19");
         assert_eq!(value("Scheme"), "muted");
         assert_eq!(value("Font"), "18 pt");
 

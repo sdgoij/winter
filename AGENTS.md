@@ -232,7 +232,7 @@ intense brightening, faint text and italics from the host's monospace face
 splittable panes (Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to
 resize, or drag a divider), a shell chosen by the profile (or from the plus
 menu), a command palette (Ctrl+Shift+P) over the profiles and the window's
-actions, the window chords, a
+actions, an in-terminal find bar (Ctrl+Shift+F), the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
 (ADRs 022–024), a settings window (Ctrl+,) that reports the file it loaded, lists
 what normalization adjusted (ADR 027) and edits everything the file holds —

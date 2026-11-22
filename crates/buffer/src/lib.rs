@@ -49,7 +49,7 @@ pub use output_cell_iterator::{OutputCellIterator, OutputCellMutIterator};
 pub use output_cell_rect::OutputCellRect;
 pub use row::Row;
 pub use row_attributes::RowAttributes;
-pub use search::{SearchMatch, SearchOptions};
+pub use search::{SearchMatch, SearchOptions, TextMatch};
 // `TextAttribute` is vocabulary shared by the buffer and the adapter, so it
 // lives in `types`; the re-export keeps the historical `buffer::TextAttribute`
 // path working (ADR 002).

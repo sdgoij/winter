@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1469 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1480 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -81,7 +81,7 @@ Keys are `0-9`, `a-z`, a single punctuation character, `tab`, `enter`, `esc`,
 arrows and `f1`–`f24`. Actions are `newTab`, `closeTab`, `nextTab`, `prevTab`,
 `splitHorizontal`, `splitVertical`, `focusLeft`/`Right`/`Up`/`Down`,
 `resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste`, `openSettings`,
-`commandPalette` and `unbound`.
+`commandPalette`, `find` and `unbound`.
 
 A binding replaces a default with the same chord and adds a new chord to the
 defaults; `unbound` removes one, so the key reaches the shell. An empty list
@@ -91,6 +91,8 @@ and the defaults load instead (ADR 023).
 The plus button starts any profile by name; Ctrl+Shift+P opens the command
 palette, which lists a tab per profile followed by the window's actions with the
 chord each is bound to (type to filter, arrows move, Enter runs, Escape closes).
+Ctrl+Shift+F opens the find bar: every match in the history and on screen is
+highlighted, Enter and Shift+Enter step through them, and Escape closes it.
 
 A scheme names any of `foreground`, `background`, `cursor_color`,
 `selection_background`, `black` … `white` and `bright_black` … `bright_white`. A

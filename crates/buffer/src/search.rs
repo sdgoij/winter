@@ -2,6 +2,75 @@
 //!
 //! Ported from the text search functionality in the Windows Terminal C++ buffer module.
 
+use crate::row::Row;
+
+/// A match in document coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextMatch {
+    /// The document row, counting the history before the screen.
+    pub row: i32,
+    /// The first column the match covers.
+    pub column: i32,
+    /// How many display columns it covers.
+    pub cells: i32,
+}
+
+/// Finds every occurrence of `needle` in `row`.
+///
+/// The comparison works on cells, so a wide character is one character in two
+/// columns and its trailing half contributes nothing. ASCII letters match
+/// ignoring case; other scripts compare exactly. Matches do not overlap, and a
+/// match stops at the row's readable content, so padding never matches.
+pub fn find_in_row(row: &Row, needle: &[char], document_row: i32) -> Vec<TextMatch> {
+    let mut matches = Vec::new();
+    if needle.is_empty() {
+        return matches;
+    }
+
+    let content = row.measure_right();
+    if content <= 0 {
+        return matches;
+    }
+
+    // One entry per character and the column it starts in. A wide character's
+    // trailing half holds no character of its own.
+    let mut text = Vec::new();
+    let mut columns = Vec::new();
+    for column in 0..content {
+        if row.is_trailing_half(column) {
+            continue;
+        }
+        for character in row.get_cell(column).chars().chars() {
+            text.push(character);
+            columns.push(column);
+        }
+    }
+
+    let mut start = 0;
+    while start + needle.len() <= text.len() {
+        let hit = text[start..start + needle.len()]
+            .iter()
+            .zip(needle)
+            .all(|(found, wanted)| found.eq_ignore_ascii_case(wanted));
+        if !hit {
+            start += 1;
+            continue;
+        }
+
+        let column = columns[start];
+        let end = start + needle.len();
+        let end_column = columns.get(end).copied().unwrap_or(content);
+        matches.push(TextMatch {
+            row: document_row,
+            column,
+            cells: (end_column - column).max(1),
+        });
+        start = end;
+    }
+
+    matches
+}
+
 /// Results of a text search operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchMatch {
@@ -265,5 +334,101 @@ mod tests {
         assert_eq!(m.start_col, 5);
         assert_eq!(m.length, 10);
         assert_eq!(m.end_col(), 15);
+    }
+
+    fn row_of(text: &str, width: i32) -> Row {
+        use crate::output_cell::OutputCell;
+
+        let mut row = Row::new(width);
+        let mut column = 0;
+        for character in text.chars() {
+            let cell = OutputCell::from_char(character);
+            let advance = i32::from(cell.column_width().max(1));
+            row.write_cell(column, cell);
+            column += advance;
+        }
+        row
+    }
+
+    fn needle(text: &str) -> Vec<char> {
+        text.chars().collect()
+    }
+
+    #[test]
+    fn a_row_finds_every_occurrence() {
+        let row = row_of("aba aba", 10);
+        let found = find_in_row(&row, &needle("aba"), 3);
+
+        assert_eq!(
+            found,
+            vec![
+                TextMatch {
+                    row: 3,
+                    column: 0,
+                    cells: 3
+                },
+                TextMatch {
+                    row: 3,
+                    column: 4,
+                    cells: 3
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_match_ignores_ascii_case() {
+        let row = row_of("Hello HELLO", 12);
+        let found = find_in_row(&row, &needle("hello"), 0);
+
+        assert_eq!(found.iter().map(|found| found.column).collect::<Vec<_>>(), [0, 6]);
+    }
+
+    #[test]
+    fn a_row_match_does_not_overlap() {
+        let row = row_of("aaaa", 6);
+        let found = find_in_row(&row, &needle("aa"), 0);
+
+        assert_eq!(found.iter().map(|found| found.column).collect::<Vec<_>>(), [0, 2]);
+    }
+
+    #[test]
+    fn a_row_match_stops_at_the_readable_content() {
+        // The row is wider than its text; the padding does not match.
+        let row = row_of("end", 10);
+        assert_eq!(find_in_row(&row, &needle("end"), 0)[0].cells, 3);
+        assert!(find_in_row(&row, &needle("end   "), 0).is_empty());
+    }
+
+    #[test]
+    fn a_wide_character_covers_two_columns() {
+        let row = row_of("\u{4e16}a", 6);
+
+        let wide = find_in_row(&row, &needle("\u{4e16}"), 0);
+        assert_eq!(
+            wide,
+            vec![TextMatch {
+                row: 0,
+                column: 0,
+                cells: 2
+            }]
+        );
+
+        // The character after it starts at column two, not one.
+        let after = find_in_row(&row, &needle("a"), 0);
+        assert_eq!(
+            after,
+            vec![TextMatch {
+                row: 0,
+                column: 2,
+                cells: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn an_empty_needle_finds_nothing() {
+        let row = row_of("text", 6);
+        assert!(find_in_row(&row, &[], 0).is_empty());
     }
 }

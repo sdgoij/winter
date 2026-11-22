@@ -192,6 +192,18 @@ impl View {
         self.scroll = 0;
     }
 
+    /// Scrolls so `row` sits in the middle of the screen, as far as the ends
+    /// allow.
+    ///
+    /// `row` is a document row; `height` and `document_height` are the screen's
+    /// rows and the history plus the screen. A row the view cannot centre — one
+    /// near either end — stops at the nearest edge.
+    pub fn scroll_to_row(&mut self, row: i32, height: i32, document_height: i32) {
+        let max_scroll = (document_height - height).max(0);
+        let top = row - height / 2;
+        self.scroll = (document_height - height - top).clamp(0, max_scroll);
+    }
+
     /// Starts a selection at `anchor`.
     pub fn select(&mut self, anchor: (i32, i32), block: bool) {
         self.selection = Some(Selection {
@@ -276,6 +288,22 @@ impl ClickTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scrolled_to_row_lands_in_the_middle_of_the_screen() {
+        let mut view = View::new();
+
+        // 20 document rows on a 5-row screen: row 10 sits two rows down.
+        view.scroll_to_row(10, 5, 20);
+        assert_eq!(view.scroll(), 7);
+
+        // A row near the top stops at the oldest row, and one on the live
+        // screen returns to the bottom.
+        view.scroll_to_row(0, 5, 20);
+        assert_eq!(view.scroll(), 15);
+        view.scroll_to_row(19, 5, 20);
+        assert_eq!(view.scroll(), 0);
+    }
 
     #[test]
     fn scrolling_clamps_and_keeps_the_selection() {

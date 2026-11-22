@@ -48,6 +48,8 @@ pub enum Action {
     OpenSettings,
     /// Show or hide the command palette.
     CommandPalette,
+    /// Show or hide the find bar.
+    Find,
     /// Remove the chord named beside it. Resolved away at load; it never
     /// reaches the binding list the window searches.
     Unbound,
@@ -77,6 +79,7 @@ impl Action {
         Self::Paste,
         Self::OpenSettings,
         Self::CommandPalette,
+        Self::Find,
     ];
 
     /// The name the file writes, which is also the window's label.
@@ -100,6 +103,7 @@ impl Action {
             Self::Paste => "paste",
             Self::OpenSettings => "openSettings",
             Self::CommandPalette => "commandPalette",
+            Self::Find => "find",
             Self::Unbound => "unbound",
         }
     }
