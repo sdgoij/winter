@@ -1,6 +1,6 @@
 # ADR 040 — The Windows shell is WinUI 3 through windows-reactor
 
-- Status: Accepted
+- Status: Accepted; amended by ADR 041 (surface)
 - Date: 2026-11-22
 - Related: `crates/winterm/src/{app,terminal_widget,config,window,icon}.rs`,
   `crates/renderer`; ADRs 006, 007, 009, 018, 038, 039
