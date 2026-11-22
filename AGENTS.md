@@ -161,13 +161,15 @@ tests pass.
   workspace crate at all, because it is sound without a device (ADR 033).
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
-- **`unsafe` is denied workspace-wide.** `utils` opts out at its root because it
-  owns the lock-free primitives, `server`'s two pty backends carry a
-  module-level `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016),
-  and `winterm`'s sound sink does the same for `Beep` (ADR 033).
-  The two self-referential buffer iterators carry an item-level
-  `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe` anywhere is a
-  review event.
+- **`unsafe` is denied workspace-wide.** The exemptions are named, not
+  incidental: `utils` opts out at its root because it owns the lock-free
+  primitives; `server`'s two pty backends carry a module-level
+  `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
+  `winterm`'s `sound` sink does the same for `Beep` (ADR 033), and its
+  `winui::surface` and `winui::wheel` modules do for Direct2D and the wheel
+  hook (ADRs 041, 047). The two self-referential buffer iterators carry an
+  item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
+  anywhere is a review event.
 - **No new dependency without a reason in the commit.** Prefer what the
   workspace already has.
 - **No decorative comments.** No banners, box-drawing separators, or section
@@ -193,7 +195,8 @@ Do not add call sites under an allowance.
 |---|---|
 | `.agents/notes/plan.md` | The porting plan, milestone status, and what to build next |
 | `.agents/notes/adr/` | Decisions that constrain future code |
-| `.agents/skills/` | Procedures loaded on demand: porting, testing, commit messages |
+| `.agents/skills/` | Procedures loaded on demand: porting, testing, the WinUI shell, commit messages |
+| `crates/*/.rules` | Crate-scoped traps; a rule that names one crate belongs beside it, not here |
 | `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
 | `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, marks, search, images |
@@ -231,7 +234,7 @@ a `Connection` trait with the viewport and selection in the widget and an event
 queue for the bell, a notification and an exit — a shell that exits closes its
 tab (ADR 036) — split into `app.rs`, `terminal_widget.rs`, `config.rs`,
 `window.rs` and `icon.rs` (ADR 038). On Windows the shell is WinUI 3
-(`winui/`, ADRs 040–047): a native window with a `TabView` whose tabs each own a
+(`winui/`, ADRs 040–048): a native window with a `TabView` whose tabs each own a
 terminal, the ptys polled on a timer, and the active tab's pixels blitted by
 Direct2D onto a `SwapChainPanel`, with the pane's grid fitted to the panel's
 cells and the face rasterised at its composition scale, a start that runs the
@@ -272,8 +275,15 @@ This file is read at the start of every session, so it stays high-signal.
 
 - A rule is a trap to avoid, not a map to follow. If it needs a paragraph of
   explanation or a sequence of steps, it is a skill.
-- A procedure (porting a module, running the suite, writing a commit message)
-  lives in `.agents/skills/<name>/SKILL.md` and is referenced here in one line.
+- A procedure (porting a module, running the suite, changing the WinUI shell,
+  writing a commit message) lives in `.agents/skills/<name>/SKILL.md` and is
+  referenced here in one line.
+- A crate's `.rules` is scoped to that crate. Keep it a pointer list; the moment
+  an entry needs a paragraph, it is a skill wearing the wrong name.
+- Do not edit `.rules` during feature work. A trap worth keeping goes in the
+  commit or pull-request description under "Suggested `.rules` additions", and a
+  reviewer decides. A procedure, a measurement, or an explanation of a
+  mechanism is a skill, not a rule.
 - A rule that names one crate belongs in that crate's `.rules`, not here.
 - A new root rule must be non-obvious, repeatedly hit, and specific enough to
   act on. A one-off observation is a note or a test, not a rule.

@@ -30,7 +30,7 @@ publish = false
 # and `buffer`, so `adapter` may later call into it. `host` sees `types`, `vt`
 # and `adapter`: it consumes the parser and the console interfaces. `server`
 # sits on `host` and exposes the console's API surface. `settings` is the
-# user's JSON file and needs no workspace crate. `audio` is sound without a
+# user's TOML settings file and needs no workspace crate. `audio` is sound without a
 # device and sees no workspace crate either (ADR 033). `winterm` is the
 # application: it sees everything and is the only crate allowed to (ADR 018).
 # A crate that needs something from a crate to its right is a design error, not

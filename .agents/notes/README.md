@@ -7,7 +7,7 @@ agreement; this directory is the *why*.
 |----------|---------|
 | [plan.md](plan.md) | The fourteen-phase porting plan, milestone status, test targets, and what to build next. The reference for what to build next. |
 | [adr/](adr/README.md) | Architecture decision records. A decision that constrains future code gets one; a decision that a test already enforces does not. |
-| [../skills/](../skills/) | Procedures loaded on demand: porting a module, testing, commit messages. `AGENTS.md` points at them. |
+| [../skills/](../skills/) | Procedures loaded on demand: porting a module, testing, the WinUI shell, commit messages. `AGENTS.md` points at them. |
 
 The C++ source being ported is Microsoft's Windows Terminal. It is not vendored;
 `/.design/refs` is the local checkout when one is present, and the module path in

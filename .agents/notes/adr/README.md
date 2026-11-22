@@ -71,9 +71,9 @@ Rules:
 | [040](040-winui-windows-shell.md) | The Windows shell is WinUI 3 through `windows-reactor`; egui keeps Linux and macOS; the terminal content stays `renderer`'s | Amended by 041 |
 | [041](041-swap-chain-surface.md) | The pane's surface is a `SwapChainPanel`; Direct2D blits the software backend's pixels, in one `unsafe` module | Accepted |
 | [042](042-winui-binding-version.md) | The WinUI binding is the `windows-reactor-pre` 0.108 snapshot, because 0.100 has no input events | Accepted |
-| [043](0043-pane-fits-panel-and-dpi.md) | The WinUI pane fits the panel's cells and DPI; the atlas payload carries the engine's settings | Accepted |
-| [044](0044-winui-reads-settings.md) | The WinUI shell reads the settings file at startup; the pane's palette is handed to the renderer each frame | Accepted |
-| [045](0045-winui-draws-the-active-tab.md) | The WinUI shell keeps one renderer and one swap chain and paints the active tab | Accepted |
-| [046](0046-winui-chords-and-selection.md) | The WinUI shell matches bound chords before the terminal and selects with the pointer | Accepted |
-| [047](0047-scrolling-and-the-wheel.md) | Scrolling is six actions; the WinUI wheel is read by a low-level mouse hook | Amended by 048 |
-| [048](0048-wheel-reaches-a-tracking-program.md) | The wheel is forwarded to a mouse-tracking program; Shift keeps it for the viewport | Accepted |
+| [043](043-pane-fits-panel-and-dpi.md) | The WinUI pane fits the panel's cells and DPI; the atlas payload carries the engine's settings | Accepted |
+| [044](044-winui-reads-settings.md) | The WinUI shell reads the settings file at startup; the pane's palette is handed to the renderer each frame | Accepted |
+| [045](045-winui-draws-the-active-tab.md) | The WinUI shell keeps one renderer and one swap chain and paints the active tab | Accepted |
+| [046](046-winui-chords-and-selection.md) | The WinUI shell matches bound chords before the terminal and selects with the pointer | Accepted |
+| [047](047-scrolling-and-the-wheel.md) | Scrolling is six actions; the WinUI wheel is read by a low-level mouse hook | Amended by 048 |
+| [048](048-wheel-reaches-a-tracking-program.md) | The wheel is forwarded to a mouse-tracking program; Shift keeps it for the viewport | Accepted |

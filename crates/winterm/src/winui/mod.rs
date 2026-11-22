@@ -1,8 +1,9 @@
 //! The WinUI 3 shell.
 //!
-//! [`surface`] is the only module allowed `unsafe`: it creates the D3D11 device
-//! and composition swap chain the `SwapChainPanel` shows, and blits the software
-//! renderer's pixels with Direct2D (ADRs 040, 041).
+//! Two modules carry `unsafe`: [`surface`] creates the D3D11 device, the
+//! composition swap chain and the Direct2D blit (ADR 041), and `wheel` reads the
+//! mouse wheel from a low-level hook because the binding reports no wheel event
+//! (ADR 047). Everything else here is safe Rust.
 
 #[allow(unsafe_code)]
 pub mod surface;
