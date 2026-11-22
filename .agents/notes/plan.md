@@ -565,15 +565,22 @@ The Windows Terminal codebase maps to these Rust module groups:
     wheel accumulation, hover and drag filtering, alternate scroll. UTF-8
     coordinates are written as UTF-8 characters, not UTF-16 units
   - [x] **Tests:** 16 cases covering every encoding and filter
-- [ ] `crates/host/src/input_engine.rs` — `InputStateMachineEngine`
-  - Deferred from `term`: it builds console input records for the host, and
-    `InputRecord` grows with its first consumer (ADR 010)
+- [ ] `crates/host/src/input_state_machine_engine.rs` — `InputStateMachineEngine`
+  - Ported from `src/terminal/parser/InputStateMachineEngine.cpp`. Deferred from
+    `term` because it builds console input records for the host (ADR 010);
+    `types::InputRecord` and `host::InputBuffer` are now its vocabulary and its
+    first consumer
   - [ ] **Tests:** mouse tracking (1000/1001/1002/1003/1006), bracketed paste,
     kitty keyboard (KKP), Win32 input mode (9001), focus (1004), cursor
     events (1005/1015/1036)
 - [ ] `crates/vt/src/tracing.rs` — VT sequence tracing
 
 ### VT Conformance Test Sequences (Deliverable)
+
+The corpus is implemented in `crates/term/tests/conformance/` and wired through
+`[[test]]` in `crates/term/Cargo.toml`; `AGENTS.md` and the `winterm-testing`
+skill are the live description. The paths below are the original sketch of the
+sequence inventory, kept as a coverage list rather than as file locations.
 
 - [ ] `winterm/tests/vt/csi_sgr.rs` — SGR: all standard escape codes (1/2/3/4/5/7/8/22/23/24/25/27/28/29/30-37/38;2;R;G;B/38;5;n/39/40-47/48;2;R;G;B/48;5;n/90-97/100-107)
 - [ ] `winterm/tests/vt/csi_cursor.rs` — CUP, CUD, CUF, CUB, CNL, CPL, CHA, CHT, HVP, DCH, ICH
@@ -812,16 +819,18 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 **Estimated effort:** 3.5 weeks (0.5 wks for tests)
 
-Order: `history` and `input_buffer` are done; `cooked_read` is next, then
-`input_engine` (ADR 010), which is where a producer for
-`IInteractDispatch::write_input` appears. `console_info` and `screen_info`
-follow the input path so the buffer has a console to belong to. Each module
-lands with its tests and its declaration in `lib.rs`, as the porting skill
-requires.
+Order: `history` and `input_buffer` are done. `read_data_cooked` is next: port
+its line-editing and history-recall state machine, leaving the
+`IWaitRoutine::Notify` completion path and `INPUT_READ_HANDLE_DATA` for Phase 7,
+where `server` defines them. `input_state_machine_engine` follows (ADR 010) — it
+is where `IInteractDispatch::write_input` gets a producer — and then
+`console_information` and `screen_info` give the buffer a console to belong to.
+Each module lands with its tests and its declaration in `lib.rs`, as the porting
+skill requires.
 
 ### Core Console State
 
-- [ ] `winterm/crates/host/src/console_info.rs` — `ConsoleInformation`
+- [ ] `winterm/crates/host/src/console_information.rs` — `ConsoleInformation`
   - [ ] **Tests:** allocate/free console, set title, lock/unlock, VT mode toggle, cooked read, clipboard, bracketed paste
   - [ ] **Property tests:** locking prevents concurrent access; releasing cooked read restores input buffer
 - [ ] `winterm/crates/host/src/settings.rs` — `Settings`
@@ -832,7 +841,10 @@ requires.
   - [x] **Tests:** default console modes, single and batch writes, coalescing
     of a repeated key, a mouse move and a window resize, the batch boundary
     rule, text and NUL writes, prepend, peek versus read, and both flush paths
-- [ ] `winterm/crates/host/src/cooked_read.rs` — `CookedReadData`
+- [ ] `winterm/crates/host/src/read_data_cooked.rs` — `COOKED_READ_DATA`
+  - Ported from `readDataCooked.cpp`. The state machine lands first; the
+    `Notify` completion path and `INPUT_READ_HANDLE_DATA` need `src/server` and
+    land with Phase 7.
   - [ ] **Tests:** line edit (insert/delete/overwrite), arrow key navigation, history recall
 - [x] `winterm/crates/host/src/history.rs` — `CommandHistory` and
   `CommandHistoryList`, ported from `history.cpp`
@@ -846,7 +858,7 @@ requires.
 - [ ] `winterm/crates/host/src/scrolling.rs` — Scroll logic
 - [ ] `winterm/crates/host/src/selection.rs` — Selection state
 - [ ] `winterm/crates/host/src/input_key_info.rs` — Keyboard state
-- [ ] `winterm/crates/host/src/direct_io.rs` — Direct I/O
+- [ ] `winterm/crates/host/src/directio.rs` — Direct I/O
 - [ ] `winterm/crates/host/src/registry.rs` — Registry access
 - [ ] `winterm/crates/host/src/utils.rs` — Console utilities
 - [ ] `winterm/crates/host/src/tracing.rs` — Event tracing
