@@ -107,6 +107,36 @@ impl Screen {
         self.with_buffer(|buffer| buffer.get_line_rendition(row))
     }
 
+    /// Returns the first pixel of the image band on a row, if it has one.
+    pub fn image_pixel(&mut self, row: i32) -> Option<u32> {
+        self.with_buffer(|buffer| {
+            buffer
+                .get_row_at_screen_line(row)
+                .and_then(|row| row.image_slice())
+                .and_then(|image| image.pixels().first().copied())
+        })
+    }
+
+    /// Returns the image band's width in pixels on a row.
+    pub fn image_pixel_width(&mut self, row: i32) -> Option<i32> {
+        self.with_buffer(|buffer| {
+            buffer
+                .get_row_at_screen_line(row)
+                .and_then(|row| row.image_slice())
+                .map(|image| image.pixel_width())
+        })
+    }
+
+    /// Returns the cell columns the image band on a row covers.
+    pub fn image_columns(&mut self, row: i32) -> Option<(i32, i32)> {
+        self.with_buffer(|buffer| {
+            buffer
+                .get_row_at_screen_line(row)
+                .and_then(|row| row.image_slice())
+                .map(|image| (image.column_begin(), image.column_end()))
+        })
+    }
+
     /// Returns a palette entry.
     pub fn color(&mut self, index: usize) -> Option<TextColor> {
         let table = self.terminal.dispatch().color_table();

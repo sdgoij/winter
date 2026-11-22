@@ -9,6 +9,7 @@
 //! here disagrees with the reference, the reference wins.
 
 mod csi;
+mod dcs;
 mod escape;
 mod hyperlink;
 mod kitty_keyboard;
