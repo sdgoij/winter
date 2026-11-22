@@ -18,10 +18,11 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `winterm` | ~3.0k | 52 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes: `session`, `grid`, `view`, `blink`, `tabs` (the tab list), `layout` (the split tree) and `ui` (egui on winit/wgpu: strip, panes, input, painting). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs and splittable panes work; settings are next |
+| `settings` | ~0.3k | 10 | Phase 10 started (ADR 022): the JSON file's path, the named-profile schema and the normalization that makes a partial file usable. Keybindings, palettes, fonts and the settings UI are next |
+| `winterm` | ~3.2k | 53 | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the first settings consumer: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, OSC titles, bell attention, cursor shapes, text decorations, tabs, splittable panes and a configurable shell work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1383 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1394 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phases 9–14
@@ -1236,14 +1237,28 @@ the rest of `src/cascadia` remain.
 
 **Estimated effort:** 1.5 weeks (0.5 wks for tests)
 
+Started: `crates/settings` owns the file, its path and the normalization that
+makes a partial file usable (ADR 022). The schema is a named-profile list and
+`default_profile`; the application starts the default profile's command. The
+rest of the plan's rows arrive when they have a consumer — keybindings replace
+the hand-written chord map, and the settings UI is what makes a malformed file
+visible.
+
 ### Settings Model
 
-- [ ] `winterm/crates/settings/src/schema.rs` — JSON schema
-- [ ] `winterm/crates/settings/src/parser.rs` — JSON/YAML parser
-  - [ ] **Tests:** parse valid settings, parse invalid JSON, parse missing required fields, parse unknown fields, YAML parse
-  - [ ] **Property tests:** `parse(serialize(settings)) == settings` for all valid settings; parse errors include field name
-- [ ] `winterm/crates/settings/src/profiles.rs` — Profile list
-  - [ ] **Tests:** create profile, add/remove, modify, defaults, validation
+- [x] `winterm/crates/settings/src/schema.rs` — JSON schema
+  - The root lives in `lib.rs`: `profiles` and `default_profile`, with
+    `Profile { name, command, args, title }` in `profiles.rs`. **Tests:** the
+    defaults, an empty object and unknown fields.
+- [x] `winterm/crates/settings/src/parser.rs` — JSON parser
+  - JSON only; YAML is not read. **Tests:** a valid file, a missing file, a
+    broken file, and the platform path.
+  - Also `load`, `to_json` and `settings_path`; the application never writes
+    the file yet.
+- [x] `winterm/crates/settings/src/profiles.rs` — Profile list
+  - One list with a named default. **Tests:** the default profile names the
+    platform shell; an unknown or absent default falls back to the first
+    profile; a blank command is filled in.
 - [ ] `winterm/crates/settings/src/palette.rs` — Color palettes
   - [ ] **Tests:** load palette, validate colors, apply palette
 - [ ] `winterm/crates/settings/src/fonts.rs` — Font config

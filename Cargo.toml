@@ -10,6 +10,7 @@ members = [
     "crates/renderer",
     "crates/host",
     "crates/server",
+    "crates/settings",
     "crates/winterm",
 ]
 
@@ -27,7 +28,8 @@ publish = false
 # other not at all. `adapter` sees all three. `renderer` sees `utils`, `types`
 # and `buffer`, so `adapter` may later call into it. `host` sees `types`, `vt`
 # and `adapter`: it consumes the parser and the console interfaces. `server`
-# sits on `host` and exposes the console's API surface. `winterm` is the
+# sits on `host` and exposes the console's API surface. `settings` is the
+# user's JSON file and needs no workspace crate. `winterm` is the
 # application: it sees everything and is the only crate allowed to (ADR 018).
 # A crate that needs something from a crate to its right is a design error, not
 # a manifest to edit; see .agents/notes/adr/001-workspace-layering.md.
@@ -41,11 +43,13 @@ term = { path = "crates/term" }
 renderer = { path = "crates/renderer" }
 host = { path = "crates/host" }
 server = { path = "crates/server" }
+settings = { path = "crates/settings" }
 winterm = { path = "crates/winterm" }
 
 arboard = "3"
 bitflags = "2"
 eframe = "0.37"
+serde_json = "1"
 fontdue = "0.9"
 libc = "0.2"
 proptest = "1"

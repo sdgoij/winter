@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use server::pty::{PtyCommand, PtySize};
+use settings::Settings;
 use term::Terminal;
 use term::input::{
     Key, KeyEvent, Modifiers as KeyModifiers, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA,
@@ -566,9 +567,9 @@ impl Tab {
     }
 
     /// Splits the focused pane, spawning a shell for the new half.
-    fn split(&mut self, axis: Axis, ctx: &egui::Context) -> bool {
+    fn split(&mut self, axis: Axis, ctx: &egui::Context, command: PtyCommand) -> bool {
         let id = PaneId(self.next_id);
-        let Ok(pane) = Pane::new(ctx, id, default_command()) else {
+        let Ok(pane) = Pane::new(ctx, id, command) else {
             return false;
         };
 
@@ -711,6 +712,7 @@ fn fraction_rect(fraction: Fraction, area: egui::Rect) -> egui::Rect {
 /// The window: a tab strip and the active tab.
 struct App {
     tabs: Tabs<Tab>,
+    settings: Settings,
     /// The sides egui collapses but the encoder distinguishes.
     sides: ModifierSides,
     clipboard: Option<arboard::Clipboard>,
@@ -739,11 +741,13 @@ enum TabAction {
 
 impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let command = default_command();
-        let title = command_title(&command);
+        let settings = settings::load();
+        let (command, title) = profile_command(settings.profile());
+        let tab = Tab::new(ctx, command, title)?;
 
         Ok(Self {
-            tabs: Tabs::new(Tab::new(ctx, command, title)?),
+            tabs: Tabs::new(tab),
+            settings,
             sides: ModifierSides::default(),
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
@@ -754,8 +758,7 @@ impl App {
 
     /// Opens another shell in a new tab.
     fn open_tab(&mut self, ctx: &egui::Context) {
-        let command = default_command();
-        let title = command_title(&command);
+        let (command, title) = profile_command(self.settings.profile());
         if let Ok(tab) = Tab::new(ctx, command, title) {
             self.tabs.add(tab);
         }
@@ -780,8 +783,9 @@ impl App {
             TabAction::Next => self.tabs.step(1),
             TabAction::Previous => self.tabs.step(-1),
             TabAction::Split(axis) => {
+                let (command, _) = profile_command(self.settings.profile());
                 if let Some(tab) = self.tabs.active_mut() {
-                    tab.split(axis, ctx);
+                    tab.split(axis, ctx, command);
                 }
             }
             TabAction::Focus(direction) => {
@@ -1080,13 +1084,12 @@ fn paint_cursor_bar(
     );
 }
 
-fn default_command() -> PtyCommand {
-    #[cfg(windows)]
-    let shell = std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into());
-    #[cfg(unix)]
-    let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
-
-    PtyCommand::new(shell)
+/// Turns a profile into the command a tab starts and the title to show.
+fn profile_command(profile: Option<&settings::Profile>) -> (PtyCommand, String) {
+    let profile = profile.cloned().unwrap_or_default();
+    let command = PtyCommand::new(&profile.command).args(profile.args.iter().cloned());
+    let title = profile.title.clone().unwrap_or_else(|| command_title(&command));
+    (command, title)
 }
 
 /// Turns a cell count into the `u16` a pty size carries.
@@ -1327,6 +1330,30 @@ mod tests {
             fade(egui::Color32::from_rgb(10, 20, 30), egui::Color32::from_rgb(10, 20, 30)),
             egui::Color32::from_rgb(10, 20, 30)
         );
+    }
+
+    #[test]
+    fn a_profile_becomes_a_command_and_a_title() {
+        let profile = settings::Profile {
+            name: "x".to_string(),
+            command: "/bin/sh".to_string(),
+            args: vec!["-l".to_string()],
+            title: None,
+        };
+
+        let (command, title) = profile_command(Some(&profile));
+        assert_eq!(command.program(), std::ffi::OsStr::new("/bin/sh"));
+        assert_eq!(
+            command.arguments().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("-l")]
+        );
+        assert_eq!(title, "sh");
+
+        let (_, title) = profile_command(Some(&settings::Profile {
+            title: Some("Named".to_string()),
+            ..profile
+        }));
+        assert_eq!(title, "Named");
     }
 
     #[test]

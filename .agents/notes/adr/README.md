@@ -50,3 +50,4 @@ Rules:
 | [019](019-terminal-selection-is-app-state.md) | The terminal's viewport and selection are application state | Accepted |
 | [020](020-selection-adds-document-rows.md) | Selection addresses document rows (history first) | Accepted |
 | [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |
+| [022](022-settings-json-profiles.md) | Settings are a JSON file of named profiles | Accepted |

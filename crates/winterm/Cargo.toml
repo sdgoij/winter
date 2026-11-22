@@ -12,6 +12,7 @@ buffer.workspace = true
 eframe.workspace = true
 host.workspace = true
 server.workspace = true
+settings.workspace = true
 term.workspace = true
 types.workspace = true
 utils.workspace = true
