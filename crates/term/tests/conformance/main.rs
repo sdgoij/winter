@@ -11,6 +11,9 @@
 mod csi;
 mod escape;
 mod hyperlink;
+mod kitty_keyboard;
+mod mouse;
 mod osc;
 mod private_modes;
 mod support;
+mod win32_input_mode;
