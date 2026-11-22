@@ -23,8 +23,8 @@ changes, change its row in the same commit.
 
 ## Pre-Phase-5 cleanup
 
-Phase 5 puts a renderer on top of the adapter. Two items still stand between here
-and it; the rest of this section is the record of what the first cleanup pass
+Phase 5 puts a renderer on top of the adapter. One item still stands between here
+and it; the rest of this section is the record of what the cleanup passes
 settled.
 
 **Open.**
@@ -55,11 +55,10 @@ settled.
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
    names the ported set and must grow with each family.
 
-2. **`adapter/src/main.rs` is `println!("Hello, world!")`.** It makes `adapter`
-   a binary as well as a library for no reason. Delete it, or replace it with a
-   real conformance runner.
-
 **Settled.**
+
+- **The stray `adapter/src/main.rs` binary is gone.** The crate is a library
+  only again.
 
 - **Window manipulation is ported.** CSI 1 t and CSI 2 t record a visibility
   request, CSI 7 t a redraw request, and CSI 8 t a size request; all three are
