@@ -1547,7 +1547,7 @@ editor, and migration follows.
 
 This section was written as a checklist of filenames and counts ("50+ unit tests
 for `Point`", one test file per crate). The suite that exists is inline in the
-module that owns each rule, 1,576 tests across twelve crates, and the status
+module that owns each rule, 1,612 tests across twelve crates, and the status
 table above is its breakdown. What a coverage review needs is not a count but an
 answer to "what failure would this layer catch that the one below cannot" — the
 question the `winterm-testing` skill asks. The audit kept the invariants the
@@ -1735,5 +1735,3 @@ wgpu for Linux and macOS, and ADR 040 replaced the Windows shell with WinUI 3.
 No `crates/ui` exists; the two shells share the portable crates through
 `input`, `view`, `tabs` and `term_control`. The proposal is recorded in the
 ADRs, not here.
-
-*Last updated: 2026-06-03 — Phase 1 complete: 275 tests passing, 1 ignored; all 39 modules implemented, 6 proptests added, 3 snapshot tests added, 9 additional proptests remaining as optional*
