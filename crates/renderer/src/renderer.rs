@@ -80,6 +80,7 @@ pub struct Renderer<D: RenderData> {
     data: D,
     settings: RenderSettings,
     engines: Vec<Box<dyn RenderEngine>>,
+    hovered_hyperlink_id: u16,
 }
 
 impl<D: RenderData> Renderer<D> {
@@ -89,6 +90,7 @@ impl<D: RenderData> Renderer<D> {
             data,
             settings,
             engines: Vec::new(),
+            hovered_hyperlink_id: 0,
         }
     }
 
@@ -117,6 +119,19 @@ impl<D: RenderData> Renderer<D> {
         self.engines.push(engine);
     }
 
+    /// Records which hyperlink is under the pointer.
+    ///
+    /// A hovered hyperlink is underlined solidly instead of with the normal
+    /// hyperlink dash, matching `Renderer::_isHoveredHyperlink`.
+    pub fn set_hovered_hyperlink_id(&mut self, id: u16) {
+        self.hovered_hyperlink_id = id;
+    }
+
+    /// Returns the hyperlink id under the pointer.
+    pub const fn hovered_hyperlink_id(&self) -> u16 {
+        self.hovered_hyperlink_id
+    }
+
     /// Returns whether any engine asked for an immediate second frame.
     pub fn requires_continuous_redraw(&mut self) -> bool {
         self.engines
@@ -130,10 +145,11 @@ impl<D: RenderData> Renderer<D> {
             data,
             settings,
             engines,
+            hovered_hyperlink_id,
         } = self;
 
         for engine in engines {
-            paint_frame_for_engine(engine.as_mut(), data, settings)?;
+            paint_frame_for_engine(engine.as_mut(), data, settings, *hovered_hyperlink_id)?;
         }
 
         Ok(())
@@ -145,12 +161,13 @@ fn paint_frame_for_engine(
     engine: &mut dyn RenderEngine,
     data: &impl RenderData,
     settings: &RenderSettings,
+    hovered_hyperlink_id: u16,
 ) -> RenderResult<()> {
     if engine.start_paint()? == StartPaint::Skip {
         return Ok(());
     }
 
-    let result = paint_commands(engine, data, settings);
+    let result = paint_commands(engine, data, settings, hovered_hyperlink_id);
 
     // Upstream's scope guard always calls EndPaint, even after a failure.
     let end = engine.end_paint();
@@ -161,6 +178,7 @@ fn paint_commands(
     engine: &mut dyn RenderEngine,
     data: &impl RenderData,
     settings: &RenderSettings,
+    hovered_hyperlink_id: u16,
 ) -> RenderResult<()> {
     // A. Default brushes.
     engine.update_drawing_brushes(&TextAttribute::default(), settings, data, false, true)?;
@@ -181,7 +199,7 @@ fn paint_commands(
     engine.paint_background()?;
 
     // 2. Text.
-    paint_buffer_output(engine, data, settings)?;
+    paint_buffer_output(engine, data, settings, hovered_hyperlink_id)?;
 
     // 4. Selection.
     paint_selection(engine, data)?;
@@ -202,6 +220,7 @@ fn paint_buffer_output(
     engine: &mut dyn RenderEngine,
     data: &impl RenderData,
     settings: &RenderSettings,
+    hovered_hyperlink_id: u16,
 ) -> RenderResult<()> {
     let dirty: Vec<Rect> = engine.dirty_area().to_vec();
     if dirty.is_empty() {
@@ -242,7 +261,14 @@ fn paint_buffer_output(
                 {
                     let rendition = buffer.get_line_rendition(buffer_row);
                     engine.prepare_line_transform(rendition, screen_row, viewport.left())?;
-                    paint_line(engine, data, settings, iterator, Point::new(left_screen, screen_row))?;
+                    paint_line(
+                        engine,
+                        data,
+                        settings,
+                        iterator,
+                        Point::new(left_screen, screen_row),
+                        hovered_hyperlink_id,
+                    )?;
                 }
 
                 if let Some(image) = buffer
@@ -269,6 +295,7 @@ fn paint_line(
     settings: &RenderSettings,
     mut iterator: TextBufferCellIterator<'_>,
     target: Point,
+    hovered_hyperlink_id: u16,
 ) -> RenderResult<()> {
     let mut screen_x = target.x();
 
@@ -302,7 +329,11 @@ fn paint_line(
         engine.paint_buffer_line(&clusters, run_start, false)?;
 
         if data.is_grid_line_drawing_allowed() {
-            let lines = get_gridlines(&run_attr);
+            let mut lines = get_gridlines(&run_attr);
+            if hovered_hyperlink_id != 0 && run_attr.get_hyperlink_id() == hovered_hyperlink_id {
+                lines.remove(GridLines::HyperlinkUnderline);
+                lines.insert(GridLines::Underline);
+            }
             if !lines.is_empty() {
                 let (gridline_color, _) = settings.get_attribute_colors(&run_attr);
                 let underline_color = settings.get_attribute_underline_color(&run_attr);
@@ -393,7 +424,7 @@ mod tests {
     struct Log {
         calls: Vec<&'static str>,
         lines: Vec<(String, Point)>,
-        grid_lines: usize,
+        grid_lines: Vec<GridLineSet>,
         cursor_paints: usize,
         titles: Vec<String>,
     }
@@ -496,13 +527,13 @@ mod tests {
         }
         fn paint_buffer_grid_lines(
             &mut self,
-            _lines: GridLineSet,
+            lines: GridLineSet,
             _gridline_color: u32,
             _underline_color: u32,
             _length: usize,
             _target: Point,
         ) -> RenderResult<()> {
-            self.log.borrow_mut().grid_lines += 1;
+            self.log.borrow_mut().grid_lines.push(lines);
             Ok(())
         }
         fn paint_image_slice(
@@ -774,7 +805,56 @@ mod tests {
         renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), vec![screen_rect(3, 1)])));
 
         renderer.paint_frame().expect("frame");
-        assert_eq!(log.borrow().grid_lines, 1);
+        let log = log.borrow();
+        assert_eq!(log.grid_lines.len(), 1);
+        assert!(log.grid_lines[0].contains(GridLines::Underline));
+    }
+
+    fn write_hyperlink_row(data: &mut TestData, id: u16) {
+        let line = data.buffer.get_row_at_screen_line_mut(0).expect("row exists");
+        let mut attribute = TextAttribute::default();
+        attribute.set_hyperlink_id(id);
+        for column in 0..3 {
+            let mut cell = OutputCell::from_char('x');
+            cell.set_attributes(attribute);
+            line.write_cell(column, cell);
+        }
+    }
+
+    #[test]
+    fn a_hovered_hyperlink_switches_to_a_solid_underline() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut data = TestData::new(3, 1);
+        write_hyperlink_row(&mut data, 5);
+
+        let mut renderer = Renderer::new(data, RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), vec![screen_rect(3, 1)])));
+        renderer.set_hovered_hyperlink_id(5);
+
+        renderer.paint_frame().expect("frame");
+
+        let log = log.borrow();
+        assert_eq!(log.grid_lines.len(), 1);
+        assert!(log.grid_lines[0].contains(GridLines::Underline));
+        assert!(!log.grid_lines[0].contains(GridLines::HyperlinkUnderline));
+    }
+
+    #[test]
+    fn an_unhovered_hyperlink_keeps_its_dash() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut data = TestData::new(3, 1);
+        write_hyperlink_row(&mut data, 5);
+
+        let mut renderer = Renderer::new(data, RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), vec![screen_rect(3, 1)])));
+        renderer.set_hovered_hyperlink_id(6);
+
+        renderer.paint_frame().expect("frame");
+
+        let log = log.borrow();
+        assert_eq!(log.grid_lines.len(), 1);
+        assert!(log.grid_lines[0].contains(GridLines::HyperlinkUnderline));
+        assert!(!log.grid_lines[0].contains(GridLines::Underline));
     }
 
     #[test]

@@ -51,6 +51,11 @@ impl GridLineSet {
         self.0.set(line as u64);
     }
 
+    /// Removes one line from the set.
+    pub fn remove(&mut self, line: GridLines) {
+        self.0.unset(line as u64);
+    }
+
     /// Returns whether the set contains a line.
     pub const fn contains(&self, line: GridLines) -> bool {
         self.0.contains(line as u64)
@@ -92,6 +97,10 @@ mod tests {
 
         set.insert(GridLines::CurlyUnderline);
         assert!(set.contains(GridLines::Underline));
+        assert!(set.contains(GridLines::CurlyUnderline));
+
+        set.remove(GridLines::Underline);
+        assert!(!set.contains(GridLines::Underline));
         assert!(set.contains(GridLines::CurlyUnderline));
     }
 
