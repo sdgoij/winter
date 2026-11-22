@@ -14,7 +14,7 @@ Verified by running the gate, not by reading the previous status:
 | `buffer` | ~7.3k | 221 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), document rows for copies that cross history (ADR 020), and `find_text`, the `search.cpp` logical-line search that reports every match in document coordinates |
 | `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
 | `adapter` | ~9.7k | 183 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~5.6k | 189 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
+| `term` | ~5.6k | 189 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 107 of the tests are the conformance corpus |
 | `renderer` | ~6.5k | 130 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame` whose `resize` moves the pixel target and the cell viewport together and whose `set_default_colors` feeds the pane's scheme to the engines; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser, with the payload carrying the engine's own settings and every row cleared at the start of a frame (ADRs 043, 044); and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
 | `host` | ~9.6k | 258 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, the registry schema that layers a key over them (ADR 037), `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio` waits for the server's API surface; `handle` and `tracing` have no counterpart here (a lock with no ctrl-event queue, and ETW) |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
@@ -43,7 +43,9 @@ tab strip paints, the default file a
 first start is written, the migration from the earlier JSON file and the table
 that names a scheme's colours; Phase
 11 has the bell and DECPS as tones and a flashing
-pane, with a sound sink on Windows only (ADR 033). Phases 12–14 are not started.
+pane, with a sound sink on Windows only (ADR 033). Phase 12 is an ongoing
+test sweep, Phase 13 is not started, and Phase 14 has one pipeline on three
+platforms but no packaging yet.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -1686,92 +1688,52 @@ so "the same sequences give the same buffer on every platform" is the gate.
 
 ## Milestone Summary
 
-| Phase | Effort | Deliverable |
-|-------|--------|-------------|
-| **1. Foundation** | ✅ DONE | `winterm/crates/utils` (25 modules) + `winterm/crates/types` (10 modules) + `winterm/crates/buffer` (4 modules) — **275 tests passing, 1 ignored** (hash collision proptest) + 6 proptests + 3 snapshot tests added |
-| **2. Text Buffer** | 4 wks | `winterm/crates/buffer` + **500+ unit tests** + property tests |
-| **3. VT Parser** | 4 wks | `winterm/crates/vt` + **300+ unit tests** + conformance suite + fuzzing |
-| **4. Adapter** | ⚠️ PARTIAL | `winterm/crates/adapter` — state, dispatch traits, page manager on the real buffer, sixel, macros. `AdaptDispatch` compiles and is tested; the `ITermDispatch` handlers are pending |
-| **5. Renderer** | 6 wks | `winterm/crates/renderer` + **150+ unit tests** + 15 snapshot tests |
-| **6. Console Host** | 3.5 wks | `winterm/crates/host` + **200+ unit tests** |
-| **7. Server** | 2.5 wks | `winterm/crates/server` + **100+ unit tests** |
-| **8. Input/UI** | 2.5 wks | `winterm/crates/input` + **100+ unit tests** + 4 platform backends |
-| **9. Terminal App** | 5 wks | `winterm/crates/winterm` + **200+ unit tests** + integration tests |
-| **10. Settings** | 1.5 wks | `winterm/crates/settings` + **100+ unit tests** |
-| **11. Audio** | 1 wk | `winterm/crates/audio` + **10+ unit tests** |
-| **12. Testing** | **4 wks** | **3500+ unit tests + 15+ properties + 40+ integration tests + 30 conformance tests + 15 snapshots + 12 benchmarks + 6 fuzz targets + 20 platform tests + 8 e2e tests + 5 xplat tests** |
-| **13. Polish** | 2 wks | CLI, logging, packaging, docs |
-| **14. CI/CD** | 1 wk | **8 GitHub Actions workflows** |
-| **Total** | **38 wks** | Fully tested cross-platform terminal emulator |
+The table at the top of this document is the live status; this is the same
+state at a glance, with the owning crate's measured test count.
 
----
-## Test Coverage Targets
+| Phase | State | Where it stands |
+|-------|-------|-----------------|
+| **1. Foundation** | ✅ DONE | `utils` (213 + 1 ignored), `types` (121), `buffer` (221) |
+| **2. Text Buffer** | ✅ DONE | Scrollback, reflow, search, marks and image bands (ADR 005) |
+| **3. VT Parser** | ✅ DONE | The full DFA, plus 107 conformance cases in `term` |
+| **4. Adapter** | ✅ DONE | 183 tests; the `ITermDispatch` families, paging, sixel, macros (ADR 004) |
+| **5. Renderer** | ✅ DONE | 130 + 1 ignored; the software backend paints, the GPU backend is deferred (ADR 007) |
+| **6. Console Host** | ⚠️ PORTABLE | 258 tests; `directio` waits for the server's API surface (ADR 013) |
+| **7. Server** | ✅ DONE | 12 tests; shim policy and both pty backends (ADRs 015, 016) |
+| **8. Input/UI** | ✅ DONE | Chords, encoders and focus in `term` (ADR 017); the egui shell (ADR 018) and WinUI 3 on Windows (ADRs 040–048) |
+| **9. Terminal App** | ✅ DONE | Tabs, panes, palette, find bar, scrollbar, notifications (ADRs 019–021, 036, 038) |
+| **10. Settings** | ✅ DONE | 82 tests; TOML, profiles, chords, schemes, themes, editor (ADRs 022–032, 034, 035) |
+| **11. Audio** | ✅ DONE | 7 tests; bell and DECPS tones (ADR 033) |
+| **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
+| **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
+| **14. CI/CD** | ⏳ PARTIAL | One gate on Linux, Windows and macOS; packaging and the matrix remain |
 
-Completed for Phase 1:
+## Test coverage
 
-| Module | Target Coverage | Critical Tests |
-|--------|----------------|----------------|
-| `utils/` | ✅ ≥95% | 199 tests — all edge cases, overflow, bounds, proptests |
-| `types/` | ✅ ≥90% | All enum variants, conversions tested |
-
-Pending for future phases:
-
-| Module | Target Coverage | Critical Tests |
-|--------|----------------|----------------|
-| `buffer/` | ≥90% | Reflow, iteration, scrollback |
-| `vt/` | ≥90% | All VT sequences, state transitions |
-| `adapter/` | ⚠️ **Interfaces only** — 46 tests cover the modules that exist; dispatch is unimplemented |
-| `renderer/` | ≥80% | Per-backend rendering, atlas |
-| `host/` | ≥85% | Console API, buffer management |
-| `server/` | ≥80% | PTY IO, handle management |
-| `input/` | ≥85% | All input encodings |
-| `app/` | ≥80% | Keybindings, tabs, panes |
-| `settings/` | ≥85% | Parse/serialize/migrate |
-
----
+Coverage is a review property, not a percentage (see `AGENTS.md` §Test layers).
+The live per-crate counts are in the Status table at the top. A target that no
+case enforces is not a target.
 
 ## High-Risk Areas & Mitigation
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| **Text reflow algorithm** | Core functionality | Property tests: char preservation, width constraints; snapshot tests at various widths; fuzz test with random text |
-| **Glyph atlas management** | Performance + correctness | Benchmarks: atlas creation/update; snapshot tests per backend; property tests: non-overlapping packed rects |
-| **VT escape sequence conformance** | Compatibility | 30+ conformance tests against xterm/kitty/iterm2 reference; fuzz all 19 state machines |
-| **IME/Composition input** | Non-Latin input quality | Platform-specific IME tests for Win32/X11/Wayland/Cocoa |
-| **Clipboard formatting** | User expectations | Integration tests: copy → paste roundtrip for plain/HTML/RTF; cross-platform clipboard tests |
-| **DPI awareness** | Multi-monitor quality | Platform DPI tests at 100/125/150/200%; snapshot tests at each DPI level |
-| **Sixel/image rendering** | Advanced features | Conformance tests with known sixel images; snapshot comparison |
-| **Cross-platform windowing** | Platform parity | 4 platform backends each with identical test matrix; xplat matrix tests |
+| **Text reflow algorithm** | Core functionality | Property tests: character preservation, width constraints; snapshot tests at several widths |
+| **Glyph atlas management** | Performance + correctness | Property tests: non-overlapping packed rects; snapshot tests per backend |
+| **VT escape sequence conformance** | Compatibility | Cases from ECMA-48, DEC, xterm and upstream's `ut_*`; `generate.rs` feeds arbitrary bytes and asserts survival |
+| **IME/Composition input** | Non-Latin input quality | Windows IME through the host; egui's text input on Linux and macOS |
+| **Clipboard formatting** | User expectations | Round-trip tests for plain, HTML and RTF through the buffer's copy path |
+| **DPI awareness** | Multi-monitor quality | The WinUI pane fits its composition scale (ADR 043); egui's scale factor covers the other shells |
+| **Sixel/image rendering** | Advanced features | Conformance cases with known sixel images; band layout in the buffer (ADR 005) |
+| **Cross-platform windowing** | Platform parity | The two shells share `input`, `view`, `tabs` and `term_control`; CI runs the gate on all three platforms |
 
----
+## Historical proposal
 
-## Cross-Platform Abstraction Strategy
-
-### Window Backend Trait
-
-```rust
-pub trait WindowBackend {
-    fn create(size: Size, title: &str) -> Self;
-    fn resize(&mut self, size: Size);
-    fn position(&self) -> Point;
-    fn dpi(&self) -> f32;
-    fn set_cursor_visible(&mut self, visible: bool);
-    fn set_cursor_style(&mut self, style: CursorStyle);
-    fn clipboard_text(&self) -> Option<String>;
-    fn set_clipboard_text(&mut self, text: &str);
-    fn display_rect(&self) -> Rect;
-    fn is_focused(&self) -> bool;
-    fn set_transparent(&mut self, transparent: bool);
-}
-```
-
-### Platform Backend Modules
-
-- `winterm/crates/ui/src/platform/win32_window.rs` — Win32 API + Direct2D
-- `winterm/crates/ui/src/platform/x11_window.rs` — Xlib/XCB + XRender
-- `winterm/crates/ui/src/platform/wayland_window.rs` — Wayland client protocol
-- `winterm/crates/ui/src/platform/cocoa_window.rs` — Cocoa + Metal
-
----
+The original plan named a `WindowBackend` trait and a `crates/ui` with Win32,
+X11, Wayland and Cocoa backends. ADR 018 replaced it with egui on winit and
+wgpu for Linux and macOS, and ADR 040 replaced the Windows shell with WinUI 3.
+No `crates/ui` exists; the two shells share the portable crates through
+`input`, `view`, `tabs` and `term_control`. The proposal is recorded in the
+ADRs, not here.
 
 *Last updated: 2026-06-03 — Phase 1 complete: 275 tests passing, 1 ignored; all 39 modules implemented, 6 proptests added, 3 snapshot tests added, 9 additional proptests remaining as optional*
