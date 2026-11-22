@@ -39,9 +39,11 @@ vt = { path = "crates/vt" }
 adapter = { path = "crates/adapter" }
 term = { path = "crates/term" }
 renderer = { path = "crates/renderer" }
+host = { path = "crates/host" }
 server = { path = "crates/server" }
 winterm = { path = "crates/winterm" }
 
+arboard = "3"
 bitflags = "2"
 eframe = "0.37"
 fontdue = "0.9"

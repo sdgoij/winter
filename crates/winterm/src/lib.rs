@@ -19,3 +19,4 @@
 pub mod grid;
 pub mod session;
 pub mod ui;
+pub mod view;

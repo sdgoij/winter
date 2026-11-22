@@ -4441,11 +4441,14 @@ dependencies = [
 name = "winterm"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "buffer",
  "eframe",
+ "host",
  "server",
  "term",
  "types",
+ "utils",
 ]
 
 [[package]]

@@ -47,3 +47,4 @@ Rules:
 | [016](016-pty-ffi.md) | The pty layer is hand-written FFI, confined to two modules | Accepted |
 | [017](017-input-encoders-stay-in-term.md) | The input encoders stay in `term`; there is no `input` crate | Accepted |
 | [018](018-egui-first-shell.md) | egui is the first shell; native backends come later | Accepted |
+| [019](019-terminal-selection-is-app-state.md) | The terminal's viewport and selection are application state | Accepted |

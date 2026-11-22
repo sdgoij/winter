@@ -696,6 +696,15 @@ impl TextBuffer {
         self.scrollback.len()
     }
 
+    /// Returns the scrollback row at `index`, oldest first.
+    ///
+    /// This is the attribute-carrying counterpart of
+    /// [`scrollback_row_text`](Self::scrollback_row_text); a painter needs the
+    /// runs, not just the characters.
+    pub fn scrollback_row(&self, index: usize) -> Option<&Row> {
+        self.scrollback.get(index)
+    }
+
     /// Returns the text of a scrollback row, oldest first.
     pub fn scrollback_row_text(&self, index: usize) -> Option<String> {
         self.scrollback.get(index).map(Row::get_text)

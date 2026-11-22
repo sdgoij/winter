@@ -4,16 +4,16 @@
 //! vocabulary and `grid` snapshots into paint calls. Replacing egui with a
 //! native backend means replacing this file, not the session or the grid.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use server::pty::{PtyCommand, PtySize};
 use term::Terminal;
-use term::input::{Key, KeyEvent, Modifiers as KeyModifiers};
+use term::input::{Key, KeyEvent, Modifiers as KeyModifiers, MouseEvent, WHEEL_DELTA, WheelAxis};
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
-use crate::{grid, session::Session};
+use crate::{grid, session::Session, view::View};
 
 /// The font size the grid is measured and painted at.
 const FONT_SIZE: f32 = 16.0;
@@ -21,10 +21,15 @@ const FONT_SIZE: f32 = 16.0;
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 /// The colour used when the palette has no default foreground.
 const FALLBACK_FOREGROUND: egui::Color32 = egui::Color32::from_rgb(204, 204, 204);
+/// The fill behind selected cells. Opaque, because the text is painted over it.
+const SELECTION_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
 
 /// Starts the window and the shell inside it.
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
+        // Ctrl+C, Ctrl+X and Ctrl+V must reach the shell. The application owns
+        // its clipboard chords (Ctrl+Shift+C/V) instead.
+        clipboard_shortcuts: false,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 560.0])
             .with_title("winterm"),
@@ -37,6 +42,8 @@ pub fn run() -> eframe::Result {
 struct App {
     terminal: Terminal,
     session: Session,
+    view: View,
+    clipboard: Option<arboard::Clipboard>,
     /// The grid size the terminal and pty were last told about.
     size: (i32, i32),
     /// Right Alt is held, which is what makes an AltGr chord distinct from
@@ -58,6 +65,8 @@ impl App {
         Ok(Self {
             terminal,
             session,
+            view: View::new(),
+            clipboard: arboard::Clipboard::new().ok(),
             size: (i32::from(size.cols), i32::from(size.rows)),
             right_alt: false,
             right_ctrl: false,
@@ -84,7 +93,33 @@ impl App {
     fn handle_input(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|input| input.events.clone());
         for event in events {
+            // Typing returns to the live screen, as upstream's TrySnapOnInput.
+            if self.view.scroll() != 0
+                && matches!(&event, egui::Event::Text(_) | egui::Event::Key { pressed: true, .. })
+            {
+                self.view.scroll_to_bottom();
+            }
+
             match event {
+                egui::Event::Copy => {
+                    self.copy_selection();
+                }
+                egui::Event::Key {
+                    key: egui::Key::C,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.ctrl && modifiers.shift => {
+                    self.copy_selection();
+                }
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.ctrl && modifiers.shift => {
+                    self.paste_clipboard();
+                }
                 egui::Event::Text(text) => {
                     for character in text.chars() {
                         self.send_key(&KeyEvent {
@@ -162,10 +197,136 @@ impl App {
         let _ = self.session.resize(size);
     }
 
-    fn snapshot(&mut self) -> grid::Screen {
+    /// Handles the pointer: wheel, click and drag.
+    fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2) {
+        if cell.x <= 0.0 || cell.y <= 0.0 {
+            return;
+        }
+
+        let input = ctx.input(|input| PointerInput {
+            hover: input.pointer.hover_pos(),
+            pressed: input.pointer.primary_pressed(),
+            down: input.pointer.primary_down(),
+            scroll: input.smooth_scroll_delta.y,
+            alt: input.modifiers.alt,
+        });
+
+        let Some(position) = input.hover.filter(|position| area.contains(*position)) else {
+            return;
+        };
+        let Some(cell_position) = self.cell_at(area, cell, position) else {
+            return;
+        };
+
+        if input.scroll != 0.0 {
+            let lines = (input.scroll / cell.y).round() as i32;
+            let lines = if lines == 0 {
+                input.scroll.signum() as i32
+            } else {
+                lines
+            };
+
+            // A tracking application, or the alternate screen's scroll, owns
+            // the wheel; otherwise it moves the viewport.
+            let wheel = MouseEvent::wheel(cell_position, WheelAxis::Vertical, lines * WHEEL_DELTA);
+            match self.terminal.handle_mouse(&wheel) {
+                Some(bytes) => self.write(&bytes),
+                None => {
+                    let max = self.max_scroll();
+                    self.view.scroll_by(lines, max);
+                }
+            }
+        }
+
+        if input.pressed {
+            self.view.scroll_to_bottom();
+            let count = self.view.click(cell_position, Instant::now());
+
+            if count >= 3 {
+                let width = self.screen_width();
+                self.view.select_line(cell_position.1, width);
+            } else if count == 2 {
+                let text = self.row_text(cell_position.1);
+                self.view.select_word(&text, cell_position);
+            } else {
+                self.view.select(cell_position, input.alt);
+            }
+        } else if input.down && self.view.selection().is_some() {
+            self.view.extend(cell_position);
+        }
+    }
+
+    /// Maps a window position to a screen cell, if it is inside the grid.
+    fn cell_at(&self, area: egui::Rect, cell: egui::Vec2, position: egui::Pos2) -> Option<(i32, i32)> {
+        let column = ((position.x - area.min.x) / cell.x).floor() as i32;
+        let row = ((position.y - area.min.y) / cell.y).floor() as i32;
+        let (columns, rows) = self.size;
+        if column < 0 || row < 0 || column >= columns || row >= rows {
+            return None;
+        }
+        Some((column, row))
+    }
+
+    fn row_text(&mut self, row: i32) -> String {
         let buffer = self.terminal.page_manager_mut().active_page().buffer();
         match buffer.read() {
-            Ok(buffer) => grid::snapshot(&buffer),
+            Ok(buffer) => buffer
+                .get_row_at_screen_line(row)
+                .map(buffer::Row::get_text)
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        }
+    }
+
+    fn screen_width(&mut self) -> i32 {
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        buffer.read().map(|buffer| buffer.screen_width()).unwrap_or(0)
+    }
+
+    fn max_scroll(&mut self) -> i32 {
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        buffer.read().map(|buffer| buffer.scrollback_len() as i32).unwrap_or(0)
+    }
+
+    /// Copies the selected cells, using the buffer's copy path.
+    fn copy_selection(&mut self) {
+        let text = {
+            let buffer = self.terminal.page_manager_mut().active_page().buffer();
+            let Ok(buffer) = buffer.read() else {
+                return;
+            };
+            let Some(selection) = self.view.selection() else {
+                return;
+            };
+            selection.text(&buffer)
+        };
+
+        if text.is_empty() {
+            return;
+        }
+        if let Some(clipboard) = self.clipboard.as_mut() {
+            let _ = clipboard.set_text(text);
+        }
+    }
+
+    /// Pastes the platform clipboard as filtered text for the pty.
+    fn paste_clipboard(&mut self) {
+        let Some(clipboard) = self.clipboard.as_mut() else {
+            return;
+        };
+        let Ok(text) = clipboard.get_text() else {
+            return;
+        };
+
+        let bytes = self.terminal.paste(&text);
+        self.write(&bytes);
+    }
+
+    fn snapshot(&mut self) -> grid::Screen {
+        let scroll = self.view.scroll();
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        match buffer.read() {
+            Ok(buffer) => grid::snapshot_at(&buffer, scroll),
             Err(_) => grid::Screen::default(),
         }
     }
@@ -184,24 +345,51 @@ impl App {
         };
         let font = egui::FontId::monospace(FONT_SIZE);
 
+        // Backgrounds first, so the selection can cover them and the text can
+        // be drawn over both.
         for (index, row) in screen.rows.iter().enumerate() {
             let top = area.min.y + index as f32 * cell.y;
-
             for run in &row.runs {
-                let left = area.min.x + run.column as f32 * cell.x;
-
                 let background = resolve(run.attribute.get_background(), &table, ColorAlias::DefaultBackground)
                     .unwrap_or(FALLBACK_BACKGROUND);
-                if background != FALLBACK_BACKGROUND {
-                    let rect =
-                        egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(cell.x * run.cells as f32, cell.y));
-                    painter.rect_filled(rect, 0, background);
+                if background == FALLBACK_BACKGROUND {
+                    continue;
                 }
+                let left = area.min.x + run.column as f32 * cell.x;
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(cell.x * run.cells as f32, cell.y));
+                painter.rect_filled(rect, 0, background);
+            }
+        }
 
-                if run.text.is_empty() {
+        if let Some(selection) = self.view.selection() {
+            for row in 0..screen.height {
+                let Some((start, end)) = selection.row_span(row) else {
+                    continue;
+                };
+                let start = start.max(0);
+                let end = end.min(screen.width - 1);
+                if end < start {
                     continue;
                 }
 
+                let left = area.min.x + start as f32 * cell.x;
+                let top = area.min.y + row as f32 * cell.y;
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(left, top),
+                    egui::vec2((end - start + 1) as f32 * cell.x, cell.y),
+                );
+                painter.rect_filled(rect, 0, SELECTION_BACKGROUND);
+            }
+        }
+
+        for (index, row) in screen.rows.iter().enumerate() {
+            let top = area.min.y + index as f32 * cell.y;
+            for run in &row.runs {
+                if run.text.is_empty() {
+                    continue;
+                }
+                let left = area.min.x + run.column as f32 * cell.x;
                 let foreground = resolve(run.attribute.get_foreground(), &table, ColorAlias::DefaultForeground)
                     .unwrap_or(FALLBACK_FOREGROUND);
                 painter.text(
@@ -251,6 +439,7 @@ impl eframe::App for App {
             self.resize(columns, rows);
         }
 
+        self.handle_pointer(ui.ctx(), area, cell);
         self.handle_input(ui.ctx());
         let screen = self.snapshot();
         self.paint(ui, area, cell, &screen);
@@ -265,6 +454,15 @@ impl eframe::App for App {
             );
         }
     }
+}
+
+/// The pointer state one frame needs.
+struct PointerInput {
+    hover: Option<egui::Pos2>,
+    pressed: bool,
+    down: bool,
+    scroll: f32,
+    alt: bool,
 }
 
 fn default_command() -> PtyCommand {

@@ -1,9 +1,10 @@
 //! A snapshot of the visible screen, ready for a painter.
 //!
-//! This module is toolkit-free (ADR 018): it reads the buffer and groups each
-//! row into attribute runs. A window backend decides how to draw them.
+//! This module is toolkit-free (ADR 018): it reads the buffer, including the
+//! rows scrolled into history, and groups each row into attribute runs. A
+//! window backend decides how to draw them.
 
-use buffer::TextBuffer;
+use buffer::{Row, TextBuffer};
 use types::TextAttribute;
 
 /// A run of adjacent cells that share an attribute.
@@ -41,27 +42,47 @@ pub struct Screen {
     pub cursor_visible: bool,
 }
 
-/// Takes a snapshot of `buffer`'s visible screen.
+/// Takes a snapshot of `buffer`'s live screen.
 pub fn snapshot(buffer: &TextBuffer) -> Screen {
+    snapshot_at(buffer, 0)
+}
+
+/// Takes a snapshot of the screen scrolled `scroll` rows into the history.
+///
+/// `scroll` is clamped to the rows the buffer holds. The cursor is hidden while
+/// the view is scrolled, because it belongs to the live screen.
+pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
     let width = buffer.screen_width();
     let height = buffer.screen_height();
-    let rows = (0..height).map(|row| row_snapshot(buffer, row, width)).collect();
-    let cursor = buffer.cursor();
+    let history = buffer.scrollback_len() as i32;
+    let scroll = scroll.clamp(0, history);
 
+    // History rows come first in document order, so the first visible row is
+    // `history - scroll`.
+    let first = history - scroll;
+    let rows = (0..height)
+        .map(|offset| {
+            let index = first + offset;
+            let line = if index < history {
+                buffer.scrollback_row(index as usize)
+            } else {
+                buffer.get_row_at_screen_line(index - history)
+            };
+            line.map_or_else(|| RowSnapshot { runs: Vec::new() }, |line| row_snapshot(line, width))
+        })
+        .collect();
+
+    let cursor = buffer.cursor();
     Screen {
         width,
         height,
         rows,
         cursor: cursor.position(),
-        cursor_visible: cursor.is_visible(),
+        cursor_visible: cursor.is_visible() && scroll == 0,
     }
 }
 
-fn row_snapshot(buffer: &TextBuffer, row: i32, width: i32) -> RowSnapshot {
-    let Some(line) = buffer.get_row_at_screen_line(row) else {
-        return RowSnapshot { runs: Vec::new() };
-    };
-
+fn row_snapshot(line: &Row, width: i32) -> RowSnapshot {
     let mut column = 0;
     let runs = line
         .attribute_runs(0, width)
@@ -116,5 +137,29 @@ mod tests {
 
         let screen = snapshot(&buffer);
         assert!(!screen.cursor_visible);
+    }
+
+    #[test]
+    fn scrolling_reveals_the_history_and_hides_the_cursor() {
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 4);
+        buffer.write_string("one");
+        // A full-page scroll keeps the evicted row in the scrollback.
+        buffer.scroll_region_up(0, 1);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("two");
+        assert_eq!(buffer.scrollback_len(), 1);
+
+        let live = snapshot_at(&buffer, 0);
+        assert_eq!(live.rows[1].runs[0].text, "two  ");
+        assert!(live.cursor_visible);
+
+        let history = snapshot_at(&buffer, 1);
+        assert_eq!(history.rows[0].runs[0].text, "one  ");
+        assert_eq!(history.rows[1].runs[0].text, "     ");
+        assert!(!history.cursor_visible);
+
+        // A scroll past the end clamps to the oldest row.
+        let oldest = snapshot_at(&buffer, 99);
+        assert_eq!(oldest.rows[0].runs[0].text, "one  ");
     }
 }
