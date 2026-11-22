@@ -71,6 +71,20 @@ scroll.
   type the letter. AltGr arrives as Control+Alt; do not suppress it. Copy is the
   exception: with nothing selected `perform` returns false, so the key falls
   through and `ctrl+c` still interrupts the program (ADR 053).
+- Key-ups are a separate subscription. `on_preview_key_down` never sees a
+  release; `on_key_up` does, and without it a console client can never be told
+  a key came up (ADR 056).
+- A handled key raises no `CharacterReceived`. Printable keys must stay
+  unhandled so their character arrives, then the press is held until it does
+  and sent as one Win32 record with `Vk`, `Sc` and `Uc` (ADR 056).
+- Space is the exception: XAML treats an unhandled space as an invocation and
+  moves focus off the pane, so Space is handled, carries its own character
+  (it is layout-independent), and the pane asks for focus back if XAML still
+  takes it. The pane's key-up handler marks the release handled for the same
+  reason.
+- ConPTY asks for Win32 input mode as its first act: a new pty's output begins
+  `ESC[?9001h`. Text-only input makes conhost answer with a key-down and a
+  key-up together, which is what cuts a held jump to a few pixels.
 - One mouse rule. `input::forwards_to_application(tracking, shift)` decides who
   owns a press, move, release and wheel. Shift means the user, not the program.
 - The pane captures the pointer on press (`.capture_pointer_on_press(true)`), or
@@ -96,6 +110,14 @@ scroll.
   copies rows through `copy_visible_into`, so that copy has to carry the band
   (`Row::copy_from` is text only). A missing image after a correct sixel is
   almost always there (ADR 055).
+- A kitty image is painted when the batch ends, not when its APC completes:
+  `Terminal::process_bytes` flushes the deferred images, and a retransmission of
+  the same id replaces the one waiting (ADR 057). A test that drives
+  `StateMachine` directly must call `flush_graphics()` before reading the
+  buffer.
+- The debug build decodes images roughly ten times slower than release. A
+  full-screen program that redraws every frame is a debug-build stress test; if
+  the pane stops repainting, check the release build before blaming the code.
 - The grid is the whole cells that fit the panel; the face is rasterised at the
   composition scale so a high-DPI monitor gets physical pixels.
 

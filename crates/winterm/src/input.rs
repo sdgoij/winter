@@ -25,6 +25,21 @@ pub enum Event {
         repeat: bool,
         /// The modifier state, without the side that was pressed.
         modifiers: Modifiers,
+        /// The platform's virtual-key code, for win32-input-mode.
+        ///
+        /// A toolkit that has no Win32 key identity reports zero, which falls
+        /// back to the legacy encoding.
+        virtual_key: u16,
+        /// The platform's scan code, for win32-input-mode.
+        scan_code: u16,
+        /// The platform's repeat count, for win32-input-mode.
+        repeat_count: u16,
+        /// The character the key produced, when the toolkit reported it.
+        ///
+        /// A toolkit delivers a printable key twice: once as a key and once as
+        /// text. The shell pairs them so a Win32 input record can carry the
+        /// translated character (ADR 056).
+        codepoint: Option<char>,
     },
 }
 
@@ -67,8 +82,23 @@ pub struct Outcome {
     pub activity: bool,
 }
 
+/// Returns whether the key's text arrives as a character event.
+///
+/// A printable key reaches a terminal toolkit twice: as a key and as the
+/// character it composed. Ctrl, Alt and the command key suppress the text
+/// event, so those chords are keys. When the pty speaks win32-input-mode the
+/// character is folded back into the key's record instead (ADR 056).
+pub fn produces_text(key: Key, modifiers: Modifiers) -> bool {
+    matches!(key, Key::Char(_) | Key::Space) && !modifiers.ctrl && !modifiers.alt && !modifiers.command
+}
+
 /// Turns one portable event into the key events and paste it means.
-pub fn translate(event: &Event, sides: &mut ModifierSides) -> Outcome {
+///
+/// `win32` says whether the active terminal asked for Win32 input records. A
+/// record carries the key-down and key-up separately, so a printable key is
+/// sent as a key rather than left to its character event; otherwise conhost
+/// synthesises a press and a release together and a held key is never held.
+pub fn translate(event: &Event, sides: &mut ModifierSides, win32: bool) -> Outcome {
     match event {
         Event::Text(text) => Outcome {
             keys: text.chars().map(text_key).collect(),
@@ -85,27 +115,44 @@ pub fn translate(event: &Event, sides: &mut ModifierSides) -> Outcome {
             pressed,
             repeat,
             modifiers,
+            virtual_key,
+            scan_code,
+            repeat_count,
+            codepoint,
         } => {
             track_modifier(sides, *key, *pressed);
 
-            // A printable key arrives again as text, so sending the key event
-            // as well would type it twice. Ctrl, Alt and Command suppress the
-            // text event, so those chords go here.
-            let printable = matches!(key, Key::Char(_) | Key::Space);
-            let suppressed = printable && !modifiers.ctrl && !modifiers.alt && !modifiers.command;
+            // A printable key is typed by the character event. This event can
+            // carry that character when the shell paired the two; win32 mode
+            // needs it in the record, and the legacy encoding sends it as text.
+            let text = produces_text(*key, *modifiers);
+            let record = win32 && *virtual_key != 0;
+
+            let keys = if text && !record {
+                match (codepoint, pressed) {
+                    (Some(character), true) => vec![KeyEvent {
+                        key: Key::Unidentified,
+                        codepoint: Some(*character),
+                        ..KeyEvent::down(Key::Unidentified)
+                    }],
+                    _ => Vec::new(),
+                }
+            } else {
+                vec![KeyEvent {
+                    key: *key,
+                    codepoint: *codepoint,
+                    modifiers: key_modifiers(*modifiers, sides.right_alt, sides.right_ctrl),
+                    pressed: *pressed,
+                    repeat: *repeat,
+                    virtual_key: *virtual_key,
+                    scan_code: *scan_code,
+                    repeat_count: (*repeat_count).max(1),
+                    ..KeyEvent::down(*key)
+                }]
+            };
 
             Outcome {
-                keys: if suppressed {
-                    Vec::new()
-                } else {
-                    vec![KeyEvent {
-                        key: *key,
-                        modifiers: key_modifiers(*modifiers, sides.right_alt, sides.right_ctrl),
-                        pressed: *pressed,
-                        repeat: *repeat,
-                        ..KeyEvent::down(*key)
-                    }]
-                },
+                keys,
                 paste: None,
                 activity: *pressed,
             }
@@ -181,13 +228,30 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers,
+            virtual_key: 0,
+            scan_code: 0,
+            repeat_count: 1,
+            codepoint: None,
+        }
+    }
+
+    fn record(key: Key, virtual_key: u16, codepoint: Option<char>, pressed: bool) -> Event {
+        Event::Key {
+            key,
+            pressed,
+            repeat: false,
+            modifiers: Modifiers::default(),
+            virtual_key,
+            scan_code: 0,
+            repeat_count: 1,
+            codepoint,
         }
     }
 
     #[test]
     fn text_becomes_one_key_event_per_character() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&Event::Text("ab".to_string()), &mut sides);
+        let outcome = translate(&Event::Text("ab".to_string()), &mut sides, false);
 
         assert!(outcome.activity);
         assert_eq!(outcome.keys.len(), 2);
@@ -199,12 +263,58 @@ mod tests {
     #[test]
     fn a_printable_key_without_a_chord_is_left_to_the_text_event() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&key(Key::Char('q'), Modifiers::default()), &mut sides);
+        let outcome = translate(&key(Key::Char('q'), Modifiers::default()), &mut sides, false);
 
         // Nothing is sent, but the press still returns the view to the live
         // screen.
         assert!(outcome.keys.is_empty());
         assert!(outcome.activity);
+    }
+
+    #[test]
+    fn a_paired_character_is_text_without_win32_mode() {
+        let mut sides = ModifierSides::default();
+        let outcome = translate(&record(Key::Char('q'), 0x51, Some('q'), true), &mut sides, false);
+
+        // The character event's payload, not an empty key event.
+        assert_eq!(outcome.keys.len(), 1);
+        assert_eq!(outcome.keys[0].key, Key::Unidentified);
+        assert_eq!(outcome.keys[0].codepoint, Some('q'));
+    }
+
+    #[test]
+    fn a_win32_record_carries_the_virtual_key_and_character() {
+        let mut sides = ModifierSides::default();
+        let outcome = translate(&record(Key::Char('s'), 0x53, Some('s'), true), &mut sides, true);
+
+        assert_eq!(outcome.keys.len(), 1);
+        let event = &outcome.keys[0];
+        assert_eq!(event.key, Key::Char('s'));
+        assert_eq!(event.codepoint, Some('s'));
+        assert_eq!(event.virtual_key, 0x53);
+        assert!(event.pressed);
+    }
+
+    #[test]
+    fn a_win32_release_is_sent() {
+        let mut sides = ModifierSides::default();
+        let outcome = translate(&record(Key::Char('s'), 0x53, None, false), &mut sides, true);
+
+        assert_eq!(outcome.keys.len(), 1);
+        assert!(!outcome.keys[0].pressed);
+        assert_eq!(outcome.keys[0].virtual_key, 0x53);
+        assert!(!outcome.activity);
+    }
+
+    #[test]
+    fn a_win32_key_without_a_virtual_key_stays_text() {
+        let mut sides = ModifierSides::default();
+        let outcome = translate(&record(Key::Char('q'), 0, Some('q'), true), &mut sides, true);
+
+        // A portable toolkit has no Win32 key identity; an empty record would
+        // type nothing, so the character is sent as text instead.
+        assert_eq!(outcome.keys[0].key, Key::Unidentified);
+        assert_eq!(outcome.keys[0].codepoint, Some('q'));
     }
 
     #[test]
@@ -219,6 +329,7 @@ mod tests {
                 },
             ),
             &mut sides,
+            false,
         );
 
         assert_eq!(outcome.keys.len(), 1);
@@ -235,8 +346,13 @@ mod tests {
                 pressed: false,
                 repeat: false,
                 modifiers: Modifiers::default(),
+                virtual_key: 0,
+                scan_code: 0,
+                repeat_count: 1,
+                codepoint: None,
             },
             &mut sides,
+            false,
         );
 
         assert_eq!(outcome.keys.len(), 1);
@@ -247,7 +363,7 @@ mod tests {
     #[test]
     fn the_right_alt_makes_an_alt_gr_chord() {
         let mut sides = ModifierSides::default();
-        translate(&key(Key::RightAlt, Modifiers::default()), &mut sides);
+        translate(&key(Key::RightAlt, Modifiers::default()), &mut sides, false);
 
         let chord = translate(
             &key(
@@ -259,6 +375,7 @@ mod tests {
                 },
             ),
             &mut sides,
+            false,
         );
 
         assert!(chord.keys[0].modifiers.is_alt_gr());
@@ -267,7 +384,7 @@ mod tests {
     #[test]
     fn a_paste_is_reported_as_paste_not_keys() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&Event::Paste("pasted".to_string()), &mut sides);
+        let outcome = translate(&Event::Paste("pasted".to_string()), &mut sides, false);
 
         assert_eq!(outcome.paste.as_deref(), Some("pasted"));
         assert!(outcome.keys.is_empty());

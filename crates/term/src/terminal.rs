@@ -158,6 +158,7 @@ impl Terminal {
             self.dispatch_mut().apply_pending_presentation_state();
             self.dispatch_mut().answer_pending_setting_request();
         }
+        self.dispatch_mut().flush_graphics();
     }
 
     /// Processes a chunk of UTF-8 text, which is the same as its bytes.
@@ -437,6 +438,42 @@ mod tests {
         let mut terminal = Terminal::new();
         terminal.process_str("\x1b[1;31m\x1bP$qm\x1b\\");
         assert_eq!(terminal.take_responses(), vec!["\x1bP1$r0;1;31m\x1b\\".to_string()]);
+    }
+
+    #[test]
+    fn a_retransmitted_image_paints_only_its_last_frame() {
+        let mut terminal = Terminal::new();
+        let red = vt::encode(&[255u8, 0, 0, 255]);
+        let blue = vt::encode(&[0u8, 0, 255, 255]);
+        terminal.process_str(&format!(
+            "\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=1;{red}\x1b\\\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=1;{blue}\x1b\\"
+        ));
+
+        // Both frames arrive in one batch; only the newest is decoded and
+        // painted (ADR 056).
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let image = buffer
+            .get_row_at_screen_line(0)
+            .expect("a row")
+            .image_slice()
+            .expect("the kitty image lands in the first row's band");
+        assert_eq!(image.pixels()[0], 0xFF00_00FF);
+    }
+
+    #[test]
+    fn a_delete_after_a_transmit_in_one_batch_still_erases_it() {
+        let mut terminal = Terminal::new();
+        let red = vt::encode(&[255u8, 0, 0, 255]);
+        terminal.process_str(&format!(
+            "\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=1;{red}\x1b\\\x1b_Ga=d,d=I,i=1\x1b\\"
+        ));
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        if let Some(image) = buffer.get_row_at_screen_line(0).and_then(|row| row.image_slice()) {
+            assert!(image.pixels().iter().all(|&pixel| pixel == 0));
+        }
     }
 
     #[test]

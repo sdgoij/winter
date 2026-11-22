@@ -112,10 +112,23 @@ struct Transmit {
     payload: Vec<u8>,
 }
 
-/// The protocol's state: the chunk in flight and the images on screen.
+/// An image that has finished arriving but has not been painted yet.
+///
+/// A program that redraws itself retransmits the same image every frame. The
+/// last transmission in a batch is the only one that can be seen, so the rest
+/// are dropped before they are decoded (ADR 057).
+struct Deferred {
+    control: Control,
+    payload: Vec<u8>,
+    cursor: (i32, i32),
+}
+
+/// The protocol's state: the chunk in flight, the images awaiting a paint and
+/// the images on screen.
 #[derive(Debug, Default)]
 pub(crate) struct KittyGraphics {
     pending: Option<Transmit>,
+    deferred: Vec<Deferred>,
     placed: Vec<Placed>,
 }
 
@@ -128,11 +141,31 @@ impl std::fmt::Debug for Transmit {
     }
 }
 
+impl std::fmt::Debug for Deferred {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Deferred")
+            .field("control", &self.control)
+            .field("bytes", &self.payload.len())
+            .finish()
+    }
+}
+
 impl KittyGraphics {
     pub(crate) const fn new() -> Self {
         Self {
             pending: None,
+            deferred: Vec::new(),
             placed: Vec::new(),
+        }
+    }
+
+    /// Paints every image that finished arriving, newest per id only.
+    pub(crate) fn flush(&mut self, buffer: &mut TextBuffer) {
+        for deferred in std::mem::take(&mut self.deferred) {
+            let Some(image) = decode(&deferred.control, &deferred.payload) else {
+                continue;
+            };
+            self.place(&deferred.control, &image, deferred.cursor, buffer);
         }
     }
 
@@ -148,6 +181,9 @@ impl KittyGraphics {
         let control = Control::parse(control_bytes);
 
         if control.action == Some(b'd') {
+            // The images this batch already carries are visible before the
+            // delete, so they are painted first.
+            self.flush(buffer);
             self.delete(&control, buffer);
             return;
         }
@@ -180,23 +216,28 @@ impl KittyGraphics {
         let Some(pending) = self.pending.take() else {
             return;
         };
-        let Some(image) = decode(&pending.control, &pending.payload) else {
-            return;
-        };
         if pending.control.action == Some(b'T') {
-            self.place(&pending.control, &image, buffer);
+            let cursor = buffer.cursor().position();
+            // A retransmission of the same id replaces the one already waiting;
+            // only the newest frame can ever be seen.
+            self.deferred
+                .retain(|deferred| deferred.control.id != pending.control.id);
+            self.deferred.push(Deferred {
+                control: pending.control,
+                payload: pending.payload,
+                cursor,
+            });
         }
     }
 
-    /// Paints `image` at the cursor's cell and records the rectangle.
-    fn place(&mut self, control: &Control, image: &Image, buffer: &mut TextBuffer) {
+    /// Paints `image` at `start` and records the rectangle.
+    fn place(&mut self, control: &Control, image: &Image, start: (i32, i32), buffer: &mut TextBuffer) {
         // A retransmit of the same id replaces the old placement.
         self.erase_id(control.id, buffer);
 
         let (cell_width, cell_height) = Self::cell_size();
         let page_width = buffer.screen_width();
         let page_height = buffer.screen_height();
-        let start = buffer.cursor().position();
 
         if start.1 >= page_width || start.0 >= page_height {
             return;

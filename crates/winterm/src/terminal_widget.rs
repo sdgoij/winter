@@ -111,7 +111,7 @@ impl Pane {
             let Some(event) = egui_event(event) else {
                 continue;
             };
-            let outcome = input::translate(&event, sides);
+            let outcome = input::translate(&event, sides, false);
 
             // Typing returns to the live screen, as upstream's TrySnapOnInput.
             if outcome.activity {
@@ -1021,6 +1021,11 @@ fn egui_event(event: egui::Event) -> Option<input::Event> {
             pressed,
             repeat,
             modifiers: modifiers_of(modifiers),
+            // egui has no Win32 key identity, so the legacy encoding is used.
+            virtual_key: 0,
+            scan_code: 0,
+            repeat_count: 1,
+            codepoint: None,
         }),
         _ => None,
     }

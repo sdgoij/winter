@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use server::pty::PtySize;
 use term::Terminal;
 use term::input::{KeyEvent, MouseEvent};
+use types::InputModes;
 use types::color_table::ColorTable;
 
 use crate::term_connection::Connection;
@@ -127,6 +128,15 @@ impl Control {
         if let Some(bytes) = self.terminal.handle_key(event) {
             self.write(&bytes);
         }
+    }
+
+    /// The terminal's input modes.
+    ///
+    /// The shell asks whether the pty wants Win32 input records, because that
+    /// decides whether a printable key is sent as a key or left to its
+    /// character event (ADR 056).
+    pub fn input_modes(&self) -> InputModes {
+        self.terminal.dispatch().input_modes()
     }
 
     /// Encodes a mouse event with the terminal's tracking mode and sends it.

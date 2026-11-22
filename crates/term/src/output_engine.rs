@@ -1203,6 +1203,8 @@ mod tests {
         let mut machine = StateMachine::new(OutputStateMachineEngine::new(AdaptDispatch::new()));
         let payload = vt::encode(&[255u8, 0, 0, 255]);
         machine.process_string(format!("\x1b_Ga=T,f=32,s=1,v=1,c=1,r=1,i=1;{payload}\x1b\\").as_bytes());
+        // The terminal paints the images that finished arriving in a batch.
+        machine.engine_mut().dispatch_mut().flush_graphics();
 
         let buffer = machine
             .engine_mut()

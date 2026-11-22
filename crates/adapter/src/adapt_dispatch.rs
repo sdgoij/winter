@@ -1095,6 +1095,17 @@ impl AdaptDispatch {
         &mut self.page_manager
     }
 
+    /// Paints the images whose payloads finished arriving in this batch.
+    ///
+    /// A program that redraws itself retransmits the same image every frame;
+    /// decoding only the last one keeps a fast animation from starving the
+    /// host's event loop (ADR 056).
+    pub fn flush_graphics(&mut self) {
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|error| error.into_inner());
+        self.kitty.flush(&mut buffer);
+    }
+
     /// Returns the sixel parser.
     pub fn sixel_parser(&self) -> std::sync::Arc<std::sync::Mutex<SixelParser>> {
         std::sync::Arc::clone(&self.sixel_parser)
@@ -5374,6 +5385,8 @@ mod tests {
         // second chunk is the game's continuation shape (`m` only).
         dispatch.apc(format!("Ga=T,f=32,s=2,v=1,c=2,r=1,i=7,m=1;{}", &payload[..4]).as_bytes());
         dispatch.apc(format!("Gm=0;{}", &payload[4..]).as_bytes());
+        // The host paints the images whose payloads finished in the batch.
+        dispatch.flush_graphics();
 
         {
             let buffer = dispatch.page_manager_mut().active_page().buffer();

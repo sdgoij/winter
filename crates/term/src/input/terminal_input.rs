@@ -359,7 +359,13 @@ impl TerminalInput {
 
     /// Encodes an event as a win32-input-mode record.
     fn win32_output(&self, event: &KeyEvent, modes: &InputModes) -> String {
-        let character = event.codepoint.map_or(0, |character| character as u16);
+        // The record's character field is one UTF-16 code unit; a scalar above
+        // the BMP has no single-unit form, and its text arrives through the
+        // character path instead.
+        let character = event
+            .codepoint
+            .and_then(|character| u16::try_from(u32::from(character)).ok())
+            .unwrap_or(0);
         let down = u16::from(event.pressed);
         format!(
             "{}{};{};{};{};{};{}_",
@@ -1470,6 +1476,26 @@ mod tests {
         assert_eq!(
             TerminalInput::new().handle_key(&event, &modes).as_deref(),
             Some("\x1b[65;30;97;1;16;1_")
+        );
+    }
+
+    #[test]
+    fn win32_input_mode_reports_a_release() {
+        // A record's key-down field is what lets a console client hold a key:
+        // Kd=0 is the release, not a synthesised one.
+        let modes = InputModes {
+            win32_input: true,
+            ..InputModes::default()
+        };
+        let event = KeyEvent {
+            virtual_key: 0x53,
+            scan_code: 0x1F,
+            pressed: false,
+            ..KeyEvent::down(Key::Char('s'))
+        };
+        assert_eq!(
+            TerminalInput::new().handle_key(&event, &modes).as_deref(),
+            Some("\x1b[83;31;0;0;0;1_")
         );
     }
 

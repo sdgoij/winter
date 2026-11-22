@@ -66,6 +66,16 @@ struct Tab {
     find: FindBar,
 }
 
+/// A key press waiting for the character it produced.
+struct PendingKey {
+    key: Key,
+    repeat: bool,
+    modifiers: input::Modifiers,
+    virtual_key: u16,
+    scan_code: u16,
+    repeat_count: u16,
+}
+
 /// The application's state and its messages.
 struct Shell {
     tabs: Tabs<Tab>,
@@ -110,6 +120,15 @@ struct Shell {
     /// Whether the first focus request already succeeded, so a tab click is not
     /// immediately undone by the next tick.
     focus_attempted: bool,
+    /// The key press whose character has not arrived yet.
+    ///
+    /// A WinUI press is raised as `KeyDown` and then `CharacterReceived`; a
+    /// Win32 input record carries both, so the press is held until its
+    /// character arrives (ADR 056).
+    pending: Option<PendingKey>,
+    /// Whether the pane should take the keyboard back after XAML hands it to
+    /// the window on a space, until the instant it stops trying.
+    restore_focus_until: Option<Instant>,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
     /// The cell and block flag a left press started on, so a drag begins a
@@ -144,6 +163,9 @@ struct Shell {
 pub(super) enum Message {
     Tick,
     Key(KeyEventInfo),
+    /// A key release; WinUI raises it as its own event, not as a press with a
+    /// status flag.
+    KeyUp(KeyEventInfo),
     Char(CharacterEventInfo),
     Resize {
         width: f64,
@@ -312,6 +334,8 @@ impl Component for Shell {
             _observation: observation,
             timer,
             sides: input::ModifierSides::default(),
+            pending: None,
+            restore_focus_until: None,
             blink_on: true,
             blink_at: Instant::now(),
             focused: false,
@@ -346,6 +370,7 @@ impl Component for Shell {
         let dialog = keys.clone();
         let menu_sender = keys.clone();
         let escape = keys.clone();
+        let releases = keys.clone();
         let bindings = Rc::clone(&self.bindings);
 
         let items: Vec<KeyedView> = (0..self.tabs.len())
@@ -400,6 +425,16 @@ impl Component for Shell {
             .element_ref(&self.focus)
             .background(Color::rgb(12, 12, 12))
             .content(pane_content)
+            .on_key_up(RoutedCallback::new(move |info: KeyEventInfo| {
+                if find_open || menu_open {
+                    return false;
+                }
+                let _ = releases.send(Message::KeyUp(info));
+                // XAML's invocation runs on the space key-up, so the key-up a
+                // terminal consumed must be marked handled too or the pane
+                // loses focus.
+                true
+            }))
             .on_preview_key_down(RoutedCallback::new(move |info: KeyEventInfo| {
                 let pressed = !info.status.is_released;
                 let bound = key_of(info.key)
@@ -450,7 +485,10 @@ impl Component for Shell {
                 // `CharacterReceived`, which is the text path; the keys the
                 // terminal encodes itself are marked handled.
                 let _ = keys.send(Message::Key(info));
-                bound || !matches!(key_of(info.key), Some(Key::Char(_) | Key::Space))
+                // Space is handled here: XAML treats an unhandled space as an
+                // invocation and moves focus off the pane. Printing keys stay
+                // unhandled so their character event still arrives.
+                bound || !matches!(key_of(info.key), Some(Key::Char(_)))
             }))
             .on_character_received(RoutedCallback::new(move |info: CharacterEventInfo| {
                 if find_open || menu_open {
@@ -566,7 +604,8 @@ impl Component for Shell {
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         match message {
             Message::Tick => self.tick(context),
-            Message::Key(info) => self.key(info, context),
+            Message::Key(info) => self.key(info, true, context),
+            Message::KeyUp(info) => self.key(info, false, context),
             Message::Char(info) => self.character(info),
             Message::Resize {
                 width,
@@ -578,7 +617,17 @@ impl Component for Shell {
             Message::NewTab => self.open_tab(),
             Message::CloseTab(id) => self.close_tab(id, context),
             Message::Reorder(ids) => self.reorder(&ids),
-            Message::Focused(focused) => self.focused = focused,
+            Message::Focused(focused) => {
+                self.focused = focused;
+                if focused {
+                    self.restore_focus_until = None;
+                } else if self.restore_focus_until.is_some_and(|until| Instant::now() <= until) {
+                    // XAML gave the keyboard to the window after the terminal
+                    // consumed a space; it belongs to the pane.
+                    self.restore_focus_until = None;
+                    let _ = self.focus.request_focus();
+                }
+            }
             Message::Pressed(info) => self.pointer_pressed(info),
             Message::Moved(info) => self.pointer_moved(info),
             Message::Released(info) => self.pointer_released(info),
@@ -1004,11 +1053,11 @@ impl Shell {
     }
 
     /// Runs a bound chord, or turns the key into the active terminal's encoding.
-    fn key(&mut self, info: KeyEventInfo, context: &ComponentContext<Self>) {
+    fn key(&mut self, info: KeyEventInfo, pressed: bool, context: &ComponentContext<Self>) {
         let Some(key) = key_of(info.key) else {
             return;
         };
-        let pressed = !info.status.is_released;
+        let modifiers = modifiers(info.modifiers);
 
         // A bound chord is the window's: the shell consumes it before the tab
         // sees the event (ADR 023). Copy is the exception: with no selection
@@ -1027,23 +1076,57 @@ impl Shell {
             return;
         }
 
-        let event = input::Event::Key {
+        // Space is handled by the pane (so it keeps focus), which means no
+        // character event follows. Its character is layout-independent, so the
+        // key carries it instead (ADR 056).
+        if pressed && key == Key::Space {
+            self.flush_pending();
+            let printable = !modifiers.ctrl && !modifiers.alt && !modifiers.command;
+            self.send_input(&input::Event::Key {
+                key,
+                pressed: true,
+                repeat: info.status.was_down,
+                modifiers,
+                virtual_key: virtual_key(info.key),
+                scan_code: scan_code(info.status.scan_code),
+                repeat_count: repeat_count(info.status.repeat_count),
+                codepoint: printable.then_some(' '),
+            });
+            self.restore_focus_until = Some(Instant::now() + Duration::from_millis(500));
+            return;
+        }
+
+        // A printable key's character arrives in its own event. Hold the press
+        // so the Win32 record can carry it; otherwise the console would
+        // synthesise a press and a release together (ADR 056).
+        if pressed && input::produces_text(key, modifiers) {
+            self.flush_pending();
+            self.pending = Some(PendingKey {
+                key,
+                repeat: info.status.was_down,
+                modifiers,
+                virtual_key: virtual_key(info.key),
+                scan_code: scan_code(info.status.scan_code),
+                repeat_count: repeat_count(info.status.repeat_count),
+            });
+            return;
+        }
+
+        self.flush_pending();
+        self.send_input(&input::Event::Key {
             key,
             pressed,
             repeat: info.status.was_down && pressed,
-            modifiers: modifiers(info.modifiers),
-        };
+            modifiers,
+            virtual_key: virtual_key(info.key),
+            scan_code: scan_code(info.status.scan_code),
+            repeat_count: repeat_count(info.status.repeat_count),
+            codepoint: None,
+        });
 
-        let outcome = input::translate(&event, &mut self.sides);
-        let Some(tab) = self.tabs.active_mut() else {
-            return;
-        };
-        // Typing or pressing a key returns the view to the live screen.
-        if outcome.activity {
-            tab.view.scroll_to_bottom();
-        }
-        for key in outcome.keys {
-            tab.control.send_key(&key);
+        // The keyboard may be handed to the window on the space release too.
+        if !pressed && key == Key::Space {
+            self.restore_focus_until = Some(Instant::now() + Duration::from_millis(500));
         }
     }
 
@@ -1060,10 +1143,51 @@ impl Shell {
             return;
         }
 
-        let outcome = input::translate(&input::Event::Text(character.to_string()), &mut self.sides);
+        if let Some(pending) = self.pending.take() {
+            self.send_input(&input::Event::Key {
+                key: pending.key,
+                pressed: true,
+                repeat: pending.repeat,
+                modifiers: pending.modifiers,
+                virtual_key: pending.virtual_key,
+                scan_code: pending.scan_code,
+                repeat_count: pending.repeat_count,
+                codepoint: Some(character),
+            });
+        } else {
+            self.send_input(&input::Event::Text(character.to_string()));
+        }
+    }
+
+    /// Sends a held press without a character, so a dead key or a key whose
+    /// character never arrived is not lost.
+    fn flush_pending(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        self.send_input(&input::Event::Key {
+            key: pending.key,
+            pressed: true,
+            repeat: pending.repeat,
+            modifiers: pending.modifiers,
+            virtual_key: pending.virtual_key,
+            scan_code: pending.scan_code,
+            repeat_count: pending.repeat_count,
+            codepoint: None,
+        });
+    }
+
+    /// Translates an event with the active terminal's modes and sends it.
+    fn send_input(&mut self, event: &input::Event) {
+        let win32 = self
+            .tabs
+            .active()
+            .is_some_and(|tab| tab.control.input_modes().win32_input);
+        let outcome = input::translate(event, &mut self.sides, win32);
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
+        // Typing or pressing a key returns the view to the live screen.
         if outcome.activity {
             tab.view.scroll_to_bottom();
         }
@@ -1839,6 +1963,21 @@ fn modifiers(modifiers: InputModifiers) -> input::Modifiers {
         alt: modifiers.contains(InputModifiers::ALT),
         command: modifiers.contains(InputModifiers::WINDOWS),
     }
+}
+
+/// The Win32 virtual-key code a record carries.
+fn virtual_key(key: VirtualKey) -> u16 {
+    u16::try_from(key.0).unwrap_or(0)
+}
+
+/// The Win32 scan code a record carries.
+fn scan_code(code: u32) -> u16 {
+    u16::try_from(code).unwrap_or(0)
+}
+
+/// The repeat count a record carries; a record's count is never zero.
+fn repeat_count(count: u32) -> u16 {
+    u16::try_from(count).unwrap_or(1).max(1)
 }
 
 #[cfg(test)]

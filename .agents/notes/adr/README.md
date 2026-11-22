@@ -84,3 +84,5 @@ Rules:
 | [053](053-ctrl-c-declines-without-selection.md) | `ctrl+c` is bound to copy; copy declines when nothing is selected, so `^C` still reaches the program | Accepted |
 | [054](054-kitty-graphics-over-apc.md) | Kitty graphics ride APC; the parser delivers them and the adapter paints the subset; the Windows pty host must forward them | Accepted |
 | [055](055-headless-openconsole.md) | The Windows pty launches a headless `OpenConsole.exe` when one is found, so image sequences reach the terminal; the inbox pseudoconsole is the fallback | Accepted |
+| [056](056-win32-input-records.md) | The WinUI shell sends Win32 input records so a key-down and its key-up are separate events; Space is handled and carries its own character | Accepted |
+| [057](057-batched-kitty-images.md) | A completed kitty image is deferred and painted at the end of the batch; a retransmission of the same id replaces it | Accepted |
