@@ -28,8 +28,9 @@ for a program's OSC 777, a settings window that reports the file, lists what it 
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
-tabs and panes; Phase 10 has the settings file, its profiles, its keybindings,
-its colour schemes, the window themes the tab strip paints, the default file a
+tabs, panes and the shell's own modules (ADR 038); Phase 10 has the settings
+file, its profiles, its keybindings, its colour schemes, the window themes the
+tab strip paints, the default file a
 first start is written, the migration from the earlier JSON file and the table
 that names a scheme's colours; Phase
 11 has the bell and DECPS as tones and a flashing
@@ -1210,9 +1211,11 @@ everywhere. A native backend replaces those five without touching `session.rs` o
 
 **Estimated effort:** 5 weeks (1 wk for tests)
 
-Phase 9 has started inside the Phase 8 shell: `crates/winterm/src/tabs.rs` is
-the tab list (add, close, select, wrap), `layout.rs` is the pane tree, and
-`app.rs` draws the strip, splits the panes and owns the window-level chords:
+Phase 9 is the shell's own modules (ADR 038): `crates/winterm/src/tabs.rs` is
+the tab list (add, close, select, wrap), `layout.rs` is the pane tree,
+`terminal_widget.rs` paints a pane and translates its input, `config.rs` edits
+the settings, and `app.rs` draws the strip, splits the panes and owns the
+window-level chords:
 Ctrl+Shift+T/W (tab), Ctrl+Shift+D/E (split), Ctrl+Tab (switch), Alt+Arrow
 (focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard), Ctrl+Shift+P
 (the command palette) and Ctrl+Shift+F (the find bar). The plus menu starts any
