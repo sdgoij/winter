@@ -3,8 +3,12 @@
 //! Upstream splits selection across two owners: the console host owns
 //! `SCREEN_INFORMATION`'s selection (ADR 014), and the terminal application
 //! owns its own in `ControlCore`/`ControlInteractivity` under `src/cascadia`.
-//! This is the application's: screen cells, moved by the mouse, and copied
-//! through the buffer's [`CopyRequest`] path.
+//! This is the application's: cells in document coordinates, moved by the
+//! mouse, and copied through the buffer's [`CopyRequest`] path.
+//!
+//! Document coordinates run through the history first and the visible screen
+//! last, so a selection keeps its text when the view scrolls and can cross
+//! into the scrollback.
 //!
 //! The module is toolkit-free (ADR 018). It knows about rows, columns and
 //! time; it does not know about pixels, a window, or egui.
@@ -20,7 +24,7 @@ const MULTI_CLICK: Duration = Duration::from_millis(500);
 /// The highest click count a selection distinguishes.
 const MAX_CLICK_COUNT: usize = 3;
 
-/// A selection in screen cells, `(column, row)`.
+/// A selection in document cells, `(column, document row)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
     /// Where the drag started.
@@ -88,7 +92,7 @@ impl Selection {
             trim_trailing_whitespace: false,
             include_line_break: true,
             format_wrapped_rows: true,
-            buffer_coordinates: false,
+            buffer_coordinates: true,
         };
         buffer.get_plain_text(&request)
     }
@@ -150,14 +154,10 @@ impl View {
 
     /// Scrolls by `lines`, positive towards the history.
     ///
-    /// The selection is in screen cells, so a scroll that changes the view
-    /// clears it rather than pointing at different text.
+    /// The selection is in document coordinates, so it survives a scroll and
+    /// can be extended across the boundary between history and screen.
     pub fn scroll_by(&mut self, lines: i32, max: i32) {
-        let next = (self.scroll + lines).clamp(0, max.max(0));
-        if next != self.scroll {
-            self.scroll = next;
-            self.selection = None;
-        }
+        self.scroll = (self.scroll + lines).clamp(0, max.max(0));
     }
 
     /// Returns to the live screen.
@@ -251,19 +251,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scrolling_clamps_and_clears_the_selection() {
+    fn scrolling_clamps_and_keeps_the_selection() {
         let mut view = View::new();
         view.select((1, 1), false);
 
         view.scroll_by(2, 3);
         assert_eq!(view.scroll(), 2);
-        assert!(view.selection().is_none());
+        assert!(view.selection().is_some());
 
         view.scroll_by(5, 3);
         assert_eq!(view.scroll(), 3);
 
         view.scroll_by(-10, 3);
         assert_eq!(view.scroll(), 0);
+    }
+
+    #[test]
+    fn a_selection_in_the_history_copies_the_history() {
+        let mut buffer = TextBuffer::with_dimensions(6, 2, 4);
+        buffer.write_string("one");
+        buffer.scroll_region_up(0, 1);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("two");
+
+        let mut view = View::new();
+        view.select((0, 0), false);
+        view.extend((2, 2));
+
+        let selection = view.selection().expect("selection");
+        assert_eq!(selection.text(&buffer), "one   \r\n      \r\ntwo");
     }
 
     #[test]

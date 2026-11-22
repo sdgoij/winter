@@ -696,13 +696,30 @@ impl TextBuffer {
         self.scrollback.len()
     }
 
-    /// Returns the scrollback row at `index`, oldest first.
+    /// Returns how many rows the document holds: history plus the screen.
+    pub fn document_height(&self) -> i32 {
+        self.scrollback.len() as i32 + self.screen_height
+    }
+
+    /// Returns the row at `line` in document order: history first, then the
+    /// visible screen.
     ///
-    /// This is the attribute-carrying counterpart of
-    /// [`scrollback_row_text`](Self::scrollback_row_text); a painter needs the
-    /// runs, not just the characters.
-    pub fn scrollback_row(&self, index: usize) -> Option<&Row> {
-        self.scrollback.get(index)
+    /// This is the coordinate system a copy request with
+    /// `buffer_coordinates` uses, and the one a scrolled viewport paints from.
+    /// It is not the fixed-slot mapping of
+    /// [`get_row_by_buffer_line`](Self::get_row_by_buffer_line): document row 0
+    /// is the oldest row still held, wherever the ring happens to sit.
+    pub fn get_row_by_document_line(&self, line: i32) -> Option<&Row> {
+        if line < 0 {
+            return None;
+        }
+
+        let history = self.scrollback.len() as i32;
+        if line < history {
+            self.scrollback.get(line as usize)
+        } else {
+            self.get_row_at_screen_line(line - history)
+        }
     }
 
     /// Returns the text of a scrollback row, oldest first.
@@ -1076,6 +1093,19 @@ impl TextBuffer {
     /// Returns the columns and line-break flag for one row of a copy request.
     ///
     /// Ported from `TextBuffer::_RowCopyHelper`.
+    /// Returns the row a copy request addresses at `row`.
+    ///
+    /// Screen coordinates address the visible screen; buffer coordinates
+    /// address the document, history first. Upstream's `GetRowByOffset` is the
+    /// second mapping, which is what lets a selection cross into scrollback.
+    fn request_row(&self, request: &CopyRequest, row: i32) -> Option<&Row> {
+        if request.buffer_coordinates {
+            self.get_row_by_document_line(row)
+        } else {
+            self.get_row_at_screen_line(row)
+        }
+    }
+
     fn row_copy_helper(&self, request: &CopyRequest, row_index: i32, row: &Row) -> (i32, i32, bool) {
         let rendition = row.line_rendition();
 
@@ -1140,7 +1170,7 @@ impl TextBuffer {
 
         let mut text = String::new();
         for row_index in request.begin.y..=request.end.y {
-            let Some(row) = self.get_row_at_screen_line(row_index) else {
+            let Some(row) = self.request_row(request, row_index) else {
                 continue;
             };
 
@@ -1192,7 +1222,7 @@ impl TextBuffer {
         html.push_str("\">");
 
         for row_index in request.begin.y..=request.end.y {
-            let Some(row) = self.get_row_at_screen_line(row_index) else {
+            let Some(row) = self.request_row(request, row_index) else {
                 continue;
             };
 
@@ -1342,7 +1372,7 @@ impl TextBuffer {
             content.push_str(&format!("\\chshdng0\\chcbpat{}", color_index(background)));
 
             for row_index in request.begin.y..=request.end.y {
-                let Some(row) = self.get_row_at_screen_line(row_index) else {
+                let Some(row) = self.request_row(request, row_index) else {
                     continue;
                 };
 
@@ -1934,6 +1964,54 @@ mod tests {
             concat!("12345", "  345", "123  ", "  3  ", "     ")
         );
         assert_eq!(buffer.get_plain_text(&request(false, false, true)), "12345  345123  3");
+    }
+
+    #[test]
+    fn document_rows_reach_into_the_scrollback() {
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 4);
+        buffer.write_string("one");
+        buffer.scroll_region_up(0, 1);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("two");
+
+        assert_eq!(buffer.document_height(), 3);
+        assert_eq!(
+            buffer.get_row_by_document_line(0).map(Row::get_text),
+            Some("one".to_string())
+        );
+        assert_eq!(
+            buffer.get_row_by_document_line(1).map(Row::get_text),
+            Some(String::new())
+        );
+        assert_eq!(
+            buffer.get_row_by_document_line(2).map(Row::get_text),
+            Some("two  ".to_string())
+        );
+        assert!(buffer.get_row_by_document_line(3).is_none());
+        assert!(buffer.get_row_by_document_line(-1).is_none());
+    }
+
+    #[test]
+    fn a_document_copy_reaches_into_the_scrollback() {
+        let mut buffer = TextBuffer::with_dimensions(6, 2, 4);
+        buffer.write_string("one");
+        buffer.scroll_region_up(0, 1);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.write_string("two");
+
+        let request = CopyRequest {
+            begin: Point::new(0, 0),
+            end: Point::new(3, 2),
+            min_x: 0,
+            max_x: 3,
+            block_selection: false,
+            trim_trailing_whitespace: false,
+            include_line_break: true,
+            format_wrapped_rows: true,
+            buffer_coordinates: true,
+        };
+
+        assert_eq!(buffer.get_plain_text(&request), "one   \r\n      \r\ntwo");
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub struct Screen {
     pub width: i32,
     /// The screen height in cells.
     pub height: i32,
+    /// The document row shown at the top of the screen.
+    pub top: i32,
     /// One entry per screen row.
     pub rows: Vec<RowSnapshot>,
     /// The cursor cell, zero-based, `(column, row)`.
@@ -54,21 +56,17 @@ pub fn snapshot(buffer: &TextBuffer) -> Screen {
 pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
     let width = buffer.screen_width();
     let height = buffer.screen_height();
-    let history = buffer.scrollback_len() as i32;
-    let scroll = scroll.clamp(0, history);
+    let total = buffer.document_height();
+    let scroll = scroll.clamp(0, (total - height).max(0));
 
-    // History rows come first in document order, so the first visible row is
-    // `history - scroll`.
-    let first = history - scroll;
+    // The document is history first, then the screen, so the first visible
+    // row is the document height minus the screen and the scroll.
+    let first = (total - height - scroll).max(0);
     let rows = (0..height)
         .map(|offset| {
-            let index = first + offset;
-            let line = if index < history {
-                buffer.scrollback_row(index as usize)
-            } else {
-                buffer.get_row_at_screen_line(index - history)
-            };
-            line.map_or_else(|| RowSnapshot { runs: Vec::new() }, |line| row_snapshot(line, width))
+            buffer
+                .get_row_by_document_line(first + offset)
+                .map_or_else(|| RowSnapshot { runs: Vec::new() }, |line| row_snapshot(line, width))
         })
         .collect();
 
@@ -76,6 +74,7 @@ pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
     Screen {
         width,
         height,
+        top: first,
         rows,
         cursor: cursor.position(),
         cursor_visible: cursor.is_visible() && scroll == 0,
@@ -150,10 +149,12 @@ mod tests {
         assert_eq!(buffer.scrollback_len(), 1);
 
         let live = snapshot_at(&buffer, 0);
+        assert_eq!(live.top, 1);
         assert_eq!(live.rows[1].runs[0].text, "two  ");
         assert!(live.cursor_visible);
 
         let history = snapshot_at(&buffer, 1);
+        assert_eq!(history.top, 0);
         assert_eq!(history.rows[0].runs[0].text, "one  ");
         assert_eq!(history.rows[1].runs[0].text, "     ");
         assert!(!history.cursor_visible);

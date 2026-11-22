@@ -236,6 +236,12 @@ impl App {
             return;
         };
 
+        // Selection is in document coordinates: history first, then the
+        // screen. The pointer is clamped to the grid, so the row is in range.
+        let history = self.max_scroll();
+        let document_row = screen_to_document(history, self.view.scroll(), cell_position.1);
+        let document_position = (cell_position.0, document_row);
+
         let forwards = forwards_to_application(self.terminal.is_tracking_mouse_input(), input.modifiers.shift);
 
         if input.scroll != 0.0 {
@@ -288,20 +294,19 @@ impl App {
             self.last_mouse_cell = None;
 
             if input.primary_pressed {
-                self.view.scroll_to_bottom();
-                let count = self.view.click(cell_position, Instant::now());
+                let count = self.view.click(document_position, Instant::now());
 
                 if count >= 3 {
                     let width = self.screen_width();
-                    self.view.select_line(cell_position.1, width);
+                    self.view.select_line(document_row, width);
                 } else if count == 2 {
-                    let text = self.row_text(cell_position.1);
-                    self.view.select_word(&text, cell_position);
+                    let text = self.row_text(document_row);
+                    self.view.select_word(&text, document_position);
                 } else {
-                    self.view.select(cell_position, input.modifiers.alt);
+                    self.view.select(document_position, input.modifiers.alt);
                 }
             } else if input.primary_down && self.view.selection().is_some() {
-                self.view.extend(cell_position);
+                self.view.extend(document_position);
             }
         }
     }
@@ -351,11 +356,11 @@ impl App {
         Some((column, row))
     }
 
-    fn row_text(&mut self, row: i32) -> String {
+    fn row_text(&mut self, document_row: i32) -> String {
         let buffer = self.terminal.page_manager_mut().active_page().buffer();
         match buffer.read() {
             Ok(buffer) => buffer
-                .get_row_at_screen_line(row)
+                .get_row_by_document_line(document_row)
                 .map(buffer::Row::get_text)
                 .unwrap_or_default(),
             Err(_) => String::new(),
@@ -448,7 +453,9 @@ impl App {
 
         if let Some(selection) = self.view.selection() {
             for row in 0..screen.height {
-                let Some((start, end)) = selection.row_span(row) else {
+                // The selection is in document coordinates; the snapshot says
+                // which document row is painted on screen row zero.
+                let Some((start, end)) = selection.row_span(screen.top + row) else {
                     continue;
                 };
                 let start = start.max(0);
@@ -549,6 +556,14 @@ struct PointerInput {
     secondary_released: bool,
     scroll: f32,
     modifiers: egui::Modifiers,
+}
+
+/// Maps a screen row to a document row for the current scroll.
+///
+/// Document row zero is the oldest row still held; the screen's first row is
+/// `history - scroll`.
+const fn screen_to_document(history: i32, scroll: i32, screen_row: i32) -> i32 {
+    history - scroll + screen_row
 }
 
 /// Returns whether the application, rather than the selection, gets the mouse.
@@ -810,6 +825,13 @@ mod tests {
         assert_eq!(to_cells(0), 1);
         assert_eq!(to_cells(120), 120);
         assert_eq!(to_cells(i32::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn a_screen_row_maps_into_the_document() {
+        assert_eq!(screen_to_document(5, 2, 0), 3);
+        assert_eq!(screen_to_document(5, 0, 4), 9);
+        assert_eq!(screen_to_document(0, 0, 0), 0);
     }
 
     #[test]
