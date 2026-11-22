@@ -182,6 +182,14 @@ pub trait RenderEngine {
         Ok(())
     }
 
+    /// Changes the colours the engine paints defaults with, as `COLORREF`s.
+    ///
+    /// The default is a no-op for a back end that takes its palette from the
+    /// frame; the atlas engine fills its background layer with these.
+    fn update_default_colors(&mut self, _background: u32, _foreground: u32) -> RenderResult<()> {
+        Ok(())
+    }
+
     /// Measures the font a desired font would produce without loading it.
     fn get_proposed_font(&mut self, desired: &FontInfoDesired, info: &mut FontInfo, dpi: i32) -> RenderResult<()>;
 

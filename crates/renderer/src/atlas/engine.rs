@@ -415,6 +415,16 @@ impl RenderEngine for AtlasEngine {
         Ok(())
     }
 
+    fn update_default_colors(&mut self, background: u32, foreground: u32) -> RenderResult<()> {
+        if self.settings.misc.background_color != background || self.settings.misc.foreground_color != foreground {
+            self.settings.misc.background_color = background;
+            self.settings.misc.foreground_color = foreground;
+            self.current_colors = (argb_from_colorref(background), argb_from_colorref(foreground));
+            self.mark_all_dirty();
+        }
+        Ok(())
+    }
+
     fn get_proposed_font(&mut self, _desired: &FontInfoDesired, _info: &mut FontInfo, _dpi: i32) -> RenderResult<()> {
         Ok(())
     }
@@ -494,6 +504,25 @@ mod tests {
             .update_viewport(InclusiveRect::new(0, 0, 3, 0))
             .expect("viewport");
         (engine, log)
+    }
+
+    #[test]
+    fn new_default_colours_repaint_the_background_layer() {
+        let (mut engine, _log) = engine();
+
+        engine
+            .update_default_colors(0x0000_1234, 0x00AB_CDEF)
+            .expect("default colours");
+        engine.paint_background().expect("background");
+
+        // COLORREF 0x001234 is R=0x34, G=0x12, B=0x00 -> 0xFF341200.
+        let depth = engine.payload().color_bitmap_depth_stride;
+        assert!(
+            engine.payload().color_bitmap[..depth]
+                .iter()
+                .all(|cell| *cell == 0xFF34_1200),
+            "the background layer kept the old colour"
+        );
     }
 
     #[test]

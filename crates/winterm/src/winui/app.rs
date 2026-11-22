@@ -20,6 +20,7 @@ use renderer::{
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::Key;
+use types::color_table::ColorAlias;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
@@ -27,6 +28,7 @@ use crate::input;
 use crate::session::Session;
 use crate::term_control::Control;
 use crate::term_events::TerminalEvent;
+use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
@@ -35,9 +37,6 @@ use super::surface::Surface;
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
 const INITIAL_ROWS: i32 = 30;
-/// The face size in DIPs; the rasteriser is given this times the composition
-/// scale, so the grid is measured in physical pixels.
-const FONT_SIZE: f32 = 16.0;
 /// Far beyond any display, and it keeps a bad metric from asking the terminal
 /// for an allocation it can never fill.
 const MAX_CELLS: i32 = 1024;
@@ -64,6 +63,8 @@ struct Shell {
     blink_at: Instant,
     focused: bool,
     face: PathBuf,
+    /// The face size in DIPs, from the settings file.
+    font_size: f32,
     /// The cell size in physical pixels at the current composition scale.
     cell: (u16, u16),
     /// The composition scale the face was rasterised for.
@@ -73,7 +74,10 @@ struct Shell {
     /// The window's opening client size in DIPs. It is a constant, so the
     /// declaration only resizes the window once and never fights the user.
     initial_client: (f64, f64),
+    /// The default background and foreground, as `COLORREF`s, so a face rebuilt
+    /// at a new scale keeps the scheme.
     background: u32,
+    foreground: u32,
 }
 
 /// What the window sends back to the component.
@@ -99,16 +103,27 @@ impl Component for Shell {
     fn create(_input: &(), context: &ComponentContext<Self>) -> Self {
         let grid = (INITIAL_COLUMNS, INITIAL_ROWS);
         let size = PtySize::new(INITIAL_COLUMNS as u16, INITIAL_ROWS as u16);
-        let session = Session::spawn(&PtyCommand::new("powershell.exe"), size)
+
+        // A fresh installation is given a file to edit, as the egui shell does
+        // (ADR 034). A broken file still yields the defaults.
+        settings::ensure_file();
+        let loaded = settings::load_with_report();
+        let terminal = TerminalSettings::resolve(&loaded.settings);
+        let font_size = loaded.settings.font.size;
+
+        let session = Session::spawn(&terminal.command, size)
+            .or_else(|_| Session::spawn(&PtyCommand::new("powershell.exe"), size))
             .or_else(|_| Session::spawn(&PtyCommand::new("cmd.exe"), size))
             .expect("a shell");
-        let control = Control::new(Box::new(session), grid);
+        let mut control = Control::new(Box::new(session), grid);
+        control.apply_scheme(terminal.scheme.as_ref());
 
         let face = face_path();
-        let fonts = font_setup(&face, 1.0, grid);
+        let fonts = font_setup(&face, font_size, 1.0, grid);
         let cell = fonts.settings.font.cell_size;
-        let background = fonts.settings.misc.background_color;
-        let (renderer, shared) = renderer_for(fonts, grid);
+        let (mut renderer, shared) = renderer_for(fonts, grid);
+        let (background, foreground) = default_colors(&control);
+        let _ = renderer.set_default_colors(background, foreground);
 
         let panel = ElementRef::<SwapChainPanel>::new();
         let surface = Rc::new(RefCell::new(None::<Surface>));
@@ -167,11 +182,12 @@ impl Component for Shell {
             _observation: observation,
             timer,
             sides: input::ModifierSides::default(),
-            title: "winterm".to_string(),
+            title: terminal.title.clone(),
             blink_on: true,
             blink_at: Instant::now(),
             focused: false,
             face,
+            font_size,
             cell,
             scale: 1.0,
             grid,
@@ -180,6 +196,7 @@ impl Component for Shell {
                 f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
             ),
             background,
+            foreground,
         }
     }
 
@@ -261,6 +278,10 @@ impl Shell {
         self.renderer
             .data_mut()
             .refresh(&mut self.control, &self.view, self.blink_on);
+        // The engine resolves a cell's colours through the renderer's table, not
+        // the data's copy, so the shell hands it the palette it painted with
+        // (`RenderSettings::set_color_table`).
+        sync_palette(&mut self.renderer, &self.control);
         self.renderer.invalidate_all();
 
         if self.renderer.paint_frame().is_ok() {
@@ -297,10 +318,10 @@ impl Shell {
 
     /// Replaces the renderer with one whose face is `scale` times the DIP size.
     fn rebuild_face(&mut self, scale: f32) {
-        let fonts = font_setup(&self.face, scale, self.grid);
+        let fonts = font_setup(&self.face, self.font_size, scale, self.grid);
         self.cell = fonts.settings.font.cell_size;
-        self.background = fonts.settings.misc.background_color;
-        let (renderer, shared) = renderer_for(fonts, self.grid);
+        let (mut renderer, shared) = renderer_for(fonts, self.grid);
+        let _ = renderer.set_default_colors(self.background, self.foreground);
         self.renderer = renderer;
         self.shared = shared;
     }
@@ -373,9 +394,9 @@ fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, Shar
 }
 
 /// Finds a monospace face and the metrics the atlas paints with at `scale`.
-fn font_setup(face: &Path, scale: f32, grid: (i32, i32)) -> Fonts {
+fn font_setup(face: &Path, base_size: f32, scale: f32, grid: (i32, i32)) -> Fonts {
     let scale = finite_scale(scale);
-    let size = FONT_SIZE * scale;
+    let size = base_size * scale;
 
     let shaper = FontDueRasterizer::from_file(face, size).expect("Consolas is installed");
     let rasterizer = FontDueRasterizer::from_file(face, size).expect("Consolas is installed");
@@ -439,6 +460,33 @@ fn face_path() -> PathBuf {
     PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into()))
         .join("Fonts")
         .join("consola.ttf")
+}
+
+/// Hands the renderer the palette the pane paints with.
+fn sync_palette(renderer: &mut Renderer<TerminalData>, control: &Control) {
+    if let Ok(table) = control.color_table().lock() {
+        renderer.settings_mut().set_color_table(table.clone());
+    }
+}
+
+/// The palette's default background and foreground, as `COLORREF`s.
+///
+/// The scheme was already applied to the control's table, so reading the table
+/// is the one place both shells agree on what the colours are.
+fn default_colors(control: &Control) -> (u32, u32) {
+    let handle = control.color_table();
+    let Ok(table) = handle.lock() else {
+        return (0x000C_0C0C, 0x00CC_CCCC);
+    };
+    let entry = |alias: ColorAlias| {
+        table
+            .get(table.alias_index(alias))
+            .map_or(0, |color| color.get_colorref())
+    };
+    (
+        entry(ColorAlias::DefaultBackground),
+        entry(ColorAlias::DefaultForeground),
+    )
 }
 
 /// A scale the panel reported, or 1.0 when it reported nonsense.
@@ -549,6 +597,69 @@ fn modifiers(modifiers: InputModifiers) -> input::Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scheme_reaches_the_pane_and_survives_a_resize() {
+        use crate::term_connection::tests::Buffer;
+
+        let text = r##"
+            version = 1
+            default_scheme = "probe"
+
+            [[profiles]]
+            name = "probe"
+            command = "cmd.exe"
+
+            [[schemes]]
+            name = "probe"
+            background = "#201020"
+            foreground = "#E0E0E0"
+        "##;
+        let file = settings::parse(text).expect("settings");
+        let terminal = TerminalSettings::resolve(&file);
+
+        let mut control = Control::new(Box::new(Buffer::with_output(b"")), (20, 5));
+        control.apply_scheme(terminal.scheme.as_ref());
+        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+
+        control.pump();
+        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+
+        control.resize(30, 10);
+        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+    }
+
+    #[test]
+    fn the_renderer_is_handed_the_panes_palette() {
+        use crate::term_connection::tests::Buffer;
+
+        let file = settings::parse(
+            r##"
+                version = 1
+                default_scheme = "probe"
+
+                [[schemes]]
+                name = "probe"
+                background = "#201020"
+                foreground = "#E0E0E0"
+            "##,
+        )
+        .expect("settings");
+        let terminal = TerminalSettings::resolve(&file);
+
+        let mut control = Control::new(Box::new(Buffer::with_output(b"")), (20, 5));
+        control.apply_scheme(terminal.scheme.as_ref());
+
+        let mut renderer = Renderer::new(
+            TerminalData::new(FontInfo::default(), RenderSettings::new(), 20, 5),
+            RenderSettings::new(),
+        );
+        sync_palette(&mut renderer, &control);
+
+        let table = renderer.settings().color_table();
+        let index = table.alias_index(ColorAlias::DefaultBackground);
+        assert_eq!(table.get(index).map(|color| color.get_colorref()), Some(0x0020_1020));
+    }
 
     #[test]
     fn a_panel_of_dips_fits_whole_cells() {

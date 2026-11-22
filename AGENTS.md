@@ -231,10 +231,11 @@ a `Connection` trait with the viewport and selection in the widget and an event
 queue for the bell, a notification and an exit — a shell that exits closes its
 tab (ADR 036) — split into `app.rs`, `terminal_widget.rs`, `config.rs`,
 `window.rs` and `icon.rs` (ADR 038). On Windows the shell is WinUI 3
-(`winui/`, ADRs 040–043): a native window with one pane on a `SwapChainPanel`,
+(`winui/`, ADRs 040–044): a native window with one pane on a `SwapChainPanel`,
 the pty polled on a timer, and the renderer's pixels blitted by Direct2D, with
 the pane's grid fitted to the panel's cells and the face rasterised at its
-composition scale; egui remains the shell on Linux and macOS. The shell has wheel
+composition scale, and a start that runs the settings file's profile and paints
+its font size and scheme; egui remains the shell on Linux and macOS. The shell has wheel
 scrollback, mouse selection that reaches into history and scrolls when a drag
 leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC

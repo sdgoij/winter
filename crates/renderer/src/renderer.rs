@@ -134,6 +134,14 @@ impl<D: RenderData> Renderer<D> {
         Ok(())
     }
 
+    /// Changes the default background and foreground every engine paints with.
+    pub fn set_default_colors(&mut self, background: u32, foreground: u32) -> RenderResult<()> {
+        for engine in &mut self.engines {
+            engine.update_default_colors(background, foreground)?;
+        }
+        Ok(())
+    }
+
     /// Records which hyperlink is under the pointer.
     ///
     /// A hovered hyperlink is underlined solidly instead of with the normal
@@ -589,6 +597,7 @@ mod tests {
         titles: Vec<String>,
         target_sizes: Vec<(u16, u16)>,
         viewports: Vec<InclusiveRect>,
+        default_colors: Vec<(u32, u32)>,
     }
 
     struct RecordingEngine {
@@ -747,6 +756,10 @@ mod tests {
             self.log.borrow_mut().target_sizes.push(target_size);
             Ok(())
         }
+        fn update_default_colors(&mut self, background: u32, foreground: u32) -> RenderResult<()> {
+            self.log.borrow_mut().default_colors.push((background, foreground));
+            Ok(())
+        }
         fn get_proposed_font(
             &mut self,
             _desired: &FontInfoDesired,
@@ -888,6 +901,19 @@ mod tests {
 
     fn screen_rect(width: i32, height: i32) -> Rect {
         Rect::new(0, 0, width, height)
+    }
+
+    #[test]
+    fn new_default_colours_reach_every_engine() {
+        let log = Rc::new(RefCell::new(Log::default()));
+        let mut renderer = Renderer::new(TestData::new(3, 2), RenderSettings::new());
+        renderer.add_engine(Box::new(RecordingEngine::new(Rc::clone(&log), Vec::new())));
+
+        renderer
+            .set_default_colors(0x0010_2030, 0x0040_5060)
+            .expect("default colours");
+
+        assert_eq!(log.borrow().default_colors, vec![(0x0010_2030, 0x0040_5060)]);
     }
 
     #[test]
