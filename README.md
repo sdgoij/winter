@@ -18,9 +18,9 @@ Early. The foundation is complete and tested; the emulator is not runnable yet.
 | [`crates/types`](crates/types) | Terminal vocabulary: colours, attributes, enums | Complete |
 | [`crates/buffer`](crates/buffer) | `OutputCell`, `Row`, `TextBuffer`, selection, search | No reflow yet |
 | [`crates/vt`](crates/vt) | DFA parser for VT escape sequences | Parser complete, corpus pending |
-| [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Print, SGR, cursor, margin and line handlers ported |
+| [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel, macros | Print, SGR, cursor, margin, line and erase handlers ported |
 
-596 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+604 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the cleanup list that stands
 between here and the renderer are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).

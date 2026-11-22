@@ -198,12 +198,14 @@ impl TextAttribute {
     }
 
     /// Sets standard erase attributes.
+    ///
+    /// Only the rendition flags go; the colours stay, which is what makes
+    /// erasing a coloured background fill the line with that colour. Ported from
+    /// `TextAttribute::SetStandardErase`, which clears the attrs, the hyperlink
+    /// and the mark kind and nothing else.
     pub fn set_standard_erase(&mut self) {
         self.attrs = CharacterAttributes::Normal;
         self.hyperlink_id = 0;
-        self.foreground = TextColor::new();
-        self.background = TextColor::new();
-        self.underline_color = TextColor::new();
         self.mark_kind = MarkKind::None;
     }
 
@@ -333,6 +335,20 @@ mod tests {
         assert!(!attr.is_faint());
         assert!(!attr.is_italic());
         assert!(!attr.is_blinking());
+    }
+
+    #[test]
+    fn standard_erase_clears_rendition_but_keeps_colours() {
+        let mut attr = TextAttribute::new();
+        attr.set_attrs(CharacterAttributes::Intense);
+        attr.set_foreground(TextColor::rgb(1, 2, 3));
+        attr.set_background(TextColor::rgb(4, 5, 6));
+
+        attr.set_standard_erase();
+
+        assert_eq!(attr.get_attrs(), CharacterAttributes::Normal);
+        assert_eq!(attr.get_foreground(), TextColor::rgb(1, 2, 3));
+        assert_eq!(attr.get_background(), TextColor::rgb(4, 5, 6));
     }
 
     #[test]

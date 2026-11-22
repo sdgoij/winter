@@ -11,6 +11,7 @@ use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
 use crate::term_dispatch::ITermDispatch;
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
+use types::TextAttribute;
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -337,6 +338,20 @@ impl AdaptDispatch {
         (buffer.screen_width(), buffer.screen_height())
     }
 
+    /// The attributes erasing writes, ported from `_GetEraseAttributes`.
+    ///
+    /// DECECM (erase colour mode) erases to the default background; otherwise the
+    /// page's current attributes are used, stripped of everything but colour.
+    fn erase_attributes(&mut self) -> TextAttribute {
+        if self.modes.contains(ModeFlags::DECECM) {
+            TextAttribute::new()
+        } else {
+            let mut attributes = self.page_manager.active_page().attributes();
+            attributes.set_standard_erase();
+            attributes
+        }
+    }
+
     /// Effective vertical margins for a page of `page_height` rows.
     ///
     /// Ported from `_GetVerticalMargins`: margins that are unset or out of range
@@ -576,6 +591,46 @@ fn do_line_feed(
     }
 }
 
+/// Fills a half-open rectangle (`bottom`/`right` exclusive) with erased cells.
+fn fill_region(
+    buffer: &mut buffer::TextBuffer,
+    top: VTInt,
+    left: VTInt,
+    bottom: VTInt,
+    right: VTInt,
+    attributes: TextAttribute,
+) {
+    if bottom <= top || right <= left {
+        return;
+    }
+    let mut cell = buffer::OutputCell::from_char(' ');
+    cell.set_attributes(attributes);
+    buffer.fill_rect(top, left, bottom - 1, right - 1, &cell);
+}
+
+/// Ported from `_SelectiveEraseRect`: clears the text of unprotected cells and
+/// leaves their attributes alone, which is what makes DECSED/DECSEL selective.
+fn selective_erase_region(buffer: &mut buffer::TextBuffer, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt) {
+    for row in top..bottom {
+        for column in left..right {
+            let attributes = buffer
+                .get_row_at_screen_line(row)
+                .map(|buffer_row| *buffer_row.get_cell(column).get_attributes());
+            let Some(attributes) = attributes else {
+                continue;
+            };
+            if attributes.is_protected() {
+                continue;
+            }
+            if let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) {
+                let mut cell = buffer::OutputCell::from_char(' ');
+                cell.set_attributes(attributes);
+                buffer_row.write_cell(column, cell);
+            }
+        }
+    }
+}
+
 impl Default for AdaptDispatch {
     fn default() -> Self {
         Self::new()
@@ -706,6 +761,103 @@ impl ITermDispatch for AdaptDispatch {
             buffer.scroll_region_left(top, bottom, left, right);
         } else if column < page_width - 1 {
             buffer.cursor_mut().set_position(row, column + 1);
+        }
+    }
+
+    fn erase_in_display(&mut self, erase_type: EraseType) {
+        if matches!(erase_type, EraseType::Scrollback) {
+            // A buffer with no scrollback has nothing above the screen to clear.
+            return;
+        }
+
+        let (page_width, page_height) = self.page_size();
+        let attributes = self.erase_attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+
+        match erase_type {
+            EraseType::FromBeginning => {
+                fill_region(&mut buffer, 0, 0, row, page_width, attributes);
+                fill_region(&mut buffer, row, 0, row + 1, column + 1, attributes);
+            }
+            EraseType::ToEnd => {
+                fill_region(&mut buffer, row, column, row + 1, page_width, attributes);
+                fill_region(&mut buffer, row + 1, 0, page_height, page_width, attributes);
+            }
+            EraseType::All => {
+                fill_region(&mut buffer, 0, 0, page_height, page_width, attributes);
+            }
+            EraseType::Scrollback => {}
+        }
+    }
+
+    fn erase_in_line(&mut self, erase_type: EraseType) {
+        let (page_width, _) = self.page_size();
+        let attributes = self.erase_attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+
+        match erase_type {
+            EraseType::FromBeginning => fill_region(&mut buffer, row, 0, row + 1, column + 1, attributes),
+            EraseType::ToEnd => fill_region(&mut buffer, row, column, row + 1, page_width, attributes),
+            EraseType::All => fill_region(&mut buffer, row, 0, row + 1, page_width, attributes),
+            EraseType::Scrollback => {}
+        }
+    }
+
+    fn erase_characters(&mut self, count: VTInt) {
+        if count <= 0 {
+            return;
+        }
+        let (page_width, _) = self.page_size();
+        let attributes = self.erase_attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+
+        // ECH never wraps: it stops at the end of the line.
+        let end = (column + count).min(page_width);
+        fill_region(&mut buffer, row, column, row + 1, end, attributes);
+    }
+
+    fn selective_erase_in_display(&mut self, erase_type: EraseType) {
+        let (page_width, page_height) = self.page_size();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+
+        match erase_type {
+            EraseType::FromBeginning => {
+                selective_erase_region(&mut buffer, 0, 0, row, page_width);
+                selective_erase_region(&mut buffer, row, 0, row + 1, column + 1);
+            }
+            EraseType::ToEnd => {
+                selective_erase_region(&mut buffer, row, column, row + 1, page_width);
+                selective_erase_region(&mut buffer, row + 1, 0, page_height, page_width);
+            }
+            EraseType::All => selective_erase_region(&mut buffer, 0, 0, page_height, page_width),
+            EraseType::Scrollback => {}
+        }
+    }
+
+    fn selective_erase_in_line(&mut self, erase_type: EraseType) {
+        let (page_width, _) = self.page_size();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let (row, column) = buffer.cursor().position();
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+
+        match erase_type {
+            EraseType::FromBeginning => selective_erase_region(&mut buffer, row, 0, row + 1, column + 1),
+            EraseType::ToEnd => selective_erase_region(&mut buffer, row, column, row + 1, page_width),
+            EraseType::All => selective_erase_region(&mut buffer, row, 0, row + 1, page_width),
+            EraseType::Scrollback => {}
         }
     }
 
@@ -995,12 +1147,17 @@ mod tests {
         dispatch.reverse_line_feed();
         dispatch.back_index();
         dispatch.forward_index();
+        dispatch.erase_in_display(EraseType::All);
+        dispatch.erase_in_line(EraseType::All);
+        dispatch.erase_characters(1);
+        dispatch.selective_erase_in_display(EraseType::All);
+        dispatch.selective_erase_in_line(EraseType::All);
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.erase_in_line(EraseType::All);
+        dispatch.device_attributes();
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("erase_in_line"));
+        assert_eq!(dispatch.last_unhandled(), Some("device_attributes"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -1126,6 +1283,108 @@ mod tests {
 
         assert_eq!(dispatch.active_cursor_position(), (0, 79));
         assert_eq!(cell_text(&mut dispatch, 0, 0), "A");
+    }
+
+    #[test]
+    fn erase_in_line_to_end_blanks_the_tail() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("hello");
+        dispatch.cursor_position(1, 3);
+        dispatch.erase_in_line(EraseType::ToEnd);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 1), "e");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 4), " ");
+    }
+
+    #[test]
+    fn erase_in_line_from_beginning_blanks_the_head() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("hello");
+        dispatch.cursor_position(1, 3);
+        dispatch.erase_in_line(EraseType::FromBeginning);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 3), "l");
+    }
+
+    #[test]
+    fn erase_characters_stops_at_the_end_of_the_line() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(2, 1);
+        dispatch.print('Z');
+        dispatch.cursor_position(1, 1);
+        dispatch.erase_characters(1000);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 79), " ");
+        // The erase did not wrap into the next row.
+        assert_eq!(cell_text(&mut dispatch, 1, 0), "Z");
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+    }
+
+    #[test]
+    fn erase_in_display_all_blanks_every_row() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("top");
+        dispatch.cursor_position(2, 1);
+        dispatch.print_string("second");
+        dispatch.cursor_position(2, 3);
+        dispatch.erase_in_display(EraseType::All);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 1, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 23, 79), " ");
+        assert_eq!(dispatch.active_cursor_position(), (1, 2));
+    }
+
+    #[test]
+    fn erase_in_display_to_end_keeps_the_rows_above() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("top");
+        dispatch.cursor_position(2, 3);
+        dispatch.print_string("second");
+        dispatch.erase_in_display(EraseType::ToEnd);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), "t");
+        assert_eq!(cell_text(&mut dispatch, 1, 7), "d");
+        assert_eq!(cell_text(&mut dispatch, 1, 8), " ");
+        assert_eq!(cell_text(&mut dispatch, 2, 0), " ");
+    }
+
+    #[test]
+    fn erase_uses_the_page_attributes_unless_erase_colour_mode() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![31]));
+        dispatch.erase_in_line(EraseType::All);
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let cell = buffer.get_cell_data_at(0, 0).unwrap();
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+        drop(buffer);
+
+        // DECECM erases to the default background instead of the current colour.
+        dispatch.set_mode(ModeFlags::DECECM, true);
+        dispatch.erase_in_line(EraseType::All);
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let cell = buffer.get_cell_data_at(0, 0).unwrap();
+        assert!(cell.get_attributes().get_foreground().is_default());
+    }
+
+    #[test]
+    fn selective_erase_skips_protected_cells() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("AB");
+        dispatch.set_character_protection_attribute(&VTParameters::from_values(vec![1]));
+        dispatch.print('C');
+
+        dispatch.selective_erase_in_line(EraseType::All);
+
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 1), " ");
+        assert_eq!(cell_text(&mut dispatch, 0, 2), "C");
     }
 
     fn cell_text(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> String {
