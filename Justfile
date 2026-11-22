@@ -38,6 +38,10 @@ deny:
 test:
     cargo test --workspace
 
+# Release-mode suite with the ignored cases, which read the host's fonts.
+test-long:
+    cargo test --workspace --release -- --include-ignored
+
 # One crate: `just test-crate vt`.
 test-crate crate:
     cargo test -p {{crate}}

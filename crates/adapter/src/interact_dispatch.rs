@@ -1,6 +1,12 @@
 //! `IInteractDispatch` — Input state machine callback interface.
 //!
 //! Ported from `IInteractDispatch.hpp` in the Windows Terminal C++ codebase.
+//!
+//! The records it writes are [`InputRecord`], the portable form of upstream's
+//! `INPUT_RECORD`; they live in `types` because the host's input buffer stores
+//! the same vocabulary (ADR 002, ADR 010).
+
+use types::InputRecord;
 
 /// Interface for input state machine callbacks.
 /// When input events occur, they are dispatched to methods on this interface.
@@ -35,95 +41,61 @@ pub trait IInteractDispatch: std::fmt::Debug {
     fn focus_changed(&self, focused: bool);
 }
 
-/// Input record for keyboard/mouse events.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InputRecord {
-    /// Event type (keyboard, mouse, etc.).
-    pub event_type: InputEventType,
-    /// Virtual key code.
-    pub virtual_key: u16,
-    /// Virtual scan code.
-    pub virtual_scan_code: u16,
-    /// Unicode character.
-    pub unicode_char: char,
-    /// Control key state.
-    pub control_keys: ControlKeyState,
-    /// Window handle (platform-specific).
-    pub window_handle: usize,
-    /// Screen buffer dimensions.
-    pub screen_buffer_dimensions: (i32, i32),
-}
-
-/// Input event type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputEventType {
-    /// Keyboard event.
-    Keyboard,
-    /// Mouse event.
-    Mouse,
-    /// Mouse header event.
-    MouseHeader,
-    /// Focus event.
-    Focus,
-    /// Window events.
-    Window,
-    /// Menu event.
-    Menu,
-    /// Set event.
-    Set,
-}
-
-/// Control key state for keyboard events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ControlKeyState {
-    /// Left or right ctrl key is pressed.
-    pub left_ctrl_pressed: bool,
-    /// Left or right shift key is pressed.
-    pub left_shift_pressed: bool,
-    /// Right or left ctrl key is pressed.
-    pub right_ctrl_pressed: bool,
-    /// Right or left shift key is pressed.
-    pub right_shift_pressed: bool,
-    /// Scroll lock is active.
-    pub scroll_lock: bool,
-    /// Num lock is active.
-    pub num_lock: bool,
-    /// Caps lock is active.
-    pub caps_lock: bool,
-    /// Extended key flag.
-    pub extended_key: bool,
-    /// Alt key is pressed.
-    pub alt_pressed: bool,
-    /// Control key is pressed.
-    pub control_pressed: bool,
-    /// Shift key is pressed.
-    pub shift_pressed: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch_types::{VTInt, WindowManipulationType};
+    use types::{ControlKeyState, KeyEventRecord};
 
-    #[test]
-    fn test_input_record_default() {
-        let record = InputRecord {
-            event_type: InputEventType::Keyboard,
-            virtual_key: 0,
-            virtual_scan_code: 0,
-            unicode_char: '\0',
-            control_keys: ControlKeyState::default(),
-            window_handle: 0,
-            screen_buffer_dimensions: (0, 0),
-        };
-        assert_eq!(record.event_type, InputEventType::Keyboard);
-        assert!(!record.control_keys.control_pressed);
+    /// A dispatcher that records what it was given.
+    #[derive(Debug, Default)]
+    struct Recorder {
+        inputs: Vec<InputRecord>,
+    }
+
+    impl IInteractDispatch for Recorder {
+        fn is_vt_input_enabled(&self) -> bool {
+            true
+        }
+
+        fn write_input(&self, _input_events: &[InputRecord]) {}
+
+        fn write_ctrl_key(&self, _event: &InputRecord) {}
+
+        fn write_string(&self, _string: &str) {}
+
+        fn write_string_raw(&self, _string: &str) {}
+
+        fn window_manipulation(&self, _function: WindowManipulationType, _parameter1: VTInt, _parameter2: VTInt) {}
+
+        fn move_cursor(&self, _row: VTInt, _col: VTInt) {}
+
+        fn focus_changed(&self, _focused: bool) {}
     }
 
     #[test]
-    fn test_control_key_state() {
-        let state = ControlKeyState::default();
-        assert!(!state.left_ctrl_pressed);
-        assert!(!state.shift_pressed);
-        assert!(!state.control_pressed);
+    fn a_key_record_is_the_shared_vocabulary() {
+        let record = InputRecord::Key(KeyEventRecord {
+            control_keys: ControlKeyState {
+                left_ctrl: true,
+                ..ControlKeyState::default()
+            },
+            ..KeyEventRecord::pressed('c')
+        });
+
+        assert!(record.is_key());
+        assert_eq!(record.key().map(|key| key.character), Some('c'));
+        assert_eq!(
+            record.key().map(|key| key.control_keys.to_console_flags()),
+            Some(0x0008)
+        );
+    }
+
+    #[test]
+    fn the_trait_is_object_safe() {
+        let recorder = Recorder::default();
+        let dispatch: &dyn IInteractDispatch = &recorder;
+        assert!(dispatch.is_vt_input_enabled());
+        assert!(recorder.inputs.is_empty());
     }
 }

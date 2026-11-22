@@ -10,5 +10,8 @@
 //! ## Modules
 //!
 //! - [`history`] — `CommandHistory`, the per-application command ring
+//! - [`input_buffer`] — `InputBuffer`, the records a client has written but not
+//!   yet read, their modes and their coalescing rules
 
 pub mod history;
+pub mod input_buffer;

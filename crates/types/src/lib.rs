@@ -14,6 +14,7 @@
 //! - [`charsets`] — 94/96-character translation tables
 //! - [`dispatch_types`] — VT parameter types, dispatch enums, and mode flags
 //! - [`input_modes`] — the snapshot of input-affecting modes an input engine reads
+//! - [`input_record`] — console input records and their control-key state
 //! - [`paste`] — filtering clipboard text before it reaches the pty
 //! - [`sgr_stack`] — `SgrStack` for XTPUSHSGR / XTPOPSGR
 //! - [`viewport`] — `Viewport` screen dimension type
@@ -31,6 +32,7 @@ pub mod color_table;
 pub mod cursor_type;
 pub mod dispatch_types;
 pub mod input_modes;
+pub mod input_record;
 pub mod line_rendition;
 pub mod mark_kind;
 pub mod paste;
@@ -48,6 +50,10 @@ pub use color_table::ColorTable;
 pub use cursor_type::CursorType;
 pub use dispatch_types::*;
 pub use input_modes::InputModes;
+pub use input_record::{
+    ControlKeyState, FocusEventRecord, InputRecord, KeyEventRecord, MenuEventRecord, MouseEventFlags, MouseEventRecord,
+    WindowSizeEventRecord,
+};
 pub use line_rendition::LineRendition;
 pub use mark_kind::MarkKind;
 pub use paste::{FilterOption, filter_string_for_paste};
