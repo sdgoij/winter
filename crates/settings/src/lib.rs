@@ -17,7 +17,7 @@ pub use actions::Action;
 pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
-pub use parser::{load, parse, settings_path, to_json};
+pub use parser::{LoadError, Loaded, load, load_with_report, parse, settings_path, to_json};
 pub use profiles::{Profile, default_shell};
 
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,7 @@ mod tests {
     fn the_default_settings_bind_the_window_chords() {
         let settings = Settings::default();
         assert_eq!(settings.keybindings, DEFAULT_KEYBINDINGS);
-        assert_eq!(settings.keybindings.len(), 16);
+        assert_eq!(settings.keybindings.len(), 17);
     }
 
     #[test]

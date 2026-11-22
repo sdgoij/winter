@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The JSON settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–024) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1433 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1437 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -71,7 +71,7 @@ Keys are `0-9`, `a-z`, a single punctuation character, `tab`, `enter`, `esc`,
 `space`, `backspace`, `insert`, `delete`, `home`, `end`, `pgup`, `pgdn`, the
 arrows and `f1`–`f24`. Actions are `newTab`, `closeTab`, `nextTab`, `prevTab`,
 `splitHorizontal`, `splitVertical`, `focusLeft`/`Right`/`Up`/`Down`,
-`resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste` and `unbound`.
+`resizeLeft`/`Right`/`Up`/`Down`, `copy`, `paste`, `openSettings` and `unbound`.
 
 A binding replaces a default with the same chord and adds a new chord to the
 defaults; `unbound` removes one, so the key reaches the shell. An empty list
@@ -88,6 +88,10 @@ built-in palette. A bad colour rejects the file (ADR 024).
 `font.size` sets the grid's point size (4–100); a size outside that range is
 clamped. The face is not configurable yet: the shell uses one embedded
 monospace family.
+
+The settings window (Ctrl+, or the gear beside the tabs) shows the file that was
+read, whether it parsed, and what is in force. Editing the file in the window
+and watching it for changes are still to come; restart to apply edits.
 
 ## Building and testing
 

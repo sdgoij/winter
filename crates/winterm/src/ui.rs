@@ -5,7 +5,7 @@
 //! native backend means replacing this file, not the session or the grid.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use eframe::egui;
@@ -24,6 +24,7 @@ use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
 use crate::{blink::Blink, grid, session::Session, tabs::Tabs, view::View};
+
 /// The colour used when the palette has no default background.
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
 /// The colour used when the palette has no default foreground.
@@ -852,6 +853,12 @@ struct App {
     scheme: Option<settings::Scheme>,
     /// The grid's point size, from the settings file.
     font_size: f32,
+    /// The path the settings were read from, when the platform has one.
+    settings_path: Option<PathBuf>,
+    /// Why the file was not used, if it was not.
+    settings_error: Option<String>,
+    /// Whether the settings window is showing.
+    settings_open: bool,
     /// The sides egui collapses but the encoder distinguishes.
     sides: ModifierSides,
     clipboard: Option<arboard::Clipboard>,
@@ -876,11 +883,13 @@ enum TabAction {
     Split(Axis),
     Focus(Direction),
     Resize(Direction),
+    ToggleSettings,
 }
 
 impl App {
     fn new(ctx: &egui::Context) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let settings = settings::load();
+        let loaded = settings::load_with_report();
+        let settings = loaded.settings;
         let scheme = settings.scheme().cloned();
         let font_size = settings.font.size;
         let (command, title) = profile_command(settings.profile());
@@ -891,6 +900,9 @@ impl App {
             settings,
             scheme,
             font_size,
+            settings_path: loaded.path,
+            settings_error: loaded.error.map(|error| error.to_string()),
+            settings_open: false,
             sides: ModifierSides::default(),
             clipboard: arboard::Clipboard::new().ok(),
             blink: Blink::new(Instant::now()),
@@ -956,6 +968,7 @@ impl App {
                     tab.paste_text(&text);
                 }
             }
+            TabAction::ToggleSettings => self.settings_open = !self.settings_open,
         }
     }
 
@@ -963,6 +976,34 @@ impl App {
         if !self.tabs.close(index) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+    }
+
+    /// Draws what the settings file said and whether it was used.
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.settings_open;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::Grid::new("winterm-settings-rows")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        for (label, value) in settings_rows(
+                            &self.settings,
+                            self.settings_path.as_deref(),
+                            self.settings_error.as_deref(),
+                        ) {
+                            ui.strong(label);
+                            ui.label(value);
+                            ui.end_row();
+                        }
+                    });
+
+                ui.separator();
+                ui.label("Edit the file and restart to apply changes.");
+            });
+        self.settings_open = open;
     }
 
     /// Draws the tab strip and returns what the user clicked.
@@ -986,6 +1027,10 @@ impl App {
 
                 if ui.button("+").clicked() {
                     actions.push(TabAction::New);
+                }
+
+                if ui.button("⚙").on_hover_text("Settings").clicked() {
+                    actions.push(TabAction::ToggleSettings);
                 }
             });
         });
@@ -1059,10 +1104,14 @@ impl eframe::App for App {
         };
 
         tab.fit_panes(area, cell);
-        tab.handle_pointer(&ctx, area, cell, sides);
-        // A drag moved a divider; size the panes to the new rectangles now
-        // rather than a frame later.
-        tab.fit_panes(area, cell);
+        // An egui area — the settings window or the tab strip — takes the
+        // pointer while it is over it, so a click never selects text behind it.
+        if !ctx.is_pointer_over_egui() {
+            tab.handle_pointer(&ctx, area, cell, sides);
+            // A drag moved a divider; size the panes to the new rectangles now
+            // rather than a frame later.
+            tab.fit_panes(area, cell);
+        }
         tab.handle_events(forwarded, &mut self.sides);
 
         let screen = tab.focused_snapshot();
@@ -1072,6 +1121,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(delay);
         }
         tab.paint(ui, area, cell, self.cursor_on, self.font_size);
+
+        if self.settings_open {
+            self.settings_window(&ctx);
+        }
     }
 }
 
@@ -1137,6 +1190,7 @@ fn action_for(action: settings::Action) -> Option<TabAction> {
         settings::Action::ResizeDown => TabAction::Resize(Direction::Down),
         settings::Action::Copy => TabAction::Copy,
         settings::Action::Paste => TabAction::Paste,
+        settings::Action::OpenSettings => TabAction::ToggleSettings,
         // `unbound` is resolved away when the file loads.
         settings::Action::Unbound => return None,
     })
@@ -1377,6 +1431,43 @@ fn paint_cursor_bar(
         0,
         color,
     );
+}
+
+/// The rows the settings window shows.
+///
+/// Kept out of the window so the strings are testable without an egui context;
+/// the window adds only layout.
+fn settings_rows(settings: &Settings, path: Option<&Path>, error: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut rows = Vec::with_capacity(6);
+
+    rows.push((
+        "File",
+        path.map_or_else(
+            || "(none on this platform)".to_string(),
+            |path| path.display().to_string(),
+        ),
+    ));
+    rows.push(("Status", error.unwrap_or("loaded").to_string()));
+
+    let profile = settings.profile();
+    rows.push((
+        "Profile",
+        profile.map_or_else(
+            || "(none)".to_string(),
+            |profile| format!("{} ({})", profile.name, profile.command),
+        ),
+    ));
+
+    rows.push(("Keybindings", settings.keybindings.len().to_string()));
+    rows.push((
+        "Scheme",
+        settings
+            .scheme()
+            .map_or_else(|| "(built-in)".to_string(), |scheme| scheme.name.clone()),
+    ));
+    rows.push(("Font", format!("{} pt", settings.font.size)));
+
+    rows
 }
 
 /// Turns a profile into the command a tab starts and the title to show.
@@ -1864,6 +1955,49 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_rows_report_what_the_file_asked_for() {
+        let settings = settings::parse(
+            r#"{
+                "profiles": [{ "name": "zsh", "command": "/bin/zsh" }],
+                "default_profile": "zsh",
+                "schemes": [{ "name": "muted" }],
+                "default_scheme": "muted",
+                "font": { "size": 18 }
+            }"#,
+        )
+        .expect("settings");
+
+        let rows = settings_rows(&settings, Some(Path::new("/cfg/settings.json")), None);
+        let value = |label: &str| {
+            rows.iter()
+                .find(|(name, _)| *name == label)
+                .map(|(_, value)| value.as_str())
+                .unwrap_or("")
+        };
+
+        assert_eq!(value("File"), "/cfg/settings.json");
+        assert_eq!(value("Status"), "loaded");
+        assert_eq!(value("Profile"), "zsh (/bin/zsh)");
+        assert_eq!(value("Keybindings"), "17");
+        assert_eq!(value("Scheme"), "muted");
+        assert_eq!(value("Font"), "18 pt");
+
+        // A file that was not used still reports what is running and why.
+        let rows = settings_rows(&Settings::default(), None, Some("bad file"));
+        let value = |label: &str| {
+            rows.iter()
+                .find(|(name, _)| *name == label)
+                .map(|(_, value)| value.as_str())
+                .unwrap_or("")
+        };
+
+        assert_eq!(value("File"), "(none on this platform)");
+        assert_eq!(value("Status"), "bad file");
+        assert_eq!(value("Scheme"), "(built-in)");
+        assert_eq!(value("Font"), "16 pt");
+    }
+
+    #[test]
     fn chord_keys_name_the_egui_keys_the_settings_can_use() {
         assert_eq!(chord_key(egui::Key::T), Some(settings::Key::Char('t')));
         assert_eq!(chord_key(egui::Key::Num7), Some(settings::Key::Char('7')));
@@ -1871,6 +2005,25 @@ mod tests {
         assert_eq!(chord_key(egui::Key::F5), Some(settings::Key::Function(5)));
         assert_eq!(chord_key(egui::Key::PageDown), Some(settings::Key::PageDown));
         assert_eq!(chord_key(egui::Key::BrowserBack), None);
+    }
+
+    #[test]
+    fn the_settings_chord_toggles_the_window() {
+        let key = egui::Event::Key {
+            key: egui::Key::Comma,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                ..egui::Modifiers::default()
+            },
+        };
+
+        assert_eq!(
+            command_for(settings::DEFAULT_KEYBINDINGS, &key),
+            Some(TabAction::ToggleSettings)
+        );
     }
 
     #[test]

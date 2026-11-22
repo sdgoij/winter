@@ -208,6 +208,10 @@ pub const DEFAULT_KEYBINDINGS: &[Keybinding] = &[
         action: Action::Paste,
     },
     Keybinding {
+        keys: chord(Key::Char(','), true, false, false),
+        action: Action::OpenSettings,
+    },
+    Keybinding {
         keys: chord(Key::Left, false, false, true),
         action: Action::FocusLeft,
     },

@@ -44,6 +44,8 @@ pub enum Action {
     Copy,
     /// Paste the clipboard into the focused pane.
     Paste,
+    /// Show or hide the settings window.
+    OpenSettings,
     /// Remove the chord named beside it. Resolved away at load; it never
     /// reaches the binding list the window searches.
     Unbound,
