@@ -13,10 +13,11 @@ use term::input::{
     Key, KeyEvent, Modifiers as KeyModifiers, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA,
     WheelAxis,
 };
+use types::CursorType;
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
-use crate::{grid, session::Session, view::View};
+use crate::{blink::Blink, grid, session::Session, view::View};
 
 /// The font size the grid is measured and painted at.
 const FONT_SIZE: f32 = 16.0;
@@ -47,6 +48,11 @@ struct App {
     session: Session,
     view: View,
     clipboard: Option<arboard::Clipboard>,
+    blink: Blink,
+    /// Whether the cursor is drawn this frame.
+    cursor_on: bool,
+    /// The title last sent to the window.
+    title: Option<String>,
     /// The grid size the terminal and pty were last told about.
     size: (i32, i32),
     /// The cell the pointer was last forwarded from, for motion deduplication.
@@ -73,6 +79,9 @@ impl App {
             session,
             view: View::new(),
             clipboard: arboard::Clipboard::new().ok(),
+            blink: Blink::new(Instant::now()),
+            cursor_on: true,
+            title: None,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
             right_alt: false,
@@ -493,26 +502,37 @@ impl App {
             }
         }
 
-        if screen.cursor_visible {
+        if screen.cursor_visible && self.cursor_on {
             let column = screen.cursor.0.clamp(0, screen.width.max(1) - 1);
             let row = screen.cursor.1.clamp(0, screen.height.max(1) - 1);
             let origin = egui::pos2(area.min.x + column as f32 * cell.x, area.min.y + row as f32 * cell.y);
-            painter.rect_filled(
-                egui::Rect::from_min_size(origin, cell),
-                0,
-                egui::Color32::from_rgba_unmultiplied(230, 230, 230, 110),
-            );
+            paint_cursor(&painter, origin, cell, screen.cursor_shape);
         }
     }
 }
 
 impl eframe::App for App {
-    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // The pump asks for a repaint when output arrives; there is no poll.
         self.pump_output();
+
+        // OSC 0/2 titles belong to the window, not to the grid.
+        if let Some(title) = self.terminal.window_title()
+            && self.title.as_deref() != Some(title)
+        {
+            self.title = Some(title.to_string());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_string()));
+        }
+
+        if self.terminal.take_bell_requests() > 0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let focused = ui.ctx().input(|input| input.focused);
         let font = egui::FontId::monospace(FONT_SIZE);
         let cell = ui
             .ctx()
@@ -527,7 +547,13 @@ impl eframe::App for App {
 
         self.handle_pointer(ui.ctx(), area, cell);
         self.handle_input(ui.ctx());
+
         let screen = self.snapshot();
+        let now = Instant::now();
+        self.cursor_on = self.blink.update(screen.cursor_blinking, focused, now);
+        if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
+            ui.ctx().request_repaint_after(delay);
+        }
         self.paint(ui, area, cell, &screen);
 
         if self.exited {
@@ -581,6 +607,48 @@ const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> MouseBut
         middle,
         right: secondary,
     }
+}
+
+/// Draws the cursor in the shape the terminal asked for.
+fn paint_cursor(painter: &egui::Painter, origin: egui::Pos2, cell: egui::Vec2, shape: CursorType) {
+    let color = egui::Color32::from_rgba_unmultiplied(230, 230, 230, 160);
+    let rect = egui::Rect::from_min_size(origin, cell);
+    let bar = (cell.x / 8.0).max(1.0);
+
+    match shape {
+        CursorType::Legacy | CursorType::FullBox => {
+            painter.rect_filled(rect, 0, color);
+        }
+        CursorType::EmptyBox => {
+            painter.rect_stroke(rect, 0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        }
+        CursorType::VerticalBar => {
+            painter.rect_filled(egui::Rect::from_min_size(origin, egui::vec2(bar, cell.y)), 0, color);
+        }
+        CursorType::Underscore => {
+            paint_cursor_bar(painter, origin, cell, bar, bar, color);
+        }
+        CursorType::DoubleUnderscore => {
+            paint_cursor_bar(painter, origin, cell, bar, bar, color);
+            paint_cursor_bar(painter, origin, cell, bar * 3.0, bar, color);
+        }
+    }
+}
+
+fn paint_cursor_bar(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    cell: egui::Vec2,
+    from_bottom: f32,
+    height: f32,
+    color: egui::Color32,
+) {
+    let top = origin.y + cell.y - from_bottom;
+    painter.rect_filled(
+        egui::Rect::from_min_size(egui::pos2(origin.x, top), egui::vec2(cell.x, height)),
+        0,
+        color,
+    );
 }
 
 fn default_command() -> PtyCommand {

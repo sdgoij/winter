@@ -16,6 +16,7 @@
 //! The window layer is the last piece of Phase 8; the emulation and console
 //! crates are portable and are tested without it.
 
+pub mod blink;
 pub mod grid;
 pub mod session;
 pub mod ui;

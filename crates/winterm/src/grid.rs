@@ -5,7 +5,7 @@
 //! window backend decides how to draw them.
 
 use buffer::{Row, TextBuffer};
-use types::TextAttribute;
+use types::{CursorType, TextAttribute};
 
 /// A run of adjacent cells that share an attribute.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +42,10 @@ pub struct Screen {
     pub cursor: (i32, i32),
     /// Whether the cursor is currently visible.
     pub cursor_visible: bool,
+    /// The shape the cursor is drawn with.
+    pub cursor_shape: CursorType,
+    /// Whether the cursor is blinking.
+    pub cursor_blinking: bool,
 }
 
 /// Takes a snapshot of `buffer`'s live screen.
@@ -78,6 +82,8 @@ pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
         rows,
         cursor: cursor.position(),
         cursor_visible: cursor.is_visible() && scroll == 0,
+        cursor_shape: cursor.shape(),
+        cursor_blinking: cursor.is_blinking(),
     }
 }
 
@@ -136,6 +142,17 @@ mod tests {
 
         let screen = snapshot(&buffer);
         assert!(!screen.cursor_visible);
+    }
+
+    #[test]
+    fn a_snapshot_carries_the_cursor_shape_and_blink() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 0);
+        buffer.cursor_mut().set_shape(CursorType::VerticalBar);
+        buffer.cursor_mut().set_blinking(true);
+
+        let screen = snapshot(&buffer);
+        assert_eq!(screen.cursor_shape, CursorType::VerticalBar);
+        assert!(screen.cursor_blinking);
     }
 
     #[test]
