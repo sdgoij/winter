@@ -23,7 +23,7 @@ use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGRO
 use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
-use crate::{blink::Blink, grid, scrollbar, session::Session, tabs::Tabs, view::View};
+use crate::{blink::Blink, grid, notifications, scrollbar, session::Session, tabs::Tabs, view::View};
 
 /// The colour used when the palette has no default background.
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
@@ -255,6 +255,8 @@ struct Pane {
     find: FindBar,
     /// The scrollbar's drag state.
     scrollbar: scrollbar::Scrollbar,
+    /// Desktop notifications the program asked for, until the window shows them.
+    notifications: Vec<(String, String)>,
     /// The title the shell set with OSC 0/2.
     osc_title: Option<String>,
     /// The grid size the terminal and pty were last told about.
@@ -277,6 +279,11 @@ impl Pane {
         let session = Session::spawn_with(&command, size, move || repaint.request_repaint())?;
         let mut terminal = Terminal::new();
         terminal.resize(i32::from(size.cols), i32::from(size.rows));
+        // OSC 777 is ignored unless the application asks for it, which is
+        // upstream's `DesktopNotification` optional feature.
+        terminal.set_optional_features(std::collections::HashSet::from([
+            term::OptionalFeature::DesktopNotification,
+        ]));
 
         let mut pane = Self {
             id,
@@ -285,6 +292,7 @@ impl Pane {
             view: View::new(),
             find: FindBar::default(),
             scrollbar: scrollbar::Scrollbar::default(),
+            notifications: Vec::new(),
             osc_title: None,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
@@ -316,6 +324,11 @@ impl Pane {
         self.terminal.take_bell_requests()
     }
 
+    /// Takes the desktop notifications the program asked for.
+    fn take_notifications(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.notifications)
+    }
+
     /// Moves bytes from the pty into the parser and answers from the adapter.
     fn pump_output(&mut self) {
         let mut bytes = Vec::new();
@@ -330,6 +343,7 @@ impl Pane {
         for response in self.terminal.take_responses() {
             self.write(&response);
         }
+        self.notifications.extend(self.terminal.take_notifications());
 
         if let Some(title) = self.terminal.window_title()
             && self.osc_title.as_deref() != Some(title)
@@ -1139,6 +1153,14 @@ impl Tab {
 
     fn take_bells(&mut self) -> usize {
         self.panes.iter_mut().map(Pane::take_bells).sum()
+    }
+
+    /// Takes the desktop notifications every pane received.
+    fn take_notifications(&mut self) -> Vec<(String, String)> {
+        self.panes
+            .iter_mut()
+            .flat_map(|pane| pane.take_notifications())
+            .collect()
     }
 
     fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
@@ -2079,6 +2101,16 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
             ));
+        }
+
+        let mut messages = Vec::new();
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                messages.extend(tab.take_notifications());
+            }
+        }
+        for (title, body) in messages {
+            notifications::show(&title, &body);
         }
 
         // Poll the settings file: a changed stamp means a save, and the reload

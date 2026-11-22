@@ -18,6 +18,7 @@ term.workspace = true
 types.workspace = true
 utils.workspace = true
 arboard.workspace = true
+notify-rust.workspace = true
 
 [lints]
 workspace = true

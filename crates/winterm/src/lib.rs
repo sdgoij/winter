@@ -19,6 +19,7 @@
 pub mod blink;
 pub mod grid;
 pub mod layout;
+pub mod notifications;
 pub mod scrollbar;
 pub mod session;
 pub mod tabs;

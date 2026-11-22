@@ -4,7 +4,8 @@
 //! host-facing queues with the `take_*` methods. `Terminal` owns no I/O: a pty
 //! writer, a window and a renderer are the caller's.
 
-use adapter::{AdaptDispatch, PageManager};
+use adapter::term_dispatch::OptionalFeature;
+use adapter::{AdaptDispatch, ITermDispatch, PageManager};
 use types::VTInt;
 use vt::{ParserMode, StateMachine, VtState};
 
@@ -67,6 +68,15 @@ impl Terminal {
     /// settings model arrives.
     pub fn set_alt_gr_aliasing(&mut self, enabled: bool) {
         self.alt_gr_aliasing = enabled;
+    }
+
+    /// Enables the adapter's optional VT features.
+    ///
+    /// Upstream gates the families whose output leaves the terminal — desktop
+    /// notifications and clipboard writes — behind profile settings; the
+    /// application names the ones it provides.
+    pub fn set_optional_features(&mut self, features: std::collections::HashSet<OptionalFeature>) {
+        self.dispatch_mut().set_optional_features(features);
     }
 
     /// Translates a mouse event into the bytes to write to the pty.
