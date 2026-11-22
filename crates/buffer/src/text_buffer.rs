@@ -14,6 +14,7 @@ use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
 use crate::selection::{Selection, SelectionType};
+use types::LineRendition;
 
 /// The default scrollback buffer height (number of rows).
 pub const DEFAULT_SCROLLBACK_HEIGHT: i32 = 300;
@@ -518,6 +519,60 @@ impl TextBuffer {
     pub fn get_row_at_screen_line_mut(&mut self, screen_line: i32) -> Option<&mut Row> {
         self.get_buffer_row_mut_at_screen(screen_line, 0)
             .map(|buffered| &mut buffered.row)
+    }
+
+    /// Returns a row's line rendition, or `SingleWidth` outside the page.
+    pub fn get_line_rendition(&self, screen_line: i32) -> LineRendition {
+        self.get_row_at_screen_line(screen_line)
+            .map_or(LineRendition::SingleWidth, Row::line_rendition)
+    }
+
+    /// Returns the usable width of a row, halved for double-width renditions.
+    pub fn get_line_width(&self, screen_line: i32) -> i32 {
+        let scale = u32::from(!matches!(
+            self.get_line_rendition(screen_line),
+            LineRendition::SingleWidth
+        ));
+        self.screen_width >> scale
+    }
+
+    /// Sets the current row's line rendition.
+    ///
+    /// Ported from `TextBuffer::SetCurrentLineRendition`: a changed rendition
+    /// clears the wrap flag and the image band, a non-single-width line erases
+    /// its right half, and the cursor is clamped inside the new width.
+    pub fn set_current_line_rendition(&mut self, rendition: LineRendition, fill_attributes: TextAttribute) {
+        let row = self.cursor.row();
+        if self.get_line_rendition(row) == rendition {
+            return;
+        }
+
+        if let Some(row_data) = self.get_row_at_screen_line_mut(row) {
+            row_data.set_line_rendition(rendition);
+            row_data.set_wrap(false);
+            row_data.set_image_slice(None);
+        }
+
+        if !matches!(rendition, LineRendition::SingleWidth) {
+            let mut blank = OutputCell::from_char(' ');
+            blank.set_attributes(fill_attributes);
+            let line_width = self.get_line_width(row);
+            self.fill_rect(row, line_width, row, self.screen_width - 1, &blank);
+
+            let column = self.cursor.column().min((line_width - 1).max(0));
+            self.cursor.set_position(row, column);
+        }
+
+        self.mutation_id += 1;
+    }
+
+    /// Resets the rendition of every row in `start..end` to single width.
+    pub fn reset_line_rendition_range(&mut self, start: i32, end: i32) {
+        for row in start..end {
+            if let Some(row_data) = self.get_row_at_screen_line_mut(row) {
+                row_data.set_line_rendition(LineRendition::SingleWidth);
+            }
+        }
     }
 
     /// Scrolls the rows in `top..=bottom` up by one, clearing the bottom row.
@@ -1134,6 +1189,45 @@ mod tests {
         // The other row is outside the rectangle.
         assert_eq!(text_at(&buffer, 1, 0), "e");
         assert_eq!(text_at(&buffer, 1, 3), "h");
+    }
+
+    #[test]
+    fn a_double_width_line_reports_half_its_width() {
+        let mut buffer = TextBuffer::with_dimensions(10, 2, 0);
+        assert_eq!(buffer.get_line_width(0), 10);
+
+        buffer.set_current_line_rendition(LineRendition::DoubleWidth, TextAttribute::new());
+        assert_eq!(buffer.get_line_width(0), 5);
+        assert_eq!(buffer.get_line_rendition(0), LineRendition::DoubleWidth);
+    }
+
+    #[test]
+    fn a_double_width_line_erases_its_right_half_and_clamps_the_cursor() {
+        let mut buffer = TextBuffer::with_dimensions(10, 2, 0);
+        for column in 0..10 {
+            buffer
+                .get_row_at_screen_line_mut(0)
+                .unwrap()
+                .write_char(column, 'x', false);
+        }
+        buffer.cursor_mut().set_position(0, 9);
+
+        buffer.set_current_line_rendition(LineRendition::DoubleWidth, TextAttribute::new());
+
+        assert_eq!(buffer.cursor().position(), (0, 4));
+        assert_eq!(text_at(&buffer, 0, 4), "x");
+        assert_eq!(text_at(&buffer, 0, 5), " ");
+    }
+
+    #[test]
+    fn resetting_the_rendition_range_restores_full_width() {
+        let mut buffer = TextBuffer::with_dimensions(10, 3, 0);
+        buffer.cursor_mut().set_position(1, 0);
+        buffer.set_current_line_rendition(LineRendition::DoubleHeightTop, TextAttribute::new());
+        assert_eq!(buffer.get_line_width(1), 5);
+
+        buffer.reset_line_rendition_range(0, 3);
+        assert_eq!(buffer.get_line_width(1), 10);
     }
 
     #[test]

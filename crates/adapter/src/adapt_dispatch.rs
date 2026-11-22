@@ -18,7 +18,7 @@ use types::color_table::{
     CURSOR_COLOR, ColorAlias, ColorTable, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND, TABLE_SIZE,
     color_from_hls, color_from_rgb100, color_to_hls, color_to_rgb100,
 };
-use types::{CharacterAttributes, TextAttribute, TextColor, UnderlineStyle};
+use types::{CharacterAttributes, LineRendition, TextAttribute, TextColor, UnderlineStyle};
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -1948,6 +1948,20 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn set_line_rendition(&mut self, rendition: LineRendition) {
+        // The rendition cannot change while left/right margins are allowed.
+        if self.modes.contains(ModeFlags::DECLRMM) {
+            return;
+        }
+
+        let attributes = self.erase_attributes();
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        buffer.set_current_line_rendition(rendition, attributes);
+        // Line rendition controls reset the delayed-wrap flag.
+        buffer.cursor_mut().reset_delayed_eol_wrap();
+    }
+
     fn screen_alignment_pattern(&mut self) {
         let (page_width, page_height) = self.page_size();
         {
@@ -3506,6 +3520,7 @@ mod tests {
         drop(dispatch.restore_presentation_state(PresentationReportFormat::TabulationStopReport));
         dispatch.set_ansi_mode(true);
         dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
+        dispatch.set_line_rendition(LineRendition::DoubleWidth);
         dispatch.enquire_answerback();
         dispatch.warning_bell();
         dispatch.screen_alignment_pattern();
@@ -3662,6 +3677,18 @@ mod tests {
 
         dispatch.query_kitty_keyboard_protocol();
         assert_eq!(dispatch.take_responses(), vec!["\x1b[?5u".to_string()]);
+    }
+
+    #[test]
+    fn decdwl_sets_the_line_rendition_and_clamps_the_cursor() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.cursor_position(1, 60);
+        dispatch.set_line_rendition(LineRendition::DoubleWidth);
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert_eq!(buffer.get_line_rendition(0), LineRendition::DoubleWidth);
+        assert_eq!(buffer.cursor().position(), (0, 39));
     }
 
     #[test]

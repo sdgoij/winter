@@ -7,6 +7,7 @@
 use crate::TextAttribute;
 use crate::image_slice::ImageSlice;
 use crate::output_cell::OutputCell;
+use types::LineRendition;
 
 /// A row of terminal cells with width and modification tracking.
 ///
@@ -27,8 +28,8 @@ pub struct Row {
     trailing_width: u8,
     /// Data used for scrollback scrollbar position.
     scrollbar_data: ScrollbarData,
-    /// Whether the row has line rendition (scrollback buffer flag).
-    has_line_rendition: bool,
+    /// The line rendition (single/double width, double-height half).
+    line_rendition: LineRendition,
     /// The image band covering this row, if any (ADR 005).
     image: Option<ImageSlice>,
 }
@@ -63,7 +64,7 @@ impl Row {
             wrap: false,
             trailing_width: 0,
             scrollbar_data: ScrollbarData::default(),
-            has_line_rendition: false,
+            line_rendition: LineRendition::SingleWidth,
             image: None,
         }
     }
@@ -85,7 +86,7 @@ impl Row {
             wrap,
             trailing_width: 0,
             scrollbar_data: ScrollbarData::default(),
-            has_line_rendition: false,
+            line_rendition: LineRendition::SingleWidth,
             image: None,
         }
     }
@@ -367,14 +368,19 @@ impl Row {
         self.scrollbar_data = data;
     }
 
-    /// Returns whether this row has line rendition.
+    /// Returns whether this row carries a non-single-width rendition.
     pub const fn has_line_rendition(&self) -> bool {
-        self.has_line_rendition
+        !matches!(self.line_rendition, LineRendition::SingleWidth)
     }
 
-    /// Sets whether this row has line rendition.
-    pub fn set_line_rendition(&mut self, has: bool) {
-        self.has_line_rendition = has;
+    /// Returns this row's line rendition.
+    pub const fn line_rendition(&self) -> LineRendition {
+        self.line_rendition
+    }
+
+    /// Sets this row's line rendition.
+    pub fn set_line_rendition(&mut self, rendition: LineRendition) {
+        self.line_rendition = rendition;
     }
 
     /// Gets the column index of the first non-space character from the left.

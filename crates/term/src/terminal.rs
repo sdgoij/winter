@@ -237,6 +237,18 @@ mod tests {
     }
 
     #[test]
+    fn decdwl_reaches_the_buffer() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b#6");
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        assert_eq!(
+            buffer.read().unwrap().get_line_rendition(0),
+            types::LineRendition::DoubleWidth
+        );
+    }
+
+    #[test]
     fn decrsps_applies_a_cursor_report_from_a_dcs_string() {
         let mut terminal = Terminal::new();
         terminal.process_str("\x1b[4;6H\x1b[1m");
