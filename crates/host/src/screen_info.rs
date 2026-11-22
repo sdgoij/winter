@@ -38,6 +38,10 @@ pub struct ScreenInformation {
     popup_attributes: TextAttribute,
     output_mode: OutputMode,
     scroll_scale: u32,
+    /// Wheel movement not yet worth a scroll, in `WHEEL_DELTA` units.
+    wheel_delta: i16,
+    /// Horizontal wheel movement not yet worth a scroll.
+    hwheel_delta: i16,
     terminal_scrolling: bool,
     conpty_cursor_position_may_be_wrong: bool,
 }
@@ -63,6 +67,8 @@ impl ScreenInformation {
             popup_attributes,
             output_mode: OutputMode::PROCESSED_OUTPUT | OutputMode::WRAP_AT_EOL_OUTPUT,
             scroll_scale: 1,
+            wheel_delta: 0,
+            hwheel_delta: 0,
             terminal_scrolling: false,
             conpty_cursor_position_may_be_wrong: false,
         };
@@ -362,6 +368,26 @@ impl ScreenInformation {
     /// Sets the scroll wheel's scale.
     pub const fn set_scroll_scale(&mut self, scroll_scale: u32) {
         self.scroll_scale = scroll_scale;
+    }
+
+    /// Returns the vertical wheel movement not yet worth a scroll.
+    pub const fn wheel_delta(&self) -> i16 {
+        self.wheel_delta
+    }
+
+    /// Sets the vertical wheel remainder.
+    pub const fn set_wheel_delta(&mut self, wheel_delta: i16) {
+        self.wheel_delta = wheel_delta;
+    }
+
+    /// Returns the horizontal wheel movement not yet worth a scroll.
+    pub const fn hwheel_delta(&self) -> i16 {
+        self.hwheel_delta
+    }
+
+    /// Sets the horizontal wheel remainder.
+    pub const fn set_hwheel_delta(&mut self, hwheel_delta: i16) {
+        self.hwheel_delta = hwheel_delta;
     }
 
     /// Returns whether the console addresses the buffer as a terminal does.

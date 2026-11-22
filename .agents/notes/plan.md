@@ -16,10 +16,10 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
-| `host` | ~5.8k | 166 | Phase 6 under way: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, the alias table, and `InputKeyInfo` |
+| `host` | ~6.3k | 182 | Phase 6 under way: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, and `Scrolling` |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1219 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
+1235 tests, doc tests. Phases 1–5 are complete. Phase 6 is under way and Phases
 7–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
@@ -826,9 +826,10 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 Order: `history`, `input_buffer`, `read_data_cooked` (alias expansion now wired
 through `alias`), `input_state_machine_engine`, `console_information`,
-`screen_info`, `settings`, `alias` and `input_key_info` are done. `scrolling` is
-next. Each module lands with its tests and its declaration in `lib.rs`, as the
-porting skill requires.
+`screen_info`, `settings`, `alias`, `input_key_info` and `scrolling` are done.
+`selection` is next, scoped to its buffer and viewport state; the window-driven
+half waits for the window layer. Each module lands with its tests and its
+declaration in `lib.rs`, as the porting skill requires.
 
 ### Core Console State
 
@@ -897,7 +898,19 @@ porting skill requires.
   - Not ported: `outputStream.cpp` implements `ITerminalApi`, a seam this port
     replaced with adapter-owned state and host-drained queues. ADR 013 records
     the decision and where its content lives.
-- [ ] `winterm/crates/host/src/scrolling.rs` — Scroll logic
+- [x] `winterm/crates/host/src/scrolling.rs` — Scroll logic
+  - [x] Ported from `scrolling.cpp` and `scrolling.hpp`: scroll mode
+    (`s_DoScroll`/`s_ClearScroll`), the wheel arithmetic (accumulated deltas,
+    direction reset, Shift half-screen, both axes, buffer clamping), and
+    `s_HandleKeyScrollingEvent` with Escape/Enter/Ctrl+C, the arrows, the page
+    keys, horizontal Home/End, Ctrl+Home/Ctrl+End and the beep. The `SB_*`
+    commands move the viewport, which is what the window's scroll bar does.
+  - [x] **Tests:** metrics off, one notch, partial accumulation, direction
+    change, Shift, buffer ends, horizontal wheel, leaving scroll mode, every
+    key family, the editor hand-off, modifiers, and the beep
+  - Not ported: `s_UpdateSystemMetrics` (the window supplies the metrics),
+    `s_ScrollIfNecessary` and its point test (window and selection), and the
+    window title/selection side effects of scroll mode
 - [ ] `winterm/crates/host/src/selection.rs` — Selection state
 - [x] `winterm/crates/host/src/input_key_info.rs` — Keyboard state
   - [x] Ported from `inputKeyInfo.cpp` and the class in `input.h`: the virtual
