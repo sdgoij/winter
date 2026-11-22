@@ -12,6 +12,8 @@ use std::path::Path;
 use server::pty::PtyCommand;
 use settings::Settings;
 
+use crate::shell_integration;
+
 /// The command, title and colours a new terminal starts with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalSettings {
@@ -32,10 +34,21 @@ impl TerminalSettings {
     /// Resolves one profile's terminal.
     ///
     /// A profile that names a title keeps it; otherwise the tab is titled after
-    /// the program, which is what `command_title` gives.
+    /// the program, which is what `command_title` gives. A PowerShell profile
+    /// is also given the shell-integration hook (ADR 060).
     pub fn for_profile(settings: &Settings, profile: Option<&settings::Profile>) -> Self {
+        Self::with_script(settings, profile, shell_integration::installed().as_deref())
+    }
+
+    /// Resolves one profile's terminal with the shell hook's location given.
+    ///
+    /// `script` is where the hook lives, or `None` to start the profile exactly
+    /// as the file wrote it. Tests pass a path of their own so they never touch
+    /// the user's cache directory.
+    fn with_script(settings: &Settings, profile: Option<&settings::Profile>, script: Option<&Path>) -> Self {
         let profile = profile.cloned().unwrap_or_default();
         let command = PtyCommand::new(&profile.command).args(profile.args.iter().cloned());
+        let command = shell_integration::attach(command, script);
         let title = profile.title.clone().unwrap_or_else(|| command_title(&command));
 
         Self {
@@ -90,7 +103,21 @@ mod tests {
                 title = "Shell"
             "##,
         );
-        assert_eq!(TerminalSettings::resolve(&settings).title, "Shell");
+        assert_eq!(
+            TerminalSettings::with_script(&settings, settings.profile(), None).title,
+            "Shell"
+        );
+    }
+
+    #[test]
+    fn a_powershell_profile_is_resolved_with_the_shell_hook() {
+        let settings = settings("[[profiles]]\nname = \"only\"\ncommand = \"pwsh.exe\"\n");
+        let resolved = TerminalSettings::with_script(&settings, settings.profile(), Some(Path::new("hook.ps1")));
+
+        let arguments: Vec<&std::ffi::OsStr> = resolved.command.arguments().collect();
+        assert!(arguments.contains(&std::ffi::OsStr::new("-NoExit")));
+        assert!(arguments.contains(&std::ffi::OsStr::new("-File")));
+        assert_eq!(arguments.last(), Some(&std::ffi::OsStr::new("hook.ps1")));
     }
 
     #[test]

@@ -76,9 +76,15 @@ impl Marks {
 
     /// Starts a prompt mark at the current row.
     ///
-    /// If there's an existing output mark, it ends before this mark starts.
+    /// A prompt that starts on the row the previous prompt ended on is a new
+    /// prompt — an empty command line, usually — so it keeps a mark of its own.
+    /// Upstream keeps one scrollbar record per prompt row for the same reason:
+    /// merging them would report one command's exit code for both.
     pub fn start_prompt(&mut self, current_row: i32) {
-        self.start_mark(MarkKind::Prompt, current_row, current_row + 1);
+        if self.covers(MarkKind::Prompt, current_row) {
+            return;
+        }
+        self.insert_sorted(BufferMark::new(MarkKind::Prompt, current_row, current_row + 1));
     }
 
     /// Marks `row` as a prompt unless a prompt mark already covers it.
@@ -88,19 +94,23 @@ impl Marks {
     /// mark of its own. Unlike [`start_prompt`](Self::start_prompt), adjacent
     /// rows stay separate marks, because one command line is one tick.
     pub fn mark_prompt_row(&mut self, row: i32) {
-        if self
-            .marks
-            .iter()
-            .any(|mark| mark.kind() == MarkKind::Prompt && mark.start_row() <= row && row < mark.end_row())
-        {
+        if self.covers(MarkKind::Prompt, row) {
             return;
         }
         self.insert_sorted(BufferMark::new(MarkKind::Prompt, row, row + 1));
     }
 
     /// Starts a command mark at the current row.
+    ///
+    /// One command line is one mark. A command that starts on the row the
+    /// previous one ended on is a different command, so it must not be merged
+    /// with it: `D` reports an exit code to exactly one mark (upstream keeps
+    /// one scrollbar record per prompt row for the same reason).
     pub fn start_command(&mut self, current_row: i32) {
-        self.start_mark(MarkKind::Command, current_row, current_row + 1);
+        if self.covers(MarkKind::Command, current_row) {
+            return;
+        }
+        self.insert_sorted(BufferMark::new(MarkKind::Command, current_row, current_row + 1));
     }
 
     /// Starts an output mark at the current row.
@@ -229,6 +239,13 @@ impl Marks {
         let pos = self.marks.partition_point(|m| m.start_row() < mark.start_row());
         self.marks.insert(pos, mark);
     }
+
+    /// Whether a mark of `kind` already covers `row`.
+    fn covers(&self, kind: MarkKind, row: i32) -> bool {
+        self.marks
+            .iter()
+            .any(|mark| mark.kind() == kind && mark.start_row() <= row && row < mark.end_row())
+    }
 }
 
 /// Extents of marks (start and end rows).
@@ -265,6 +282,22 @@ mod tests {
         assert!(marks.is_empty());
         assert_eq!(marks.count(), 0);
         assert_eq!(marks.get_error_category(), MarkKind::None);
+    }
+
+    #[test]
+    fn commands_on_adjacent_rows_stay_separate() {
+        let mut marks = Marks::new();
+        marks.start_command(0);
+        marks.end_current_command(1, Some(0));
+        marks.start_command(1);
+        marks.end_current_command(2, Some(1));
+
+        let commands: Vec<(i32, i32, Option<u32>)> = marks
+            .iter()
+            .filter(|mark| mark.kind() == MarkKind::Command)
+            .map(|mark| (mark.start_row(), mark.end_row(), mark.error()))
+            .collect();
+        assert_eq!(commands, vec![(0, 1, Some(0)), (1, 2, Some(1))]);
     }
 
     #[test]

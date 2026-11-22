@@ -206,6 +206,45 @@ mod tests {
     }
 
     #[test]
+    fn each_command_keeps_its_own_exit_status() {
+        let mut buffer = TextBuffer::with_dimensions(5, 4, 0);
+
+        // The first command succeeds; the second, two rows later, fails. A
+        // merged command mark would report one status for both.
+        buffer.marks_mut().start_prompt(0);
+        buffer.marks_mut().start_command(0);
+        buffer.marks_mut().end_current_command(1, Some(0));
+
+        buffer.marks_mut().start_prompt(2);
+        buffer.marks_mut().start_command(2);
+        buffer.marks_mut().end_current_command(3, Some(1));
+
+        assert_eq!(
+            snapshot(&buffer).marks,
+            vec![MarkTick { row: 0, error: false }, MarkTick { row: 2, error: true },]
+        );
+    }
+
+    #[test]
+    fn an_empty_command_line_keeps_its_own_tick() {
+        let mut buffer = TextBuffer::with_dimensions(5, 4, 0);
+
+        // Two prompts on adjacent rows: the second Enter submitted nothing, and
+        // still reports its own status rather than the first command's.
+        buffer.marks_mut().start_prompt(0);
+        buffer.marks_mut().start_command(0);
+        buffer.marks_mut().end_current_command(1, Some(0));
+        buffer.marks_mut().start_prompt(1);
+        buffer.marks_mut().start_command(1);
+        buffer.marks_mut().end_current_command(2, Some(1));
+
+        assert_eq!(
+            snapshot(&buffer).marks,
+            vec![MarkTick { row: 0, error: false }, MarkTick { row: 1, error: true },]
+        );
+    }
+
+    #[test]
     fn an_auto_marked_prompt_sends_no_error_without_a_command() {
         // Enter's automatic mark (ADR 059) has no command or exit code behind
         // it, so it must still reach the scrollbar, unflagging no error.

@@ -161,6 +161,26 @@ marks.
   (`scrollback_len + cursor row`); a screen row puts the tick near the top of
   the document. The automatic mark has no exit code, so it is never red.
 
+### Shell integration
+
+Red ticks need an exit code, and only the shell has one. `winui` and egui both
+start a PowerShell profile through `shell_integration::attach`, which appends
+`-NoExit -File <script>` (ADR 060).
+
+- The script is `crates/winterm/shell-integration/winterm.ps1`, embedded with
+  `include_str!` and written to `%LOCALAPPDATA%\winterm\`. Edit the file in the
+  tree, never the copy in the cache: the copy is rewritten when it differs.
+- `-File` runs after the user's profile, so the hook wraps that prompt; it
+  captures the original once, so sourcing it twice does not nest.
+- It is attached only to `powershell`/`pwsh` whose arguments name nothing else
+  (`-Command`, `-File`, `-EncodedCommand`, `-NonInteractive` or a bare script
+  all decline). `-File` takes the rest of the command line, so appending after
+  one would steal the user's arguments.
+- `WINTERM_SHELL_INTEGRATION=0` turns it off for a shell.
+- `start_prompt` and `start_command` make one mark per row and never merge into
+  an adjacent one (ADR 060). Merged marks were a real bug: every tick reported
+  the last command's status. `D` must reach exactly one command mark.
+
 ## Find bar
 
 Ctrl+Shift+F toggles the active tab's bar (`find::FindBar`). It is an overlay in

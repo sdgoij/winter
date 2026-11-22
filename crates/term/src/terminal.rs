@@ -407,6 +407,28 @@ mod tests {
     }
 
     #[test]
+    fn a_reported_exit_code_makes_the_prompt_an_error() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b]133;A\x1b\\PS> ");
+        terminal.process_str("\x1b]133;B\x1b\\");
+        terminal.process_str("false\r\n");
+        terminal.process_str("\x1b]133;D;1\x1b\\");
+        terminal.process_str("\x1b]133;A\x1b\\PS> ");
+
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        let command = buffer
+            .marks()
+            .iter()
+            .find(|mark| mark.kind() == types::MarkKind::Command);
+        assert_eq!(
+            command.and_then(|mark| mark.error()),
+            Some(1),
+            "the tick for a failed command is red"
+        );
+    }
+
+    #[test]
     fn decdwl_reaches_the_buffer() {
         let mut terminal = Terminal::new();
         terminal.process_str("\x1b#6");
