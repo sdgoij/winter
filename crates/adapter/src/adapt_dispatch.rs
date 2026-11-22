@@ -18,7 +18,7 @@ use types::color_table::{
     CURSOR_COLOR, ColorAlias, ColorTable, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND, TABLE_SIZE,
     color_from_hls, color_from_rgb100, color_to_hls, color_to_rgb100,
 };
-use types::{CharacterAttributes, LineRendition, TextAttribute, TextColor, UnderlineStyle};
+use types::{CharacterAttributes, LineRendition, MarkKind, TextAttribute, TextColor, UnderlineStyle};
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -201,6 +201,20 @@ pub struct AdaptDispatch {
     pending_presentation: Arc<Mutex<Option<PendingPresentation>>>,
     /// A DECRQSS setting query, waiting to be answered.
     pending_setting: Arc<Mutex<Option<(VTID, VTInt)>>>,
+    /// Taskbar progress requested by ConEmu's OSC 9;4.
+    pending_taskbar_progress: Option<(TaskbarState, usize)>,
+    /// Working directory requested by ConEmu's OSC 9;9.
+    pending_conemu_working_directory: Option<String>,
+    /// Shell-integration marks requested since the host last drained them.
+    pending_shell_integration_marks: usize,
+    /// Completion menu requested by VS Code's OSC 633.
+    pending_completions: Option<(String, u32)>,
+    /// Missing command requested by Windows Terminal's OSC 9001.
+    pending_missing_command: Option<String>,
+    /// Desktop notifications requested by urxvt's OSC 777.
+    pending_notifications: Vec<(String, String)>,
+    /// Unrecognised terminal-specific actions reported to the host.
+    unknown_sequences: usize,
 }
 
 /// A MIDI note requested by DECPS.
@@ -397,6 +411,13 @@ impl AdaptDispatch {
             kitty_stack: Vec::new(),
             pending_presentation: Arc::new(Mutex::new(None)),
             pending_setting: Arc::new(Mutex::new(None)),
+            pending_taskbar_progress: None,
+            pending_conemu_working_directory: None,
+            pending_shell_integration_marks: 0,
+            pending_completions: None,
+            pending_missing_command: None,
+            pending_notifications: Vec::new(),
+            unknown_sequences: 0,
         }
     }
 
@@ -813,6 +834,68 @@ impl AdaptDispatch {
     /// Takes a pending ANSWERBACK request.
     pub fn take_answerback_request(&mut self) -> bool {
         std::mem::take(&mut self.answerback_requested)
+    }
+
+    /// Takes the taskbar progress requested by ConEmu's OSC 9;4.
+    pub fn take_taskbar_progress(&mut self) -> Option<(TaskbarState, usize)> {
+        self.pending_taskbar_progress.take()
+    }
+
+    /// Takes the working directory requested by ConEmu's OSC 9;9.
+    pub fn take_conemu_working_directory(&mut self) -> Option<String> {
+        self.pending_conemu_working_directory.take()
+    }
+
+    /// Takes the number of shell-integration marks requested since the last call.
+    pub fn take_shell_integration_marks(&mut self) -> usize {
+        std::mem::take(&mut self.pending_shell_integration_marks)
+    }
+
+    /// Takes the completion menu requested by VS Code's OSC 633, as
+    /// `(menu JSON, replacement length)`.
+    pub fn take_completions(&mut self) -> Option<(String, u32)> {
+        self.pending_completions.take()
+    }
+
+    /// Takes the missing command requested by Windows Terminal's OSC 9001.
+    pub fn take_missing_command(&mut self) -> Option<String> {
+        self.pending_missing_command.take()
+    }
+
+    /// Takes the desktop notifications requested by urxvt's OSC 777.
+    pub fn take_notifications(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.pending_notifications)
+    }
+
+    /// Takes the number of unrecognised terminal-specific actions since the last call.
+    pub fn take_unknown_sequences(&mut self) -> usize {
+        std::mem::take(&mut self.unknown_sequences)
+    }
+
+    /// Starts a shell-integration mark of `kind` at the cursor row and records
+    /// that the host should be notified of it.
+    fn start_shell_integration_mark(&mut self, kind: MarkKind) {
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let row = buffer.cursor().position().0;
+        match kind {
+            MarkKind::Prompt => buffer.marks_mut().start_prompt(row),
+            MarkKind::Command => buffer.marks_mut().start_command(row),
+            MarkKind::Output => buffer.marks_mut().start_output(row),
+            MarkKind::None => {}
+        }
+        drop(buffer);
+        self.pending_shell_integration_marks += 1;
+    }
+
+    /// Closes the newest command mark at the cursor row.
+    fn end_shell_integration_command(&mut self, error: Option<u32>) {
+        let buffer = self.page_manager.active_page().buffer();
+        let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+        let row = buffer.cursor().position().0;
+        buffer.marks_mut().end_current_command(row, error);
+        drop(buffer);
+        self.pending_shell_integration_marks += 1;
     }
 
     /// Takes a pending DECANM change for the parser.
@@ -1906,6 +1989,36 @@ fn legacy_color_index(color: types::TextColor, default_index: u8) -> u8 {
     if legacy { index } else { default_index }
 }
 
+/// Ported from `Utils::StringToUint`: ASCII digits only, wrapping on overflow.
+fn string_to_uint(text: &str) -> Option<u32> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(text.bytes().fold(0u32, |value, byte| {
+        value.wrapping_mul(10).wrapping_add(u32::from(byte - b'0'))
+    }))
+}
+
+/// Maps ConEmu's taskbar state number onto the dispatch enum.
+const fn taskbar_state(value: u32) -> TaskbarState {
+    match value {
+        0 => TaskbarState::Clear,
+        1 => TaskbarState::Set,
+        2 => TaskbarState::Error,
+        3 => TaskbarState::Indeterminate,
+        _ => TaskbarState::Paused,
+    }
+}
+
+/// Ported from `til::is_legal_path`: rejects the ASCII characters Windows does
+/// not allow in a path. Non-ASCII characters are always legal, matching the
+/// upstream table that only covers `0x00..=0x7f`.
+fn is_legal_path(path: &str) -> bool {
+    !path
+        .chars()
+        .any(|ch| ch.is_ascii() && matches!(ch, '"' | '*' | '<' | '>' | '?' | '|'))
+}
+
 /// Ported from `_SelectiveEraseRect`: clears the text of unprotected cells and
 /// leaves their attributes alone, which is what makes DECSED/DECSEL selective.
 fn selective_erase_region(buffer: &mut buffer::TextBuffer, top: VTInt, left: VTInt, bottom: VTInt, right: VTInt) {
@@ -2931,6 +3044,153 @@ impl ITermDispatch for AdaptDispatch {
         page.set_attributes(attributes);
     }
 
+    fn do_conemu_action(&mut self, string: &str) {
+        const TASKBAR_MAX_STATE: u32 = 4;
+        const TASKBAR_MAX_PROGRESS: u32 = 100;
+
+        let parts: Vec<&str> = string.split(';').collect();
+        let Some(sub_param) = string_to_uint(parts[0]) else {
+            return;
+        };
+
+        match sub_param {
+            // 4 is SetProgressBar.
+            4 => {
+                let mut state = 0u32;
+                let mut progress = 0u32;
+
+                if parts.len() >= 2 {
+                    match string_to_uint(parts[1]) {
+                        Some(value) => state = value,
+                        None if !parts[1].is_empty() => return,
+                        None => {}
+                    }
+                    if parts.len() >= 3 {
+                        match string_to_uint(parts[2]) {
+                            Some(value) => progress = value,
+                            None if !parts[2].is_empty() => return,
+                            None => {}
+                        }
+                    }
+                }
+
+                if state > TASKBAR_MAX_STATE {
+                    return;
+                }
+                if progress > TASKBAR_MAX_PROGRESS {
+                    progress = TASKBAR_MAX_PROGRESS;
+                }
+                self.pending_taskbar_progress = Some((taskbar_state(state), progress as usize));
+            }
+            // 9 is SetWorkingDirectory. ConEmu surrounds the path with quotes;
+            // a path without them is still accepted, as ConEmu does.
+            9 => {
+                if parts.len() >= 2 {
+                    let mut path = parts[1];
+                    if path.len() >= 3 && path.starts_with('"') && path.ends_with('"') {
+                        path = &path[1..path.len() - 1];
+                    }
+                    if !is_legal_path(path) {
+                        return;
+                    }
+                    self.pending_conemu_working_directory = Some(path.to_string());
+                }
+            }
+            // 12 treats the cursor as the start of the command line.
+            12 => self.start_shell_integration_mark(MarkKind::Command),
+            _ => self.unknown_sequences += 1,
+        }
+    }
+
+    fn do_iterm2_action(&mut self, string: &str) {
+        let parts: Vec<&str> = string.split(';').collect();
+        if parts[0] == "SetMark" {
+            self.start_shell_integration_mark(MarkKind::Prompt);
+        } else {
+            self.unknown_sequences += 1;
+        }
+    }
+
+    fn do_finalterm_action(&mut self, string: &str) {
+        let parts: Vec<&str> = string.split(';').collect();
+        let action = parts[0];
+        if action.len() != 1 {
+            self.unknown_sequences += 1;
+            return;
+        }
+
+        match action.as_bytes()[0] {
+            b'A' => self.start_shell_integration_mark(MarkKind::Prompt),
+            b'B' => self.start_shell_integration_mark(MarkKind::Command),
+            b'C' => self.start_shell_integration_mark(MarkKind::Output),
+            b'D' => {
+                // A missing or unparsable exit code becomes `UINT_MAX`, which is
+                // upstream's "treat it as an error and move on" value.
+                let error = if parts.len() >= 2 {
+                    Some(string_to_uint(parts[1]).unwrap_or(u32::MAX))
+                } else {
+                    None
+                };
+                self.end_shell_integration_command(error);
+            }
+            _ => self.unknown_sequences += 1,
+        }
+    }
+
+    fn do_vscode_action(&mut self, string: &str) {
+        let parts: Vec<&str> = string.split(';').collect();
+        if parts[0] != "Completions" {
+            self.unknown_sequences += 1;
+            return;
+        }
+
+        // Fields 1-3 are the replacement index, replacement length and cursor
+        // index; only the length is used here, as upstream does.
+        let replacement_length = match (
+            string_to_uint(parts.get(1).copied().unwrap_or("")),
+            string_to_uint(parts.get(2).copied().unwrap_or("")),
+            string_to_uint(parts.get(3).copied().unwrap_or("")),
+        ) {
+            (Some(_), Some(length), Some(_)) => length,
+            _ => return,
+        };
+
+        let prefix_length = parts[0].len() + 1 + parts[1].len() + 1 + parts[2].len() + 1 + parts[3].len() + 1;
+        if prefix_length > string.len() {
+            return;
+        }
+        let Some(remainder) = string.get(prefix_length..) else {
+            return;
+        };
+        let menu = if parts.len() < 5 { "" } else { remainder };
+        self.pending_completions = Some((menu.to_string(), replacement_length));
+    }
+
+    fn do_wt_action(&mut self, string: &str) {
+        let parts: Vec<&str> = string.split(';').collect();
+        if parts[0] == "CmdNotFound" && parts.len() >= 2 {
+            self.pending_missing_command = Some(parts[1].to_string());
+        }
+    }
+
+    fn do_urxvt_action(&mut self, string: &str) {
+        if !self.optional_features.contains(&OptionalFeature::DesktopNotification) {
+            return;
+        }
+
+        let mut parts = string.splitn(3, ';');
+        let action = parts.next().unwrap_or("");
+        if action != "notify" {
+            self.unknown_sequences += 1;
+            return;
+        }
+
+        // The body is everything after `notify;title;` and may contain semicolons.
+        let title = parts.next().unwrap_or("");
+        let body = parts.next().unwrap_or("");
+        self.pending_notifications.push((title.to_string(), body.to_string()));
+    }
+
     fn window_manipulation(
         &mut self,
         function: WindowManipulationType,
@@ -3755,13 +4015,20 @@ mod tests {
         dispatch.play_sounds(&VTParameters::default());
         drop(dispatch.assign_user_preference_charset(CharsetSize::Size94));
         dispatch.request_user_preference_charset();
+        dispatch.do_conemu_action("");
+        dispatch.do_iterm2_action("");
+        dispatch.do_finalterm_action("");
+        dispatch.do_vscode_action("");
+        dispatch.do_wt_action("");
+        dispatch.do_urxvt_action("");
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        // The terminal-specific action strings are the family still unported.
-        dispatch.do_conemu_action("");
+        // Every family is now ported, so the recording path itself is the
+        // control: a sentinel must still be counted and named.
+        dispatch.unhandled("sentinel");
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("do_conemu_action"));
+        assert_eq!(dispatch.last_unhandled(), Some("sentinel"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -4678,6 +4945,132 @@ mod tests {
         dispatch.add_hyperlink("https://example.com", "same");
 
         assert_eq!(page_attributes(&mut dispatch).get_hyperlink_id(), first);
+    }
+
+    #[test]
+    fn finalterm_actions_track_the_prompt_command_and_output_marks() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.do_finalterm_action("A");
+        dispatch.do_finalterm_action("B");
+        dispatch.do_finalterm_action("C");
+        dispatch.do_finalterm_action("D;3");
+
+        assert_eq!(dispatch.take_shell_integration_marks(), 4);
+        assert_eq!(dispatch.take_shell_integration_marks(), 0);
+
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        let marks = buffer.marks();
+        assert!(marks.get_mark_extents(types::MarkKind::Prompt).is_some());
+        assert!(marks.get_mark_extents(types::MarkKind::Output).is_some());
+        let command = marks
+            .get_marks_by_kind(types::MarkKind::Command)
+            .iter()
+            .find(|mark| mark.kind() == types::MarkKind::Command)
+            .expect("a command mark");
+        assert_eq!(command.error(), Some(3));
+    }
+
+    #[test]
+    fn iterm2_setmark_starts_a_prompt() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.do_iterm2_action("SetMark");
+
+        assert_eq!(dispatch.take_shell_integration_marks(), 1);
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        assert!(buffer.marks().get_mark_extents(types::MarkKind::Prompt).is_some());
+    }
+
+    #[test]
+    fn conemu_progress_is_clamped_and_queued() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_conemu_action("4;1;42");
+        assert_eq!(dispatch.take_taskbar_progress(), Some((TaskbarState::Set, 42)));
+
+        dispatch.do_conemu_action("4;2;250");
+        assert_eq!(dispatch.take_taskbar_progress(), Some((TaskbarState::Error, 100)));
+
+        // A state outside 0..=4 rejects the whole action.
+        dispatch.do_conemu_action("4;5;10");
+        assert_eq!(dispatch.take_taskbar_progress(), None);
+    }
+
+    #[test]
+    fn conemu_sets_the_working_directory() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_conemu_action("9;\"D:/work\"");
+        assert_eq!(dispatch.take_conemu_working_directory().as_deref(), Some("D:/work"));
+
+        dispatch.do_conemu_action("9;C:\\work");
+        assert_eq!(dispatch.take_conemu_working_directory().as_deref(), Some("C:\\work"));
+
+        // `?` is not a legal path character.
+        dispatch.do_conemu_action("9;a?b");
+        assert_eq!(dispatch.take_conemu_working_directory(), None);
+    }
+
+    #[test]
+    fn conemu_12_starts_a_command_mark() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.do_conemu_action("12");
+
+        assert_eq!(dispatch.take_shell_integration_marks(), 1);
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+        assert!(buffer.marks().get_mark_extents(types::MarkKind::Command).is_some());
+    }
+
+    #[test]
+    fn vscode_completions_extracts_the_menu_and_length() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_vscode_action("Completions;0;2;3;[\"ab\",\"cd\"]");
+        assert_eq!(dispatch.take_completions(), Some(("[\"ab\",\"cd\"]".to_string(), 2)));
+
+        // A missing numeric field eats the sequence without a host request.
+        dispatch.do_vscode_action("Completions;0;2");
+        assert_eq!(dispatch.take_completions(), None);
+    }
+
+    #[test]
+    fn wt_reports_a_missing_command() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_wt_action("CmdNotFound;git");
+
+        assert_eq!(dispatch.take_missing_command().as_deref(), Some("git"));
+    }
+
+    #[test]
+    fn urxvt_notifications_require_the_optional_feature() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_urxvt_action("notify;Build;finished;with warnings");
+        assert!(dispatch.take_notifications().is_empty());
+        assert_eq!(dispatch.take_unknown_sequences(), 0);
+
+        dispatch.set_optional_features(std::collections::HashSet::from([OptionalFeature::DesktopNotification]));
+        dispatch.do_urxvt_action("notify;Build;finished;with warnings");
+        assert_eq!(
+            dispatch.take_notifications(),
+            vec![("Build".to_string(), "finished;with warnings".to_string())]
+        );
+    }
+
+    #[test]
+    fn unrecognised_terminal_specific_actions_are_counted() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.do_finalterm_action("Z");
+        dispatch.do_iterm2_action("Nope");
+        dispatch.do_conemu_action("3");
+        dispatch.do_vscode_action("Other");
+
+        assert_eq!(dispatch.take_unknown_sequences(), 4);
+        assert_eq!(dispatch.take_unknown_sequences(), 0);
     }
 
     fn define_text_macro(dispatch: &mut AdaptDispatch, id: VTInt, payload: &str) {

@@ -13,22 +13,21 @@ Verified by running the gate, not by reading the previous status:
 | `types` | ~3.3k | 87 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, XParseColor and the X11 colour-name tables |
 | `buffer` | ~6.5k | 194 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition |
 | `vt` | ~2.5k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No conformance corpus, no fuzz target |
-| `adapter` | ~11.6k | 166 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore and tab handlers ported |
-| `term` | ~2.1k | 27 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
+| `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
+| `term` | ~2.1k | 28 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-723 tests, doc tests. Phases 5–14 are not started.
+733 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
 
 ## Pre-Phase-5 cleanup
 
-Phase 5 puts a renderer on top of the adapter. One item still stands between here
-and it; the rest of this section is the record of what the cleanup passes
-settled.
+Phase 5 puts a renderer on top of the adapter. Nothing stands between here and
+it; the rest of this section is the record of what the cleanup passes settled.
 
-**Open.**
+**Ported families.**
 
 1. **Several `ITermDispatch` families have no handler.** Ported so far: printing
    (`print`, `print_string`, via `_WriteToBuffer` with delayed EOL wrap, insert
@@ -51,11 +50,12 @@ settled.
    reports answered from the visible page), the colour table (OSC
    4/10/11/104/110/111 and the DECRQTSR/DECRSTS colour-table report), and
    sixel (DCS `q`, decoded into row bands; see the sixel entry below).
-   Still ported nowhere: the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt
-   action strings.
-   Everything else falls through to the trait default, which
-   `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
-   names the ported set and must grow with each family.
+   The ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings were the last
+   family: the buffer marks, taskbar progress, working directory, completions,
+   missing-command search and notifications they carry are queued for the
+   host. Every `ITermDispatch` method now has a handler, so none falls through
+   to the trait default that `AdaptDispatch::unhandled` records; the ratchet
+   test in `adapt_dispatch.rs` calls the whole surface and keeps it that way.
 
    The parser now reaches this list: `term::OutputStateMachineEngine`
    implements `IStateMachineEngine` and maps the C0/ESC/CSI/OSC/DCS/VT52
@@ -119,7 +119,7 @@ settled.
   directly: its column count is terminal state, while the window size belongs
   to the host.
 
-- **Macros are ported; sixel is ported; DRCS is next.** `MacroBuffer` now
+- **Macros, sixel and DRCS are ported.** `MacroBuffer` now
   carries upstream's definition parser (text and hex-pair encodings,
   `!count;…;` repeats, the 64 macro ids and 256 KiB shared budget), its
   checksum and its reset semantics. DECDMAC returns the handler, DECINVM
@@ -147,9 +147,11 @@ settled.
     This scrolls the page to make room and clamps at the bottom, which is the
     same visible result for images that fit on one screen.
 
-  DRCS has no handler yet: the storage exists (see the image entry above), so
-  the next step is its decoder, writing through `ImageSlice::mutable_pixels`.
-  The renderer is still required before any of it can be seen.
+  DRCS is ported: `FontBuffer` parses the DECDLD data string, works out the
+  cell size, packs and centres the bit patterns and fills the unused
+  characters with an error glyph, and `AdaptDispatch::download_drcs`
+  registers the designation on the terminating ESC. The renderer is still
+  required before a soft font can be seen.
 
 - **Hyperlinks and OSC 0/2, 7 and 52 are ported.** OSC 8 allocates a numeric id
   (`TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`, which every upstream

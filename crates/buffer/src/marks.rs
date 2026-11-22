@@ -15,6 +15,8 @@ pub struct BufferMark {
     start_row: i32,
     /// The buffer row where this mark ends (exclusive).
     end_row: i32,
+    /// The command's exit code, once a FinalTerm `D` reports it.
+    error: Option<u32>,
 }
 
 impl BufferMark {
@@ -24,6 +26,7 @@ impl BufferMark {
             kind,
             start_row,
             end_row,
+            error: None,
         }
     }
 
@@ -50,6 +53,11 @@ impl BufferMark {
     /// Returns the extent (number of rows) of this mark.
     pub const fn extent(&self) -> i32 {
         self.end_row - self.start_row
+    }
+
+    /// Returns the command's exit code, if the shell reported one.
+    pub const fn error(&self) -> Option<u32> {
+        self.error
     }
 }
 
@@ -83,12 +91,20 @@ impl Marks {
         self.start_mark(MarkKind::Output, current_row, current_row + 1);
     }
 
-    /// Ends the current command (closes the last command mark).
-    pub fn end_current_command(&mut self, current_row: i32) {
-        if let Some(last) = self.marks.last_mut()
-            && last.kind() == MarkKind::Command
+    /// Ends the current command (closes the most recent command mark).
+    ///
+    /// Upstream sets the mark attributes to `None` and walks upward from the
+    /// cursor to the nearest prompt row; here the range list already orders the
+    /// marks, so closing the newest command mark is the same operation.
+    pub fn end_current_command(&mut self, current_row: i32, error: Option<u32>) {
+        if let Some(mark) = self
+            .marks
+            .iter_mut()
+            .rev()
+            .find(|mark| mark.kind() == MarkKind::Command)
         {
-            last.end_row = current_row;
+            mark.end_row = current_row;
+            mark.error = error;
         }
     }
 
@@ -258,10 +274,17 @@ mod tests {
     fn test_end_current_command() {
         let mut marks = Marks::new();
         marks.start_command(10);
-        marks.end_current_command(20);
+        marks.start_output(12);
+        marks.end_current_command(20, Some(3));
 
         let extents = marks.get_mark_extents(MarkKind::Command).unwrap();
         assert_eq!(extents.end, 20);
+        let command = marks
+            .get_marks_by_kind(MarkKind::Command)
+            .iter()
+            .find(|mark| mark.kind() == MarkKind::Command)
+            .expect("a command mark");
+        assert_eq!(command.error(), Some(3));
     }
 
     #[test]

@@ -132,6 +132,41 @@ impl Terminal {
         self.dispatch_mut().take_answerback_request()
     }
 
+    /// Takes the taskbar progress requested by ConEmu's OSC 9;4.
+    pub fn take_taskbar_progress(&mut self) -> Option<(adapter::TaskbarState, usize)> {
+        self.dispatch_mut().take_taskbar_progress()
+    }
+
+    /// Takes the working directory requested by ConEmu's OSC 9;9.
+    pub fn take_conemu_working_directory(&mut self) -> Option<String> {
+        self.dispatch_mut().take_conemu_working_directory()
+    }
+
+    /// Takes the number of shell-integration marks requested since the last call.
+    pub fn take_shell_integration_marks(&mut self) -> usize {
+        self.dispatch_mut().take_shell_integration_marks()
+    }
+
+    /// Takes the completion menu requested by VS Code's OSC 633.
+    pub fn take_completions(&mut self) -> Option<(String, u32)> {
+        self.dispatch_mut().take_completions()
+    }
+
+    /// Takes the missing command requested by Windows Terminal's OSC 9001.
+    pub fn take_missing_command(&mut self) -> Option<String> {
+        self.dispatch_mut().take_missing_command()
+    }
+
+    /// Takes the desktop notifications requested by urxvt's OSC 777.
+    pub fn take_notifications(&mut self) -> Vec<(String, String)> {
+        self.dispatch_mut().take_notifications()
+    }
+
+    /// Takes the number of unrecognised terminal-specific actions since the last call.
+    pub fn take_unknown_sequences(&mut self) -> usize {
+        self.dispatch_mut().take_unknown_sequences()
+    }
+
     /// Returns the title set by OSC 0/2.
     pub fn window_title(&self) -> Option<&str> {
         self.dispatch().window_title()
@@ -235,6 +270,17 @@ mod tests {
         let buffer = buffer.read().unwrap();
         let cell = buffer.get_cell_data_at(0, 0).unwrap();
         assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(1));
+    }
+
+    #[test]
+    fn finalterm_osc_actions_reach_the_adapter() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b]133;A\x1b\\\x1b]133;B\x1b\\\x1b]133;C\x1b\\\x1b]133;D;1\x1b\\");
+
+        assert_eq!(terminal.take_shell_integration_marks(), 4);
+        let buffer = terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        assert!(buffer.marks().get_mark_extents(types::MarkKind::Prompt).is_some());
     }
 
     #[test]

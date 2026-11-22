@@ -771,4 +771,6 @@ pub enum OptionalFeature {
     ChecksumReport,
     /// Clipboard write enabled.
     ClipboardWrite,
+    /// Desktop notifications enabled.
+    DesktopNotification,
 }
