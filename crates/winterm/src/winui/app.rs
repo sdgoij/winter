@@ -66,6 +66,14 @@ struct Shell {
     template: TerminalSettings,
     /// The window chords, matched before the terminal sees a key.
     bindings: Rc<[settings::Keybinding]>,
+    /// The settings file in force, so a save can resolve its parts again.
+    settings: settings::Settings,
+    /// The file the settings were read from, polled for a save (ADR 025).
+    settings_path: Option<PathBuf>,
+    /// The file's stamp at the last read, so a save is noticed.
+    settings_stamp: Option<settings::Stamp>,
+    /// When the settings file was last polled, so the check is once a second.
+    settings_at: Instant,
     renderer: Renderer<TerminalData>,
     shared: SharedBackend,
     panel: ElementRef<SwapChainPanel>,
@@ -93,6 +101,10 @@ struct Shell {
     cell: (u16, u16),
     /// The composition scale the face was rasterised for.
     scale: f32,
+    /// The panel's size in DIPs, so a font change can re-fit the grid.
+    panel_size: (f64, f64),
+    /// The scale the panel reported, so a font change fits both axes.
+    panel_scale: (f32, f32),
     /// The grid in cells.
     grid: (i32, i32),
     /// The window's opening client size in DIPs. It is a constant, so the
@@ -141,8 +153,10 @@ impl Component for Shell {
         // (ADR 034). A broken file still yields the defaults.
         settings::ensure_file();
         let loaded = settings::load_with_report();
-        let template = TerminalSettings::resolve(&loaded.settings);
-        let font_size = loaded.settings.font.size;
+        let settings_path = loaded.path.clone();
+        let settings_stamp = settings_path.as_deref().and_then(settings::stamp);
+        let (template, bindings, font_size) = resolved_settings(&loaded.settings);
+        let settings = loaded.settings;
 
         let session = spawn_shell(&template.command, size).expect("a shell");
         let mut control = Control::new(Box::new(session), grid);
@@ -206,11 +220,20 @@ impl Component for Shell {
         let timer = Some(context.set_timeout(Duration::from_millis(16), Message::Tick));
         let _ = context.run_window(|handle| Message::Window(handle.as_raw() as isize));
 
+        let initial_client = (
+            f64::from(cell.0) * f64::from(INITIAL_COLUMNS as u16),
+            f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
+        );
+
         Self {
             tabs: Tabs::new(tab),
             next_tab: 1,
             template,
-            bindings: loaded.settings.keybindings.clone().into(),
+            bindings,
+            settings,
+            settings_path,
+            settings_stamp,
+            settings_at: Instant::now(),
             renderer,
             shared,
             panel,
@@ -230,11 +253,10 @@ impl Component for Shell {
             font_size,
             cell,
             scale: 1.0,
+            panel_size: initial_client,
+            panel_scale: (1.0, 1.0),
             grid,
-            initial_client: (
-                f64::from(cell.0) * f64::from(INITIAL_COLUMNS as u16),
-                f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
-            ),
+            initial_client,
         }
     }
 
@@ -416,6 +438,13 @@ impl Shell {
             self.wheel(notches);
         }
 
+        // The poll is the watcher (ADR 025): one metadata call a second, and a
+        // changed stamp means the file was saved and is read again.
+        if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
+            self.settings_at = now;
+            self.poll_settings();
+        }
+
         let blink_on = self.blink_on;
         let (painted, background) = {
             let Shell { renderer, tabs, .. } = self;
@@ -456,6 +485,11 @@ impl Shell {
         let scale_x = finite_scale(scale_x);
         let scale_y = finite_scale(scale_y);
 
+        // Kept so a font change can re-fit the grid without waiting for the
+        // panel to report its metrics again.
+        self.panel_size = (width, height);
+        self.panel_scale = (scale_x, scale_y);
+
         let rescaled = (scale_x - self.scale).abs() > f32::EPSILON;
         if rescaled {
             self.scale = scale_x;
@@ -492,6 +526,58 @@ impl Shell {
         let target = target_size(self.cell, self.grid);
         let viewport = InclusiveRect::new(0, 0, columns.max(1) - 1, rows.max(1) - 1);
         let _ = self.renderer.resize(target, viewport);
+    }
+
+    /// Reloads the settings file when a save changed its stamp.
+    fn poll_settings(&mut self) {
+        let Some(path) = &self.settings_path else {
+            return;
+        };
+        if settings::stamp(path) != self.settings_stamp {
+            self.reload_settings();
+        }
+    }
+
+    /// Re-reads the settings file and applies what changed.
+    ///
+    /// Chords and the font size take effect at once, and a scheme repaints
+    /// every tab. A changed profile affects the next tab, because a running
+    /// shell keeps the command it started with.
+    fn reload_settings(&mut self) {
+        let loaded = settings::load_with_report();
+        self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
+        if let Some(error) = loaded.error {
+            // A half-written save must not replace the settings a running
+            // session is using; the next valid save is read again.
+            eprintln!("winterm: settings not reloaded: {error}");
+            return;
+        }
+
+        self.settings = loaded.settings;
+        self.settings_path = loaded.path;
+        let (template, bindings, font_size) = resolved_settings(&self.settings);
+        self.template = template;
+        self.bindings = bindings;
+
+        if font_size != self.font_size {
+            self.font_size = font_size;
+            self.rebuild_face(self.panel_scale.0);
+            let grid = grid_for(
+                self.panel_size.0,
+                self.panel_size.1,
+                self.cell,
+                self.panel_scale.0,
+                self.panel_scale.1,
+            );
+            self.apply_grid(grid);
+        }
+
+        let scheme = self.template.scheme.clone();
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.control.apply_scheme(scheme.as_ref());
+            }
+        }
     }
 
     /// The title the window shows: the active tab's.
@@ -1136,6 +1222,18 @@ fn target_size(cell: (u16, u16), grid: (i32, i32)) -> (u16, u16) {
     (side(cell.0, grid.0), side(cell.1, grid.1))
 }
 
+/// The parts of a saved document a running shell applies at once.
+///
+/// The template is what the next tab starts from, the bindings are matched
+/// before the terminal sees a key, and the font size decides the grid.
+fn resolved_settings(document: &settings::Settings) -> (TerminalSettings, Rc<[settings::Keybinding]>, f32) {
+    (
+        TerminalSettings::resolve(document),
+        document.keybindings.clone().into(),
+        document.font.size,
+    )
+}
+
 /// Maps a Windows virtual-key code to the terminal's key identity.
 fn key_of(key: VirtualKey) -> Option<Key> {
     Some(match key.0 {
@@ -1199,6 +1297,40 @@ fn modifiers(modifiers: InputModifiers) -> input::Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reloaded_document_resolves_its_profile_chords_and_font() {
+        let document = settings::parse(
+            r#"
+                default_profile = "two"
+
+                [[profiles]]
+                name = "one"
+                command = "one.exe"
+
+                [[profiles]]
+                name = "two"
+                command = "two.exe"
+
+                [[keybindings]]
+                keys = "ctrl+alt+t"
+                action = "newTab"
+
+                [font]
+                size = 20
+            "#,
+        )
+        .expect("settings");
+
+        let (template, bindings, font_size) = resolved_settings(&document);
+        assert_eq!(template.command.program(), "two.exe");
+        assert_eq!(font_size, 20.0);
+        assert!(
+            bindings
+                .iter()
+                .any(|binding| binding.action == settings::Action::NewTab && binding.keys.to_string() == "ctrl+alt+t")
+        );
+    }
 
     #[test]
     fn a_scheme_reaches_the_pane_and_survives_a_resize() {

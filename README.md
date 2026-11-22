@@ -13,9 +13,9 @@ shared by all three.
 Early but coherent. The terminal core — parsing, the buffer, dispatch, the
 renderer, the input encoders, the console host, a working pty layer — is
 written and tested. On Windows the shell is native WinUI 3, with tabs, chords,
-pointer selection, scrollback and the wheel (ADRs 040–048); Linux and macOS run
-the egui shell (ADR 018). The native shells for those two platforms come after
-the behaviour is right.
+pointer selection, scrollback, the wheel and live settings reload (ADRs
+040–048, 025); Linux and macOS run the egui shell (ADR 018). The native shells
+for those two platforms come after the behaviour is right.
 
 | Crate | What it is | State |
 |---|---|---|
@@ -30,9 +30,9 @@ the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–048) |
+| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–048), including a saved settings file picked up within a second (ADR 025) |
 
-1612 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1613 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 

@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/settings/src/watch.rs`, `crates/winterm/src/ui.rs`; ADRs 022–024
+- Related: `crates/settings/src/watch.rs`, `crates/winterm/src/app.rs`,
+  `crates/winterm/src/winui/app.rs`; ADRs 022–024
 
 ## Context
 
@@ -17,8 +18,8 @@ already a frame loop that can be woken on a timer.
 ## Decision
 
 - The application polls a `Stamp` — the modification time and the length — once
-  a second in `App::logic`, and reloads when it differs. A file that appears or
-  disappears is a change; deleting the file restores the defaults.
+  a second in the shell's frame loop, and reloads when it differs. A file that
+  appears or disappears is a change; deleting the file restores the defaults.
 - `settings::watch` owns the comparison. There is no watcher thread and no new
   dependency.
 - A reload applies:
@@ -71,6 +72,9 @@ Negative:
 - A profile change does not restart running shells, so the window and the panes
   can disagree about the profile until a tab is opened.
 - The application still does not write the file; editing stays in an editor.
+- Both shells poll: `App::logic` on egui and `Shell::tick` on WinUI. Until the
+  WinUI shell has a settings window, a rejected save keeps the running settings
+  and is reported on stderr.
 
 ## Alternatives considered
 
