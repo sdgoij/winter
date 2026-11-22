@@ -38,3 +38,4 @@ Rules:
 | [007](007-gpu-backend-and-surface.md) | The GPU backend is created by the UI layer with a surface | Accepted |
 | [008](008-font-discovery.md) | Fonts are found by scanning host-supplied directories, read with a small SFNT reader | Accepted |
 | [009](009-platform-neutral-input.md) | Input translation takes portable events and a mode snapshot | Accepted |
+| [010](010-input-parser-in-the-host.md) | The input parser is ported with the host layer | Accepted |
