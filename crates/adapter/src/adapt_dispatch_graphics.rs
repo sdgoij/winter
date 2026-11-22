@@ -11,23 +11,24 @@ use types::{TextAttribute, TextColor, VTParameter, VTParameters, VTSubParameters
 
 use crate::AdaptDispatch;
 
-/// Windows console palette indices, in the order the DARK_/BRIGHT_ constants use.
-const DARK_BLACK: u8 = 0;
-const DARK_BLUE: u8 = 1;
-const DARK_GREEN: u8 = 2;
-const DARK_CYAN: u8 = 3;
-const DARK_RED: u8 = 4;
-const DARK_MAGENTA: u8 = 5;
-const DARK_YELLOW: u8 = 6;
-const DARK_WHITE: u8 = 7;
-const BRIGHT_BLACK: u8 = 8;
-const BRIGHT_BLUE: u8 = 9;
-const BRIGHT_GREEN: u8 = 10;
-const BRIGHT_CYAN: u8 = 11;
-const BRIGHT_RED: u8 = 12;
-const BRIGHT_MAGENTA: u8 = 13;
-const BRIGHT_YELLOW: u8 = 14;
-const BRIGHT_WHITE: u8 = 15;
+// The palette indices come from upstream's `TextColor` constants; defining
+// them here as literals had red and blue swapped.
+const DARK_BLACK: u8 = TextColor::DARK_BLACK.get_index();
+const DARK_RED: u8 = TextColor::DARK_RED.get_index();
+const DARK_GREEN: u8 = TextColor::DARK_GREEN.get_index();
+const DARK_YELLOW: u8 = TextColor::DARK_YELLOW.get_index();
+const DARK_BLUE: u8 = TextColor::DARK_BLUE.get_index();
+const DARK_MAGENTA: u8 = TextColor::DARK_MAGENTA.get_index();
+const DARK_CYAN: u8 = TextColor::DARK_CYAN.get_index();
+const DARK_WHITE: u8 = TextColor::DARK_WHITE.get_index();
+const BRIGHT_BLACK: u8 = TextColor::BRIGHT_BLACK.get_index();
+const BRIGHT_RED: u8 = TextColor::BRIGHT_RED.get_index();
+const BRIGHT_GREEN: u8 = TextColor::BRIGHT_GREEN.get_index();
+const BRIGHT_YELLOW: u8 = TextColor::BRIGHT_YELLOW.get_index();
+const BRIGHT_BLUE: u8 = TextColor::BRIGHT_BLUE.get_index();
+const BRIGHT_MAGENTA: u8 = TextColor::BRIGHT_MAGENTA.get_index();
+const BRIGHT_CYAN: u8 = TextColor::BRIGHT_CYAN.get_index();
+const BRIGHT_WHITE: u8 = TextColor::BRIGHT_WHITE.get_index();
 
 impl AdaptDispatch {
     /// Ported from `_ApplyGraphicsOptions`: applies each option in order.

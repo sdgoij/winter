@@ -199,6 +199,8 @@ pub struct AdaptDispatch {
     kitty_stack: Vec<u8>,
     /// A presentation state parsed by DECRSPS, waiting to be applied.
     pending_presentation: Arc<Mutex<Option<PendingPresentation>>>,
+    /// A DECRQSS setting query, waiting to be answered.
+    pending_setting: Arc<Mutex<Option<(VTID, VTInt)>>>,
 }
 
 /// A MIDI note requested by DECPS.
@@ -394,6 +396,7 @@ impl AdaptDispatch {
             kitty_flags: 0,
             kitty_stack: Vec::new(),
             pending_presentation: Arc::new(Mutex::new(None)),
+            pending_setting: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -504,6 +507,119 @@ impl AdaptDispatch {
                 self.tab_stops[column as usize - 1] = true;
             }
         }
+    }
+
+    /// Answers a DECRQSS setting query parsed by `request_setting`.
+    pub fn answer_pending_setting_request(&mut self) {
+        let pending = self.pending_setting.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let Some((id, parameter)) = pending else {
+            return;
+        };
+
+        match id.as_bytes() {
+            b"m" => self.report_sgr_setting(),
+            b"r" => self.report_decstbm_setting(),
+            b"s" => self.report_decslrm_setting(),
+            b" q" => self.report_decscusr_setting(),
+            b"\"q" => self.report_decsca_setting(),
+            b"*x" => self.report_decsace_setting(),
+            b",|" => self.report_decac_setting(parameter),
+            _ => self.push_dcs("0$r"),
+        }
+    }
+
+    fn report_sgr_setting(&mut self) {
+        let attributes = self.page_manager.active_page().attributes();
+        let mut body = String::from("1$r0");
+
+        if attributes.is_intense() {
+            body.push_str(";1");
+        }
+        if attributes.is_faint() {
+            body.push_str(";2");
+        }
+        if attributes.is_italic() {
+            body.push_str(";3");
+        }
+        match attributes.get_underline_style() {
+            UnderlineStyle::SinglyUnderlined => body.push_str(";4"),
+            UnderlineStyle::CurlyUnderlined => body.push_str(";4:3"),
+            UnderlineStyle::DottedUnderlined => body.push_str(";4:4"),
+            UnderlineStyle::DashedUnderlined => body.push_str(";4:5"),
+            UnderlineStyle::DoublyUnderlined => body.push_str(";21"),
+            UnderlineStyle::NoUnderline => {}
+        }
+        if attributes.is_blinking() {
+            body.push_str(";5");
+        }
+        if attributes.is_reverse_video() {
+            body.push_str(";7");
+        }
+        if attributes.is_invisible() {
+            body.push_str(";8");
+        }
+        if attributes.is_crossed_out() {
+            body.push_str(";9");
+        }
+
+        add_sgr_color(&mut body, 30, attributes.get_foreground());
+        add_sgr_color(&mut body, 40, attributes.get_background());
+        add_sgr_color(&mut body, 50, attributes.get_underline_color());
+        body.push('m');
+
+        self.push_dcs(&body);
+    }
+
+    fn report_decstbm_setting(&mut self) {
+        let (_, page_height) = self.page_size();
+        let (top, bottom) = self.effective_vertical_margins(page_height);
+        self.push_dcs(&format!("1$r{};{}r", top + 1, bottom + 1));
+    }
+
+    fn report_decslrm_setting(&mut self) {
+        let (page_width, _) = self.page_size();
+        let (left, right) = self.effective_horizontal_margins(page_width);
+        self.push_dcs(&format!("1$r{};{}s", left + 1, right + 1));
+    }
+
+    fn report_decscusr_setting(&mut self) {
+        let style = match self.cursor_style {
+            CursorStyle::UserDefault => 0,
+            CursorStyle::BlinkingBlock => 1,
+            CursorStyle::SteadyBlock => 2,
+            CursorStyle::BlinkingUnderline => 3,
+            CursorStyle::SteadyUnderline => 4,
+            CursorStyle::BlinkingBar => 5,
+            CursorStyle::SteadyBar => 6,
+        };
+        self.push_dcs(&format!("1$r{} q", style));
+    }
+
+    fn report_decsca_setting(&mut self) {
+        let protected = self.page_manager.active_page().attributes().is_protected();
+        self.push_dcs(if protected { "1$r1\"q" } else { "1$r0\"q" });
+    }
+
+    fn report_decsace_setting(&mut self) {
+        let rectangular = self.modes.contains(ModeFlags::RECTANGULAR_CHANGE_EXTENT);
+        self.push_dcs(if rectangular { "1$r2*x" } else { "1$r0*x" });
+    }
+
+    fn report_decac_setting(&mut self, item: VTInt) {
+        let (fg_alias, bg_alias) = match item {
+            1 => (ColorAlias::DefaultForeground, ColorAlias::DefaultBackground),
+            2 => (ColorAlias::FrameForeground, ColorAlias::FrameBackground),
+            _ => {
+                self.push_dcs("0$r");
+                return;
+            }
+        };
+
+        let table = self.color_table.lock().unwrap_or_else(|e| e.into_inner());
+        let fg = table.alias_index(fg_alias);
+        let bg = table.alias_index(bg_alias);
+        drop(table);
+        self.push_dcs(&format!("1$r{};{};{},|", item, fg, bg));
     }
 
     fn report_cursor_information(&mut self) {
@@ -1593,6 +1709,25 @@ fn xterm_color_mapping(resource: usize) -> Option<(usize, Option<ColorAlias>)> {
 /// Decodes upstream's `COLORREF` packing (`0x00BBGGRR`).
 fn colorref_to_text_color(color: u32) -> TextColor {
     TextColor::rgb(color as u8, (color >> 8) as u8, (color >> 16) as u8)
+}
+
+/// Appends one colour to an SGR report.
+fn add_sgr_color(body: &mut String, base: VTInt, color: TextColor) {
+    if color.is_index16() {
+        let index = VTInt::from(color.get_index());
+        let value = base + if index >= 8 { 60 } else { 0 } + index % 8;
+        body.push_str(&format!(";{}", value));
+    } else if color.is_index256() {
+        body.push_str(&format!(";{}:5:{}", base + 8, color.get_index()));
+    } else if color.is_rgb() {
+        body.push_str(&format!(
+            ";{}:2::{}:{}:{}",
+            base + 8,
+            color.get_r(),
+            color.get_g(),
+            color.get_b()
+        ));
+    }
 }
 
 /// Paints a decoded sixel image into the buffer's row image bands (ADR 005).
@@ -2952,6 +3087,31 @@ impl ITermDispatch for AdaptDispatch {
         }
     }
 
+    fn request_setting(&mut self) -> Option<Box<dyn FnMut(char) -> bool + Send>> {
+        let pending = Arc::clone(&self.pending_setting);
+        let mut builder = VTID::new();
+        let mut parameter: VTInt = 0;
+
+        Some(Box::new(move |ch| {
+            let byte = ch as u8;
+
+            if (0x40..=0x7E).contains(&byte) {
+                let id = builder.finalize_with(byte);
+                *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, parameter));
+                return false;
+            }
+
+            // Upstream keeps the prefix in the id so a prefixed query it does
+            // not understand is not mistaken for an unprefixed one.
+            if (0x3C..=0x3F).contains(&byte) || (0x20..=0x2F).contains(&byte) {
+                builder = builder.with_intermediate(byte);
+            } else if byte.is_ascii_digit() {
+                parameter = (parameter * 10 + VTInt::from(byte - b'0')).min(65535);
+            }
+            true
+        }))
+    }
+
     fn cursor_save_state(&mut self) {
         let (row, column) = self.active_cursor_position();
         let index = self.cursor_state_index();
@@ -3518,6 +3678,7 @@ mod tests {
         dispatch.request_presentation_state_report(PresentationReportFormat::TabulationStopReport);
         drop(dispatch.restore_presentation_state(PresentationReportFormat::CursorInformationReport));
         drop(dispatch.restore_presentation_state(PresentationReportFormat::TabulationStopReport));
+        drop(dispatch.request_setting());
         dispatch.set_ansi_mode(true);
         dispatch.set_cursor_style(CursorStyle::BlinkingBlock);
         dispatch.set_line_rendition(LineRendition::DoubleWidth);
@@ -3765,6 +3926,71 @@ mod tests {
         assert_eq!(dispatch.active_cursor_position(), (0, 16));
     }
 
+    fn query_setting(dispatch: &mut AdaptDispatch, setting: &str) {
+        let mut handler = dispatch.request_setting().unwrap();
+        for ch in setting.chars() {
+            handler(ch);
+        }
+        handler('\x1b');
+        dispatch.answer_pending_setting_request();
+    }
+
+    #[test]
+    fn decrqss_reports_the_sgr_attributes() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_graphics_rendition(&VTParameters::from_values(vec![1, 31]));
+
+        query_setting(&mut dispatch, "m");
+        assert_eq!(dispatch.take_responses(), vec!["\x1bP1$r0;1;31m\x1b\\".to_string()]);
+    }
+
+    #[test]
+    fn decrqss_reports_the_margins_and_cursor_style() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_vertical_margins(2, 10);
+        dispatch.set_horizontal_margins(3, 70);
+        dispatch.set_cursor_style(CursorStyle::SteadyBar);
+
+        query_setting(&mut dispatch, "r");
+        query_setting(&mut dispatch, "s");
+        query_setting(&mut dispatch, " q");
+        assert_eq!(
+            dispatch.take_responses(),
+            vec![
+                "\x1bP1$r3;11r\x1b\\".to_string(),
+                "\x1bP1$r4;71s\x1b\\".to_string(),
+                "\x1bP1$r6 q\x1b\\".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn decrqss_reports_protection_extent_and_colour_aliases() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_character_protection_attribute(&VTParameters::from_values(vec![1]));
+        dispatch.select_attribute_change_extent(ChangeExtent::Rectangle);
+        dispatch.assign_color(ColorItem::NormalText, 3, 5);
+
+        query_setting(&mut dispatch, "\"q");
+        query_setting(&mut dispatch, "*x");
+        query_setting(&mut dispatch, "1,|");
+        assert_eq!(
+            dispatch.take_responses(),
+            vec![
+                "\x1bP1$r1\"q\x1b\\".to_string(),
+                "\x1bP1$r2*x\x1b\\".to_string(),
+                "\x1bP1$r1;3;5,|\x1b\\".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn decrqss_reports_an_unsupported_setting_as_an_error() {
+        let mut dispatch = AdaptDispatch::new();
+        query_setting(&mut dispatch, "z");
+        assert_eq!(dispatch.take_responses(), vec!["\x1bP0$r\x1b\\".to_string()]);
+    }
+
     #[test]
     fn sgr_writes_the_page_attributes() {
         let mut dispatch = AdaptDispatch::new();
@@ -3772,7 +3998,7 @@ mod tests {
 
         let attributes = page_attributes(&mut dispatch);
         assert!(attributes.is_intense());
-        assert_eq!(attributes.get_foreground(), types::TextColor::index16(4));
+        assert_eq!(attributes.get_foreground(), types::TextColor::index16(1));
     }
 
     #[test]
@@ -3784,7 +4010,7 @@ mod tests {
         let buffer = dispatch.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
         let cell = buffer.get_cell_data_at(0, 0).unwrap();
-        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(1));
     }
 
     #[test]
@@ -3962,7 +4188,7 @@ mod tests {
         let buffer = dispatch.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
         let cell = buffer.get_cell_data_at(0, 0).unwrap();
-        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(1));
         drop(buffer);
 
         // DECECM erases to the default background instead of the current colour.
@@ -4039,7 +4265,7 @@ mod tests {
         assert_eq!(cell_text(&mut dispatch, 2, 26), " ");
         let erased = cell_attribute(&mut dispatch, 2, 26);
         assert!(!erased.is_intense());
-        assert_eq!(erased.get_foreground(), types::TextColor::index16(4));
+        assert_eq!(erased.get_foreground(), types::TextColor::index16(1));
         assert_eq!(cell_text(&mut dispatch, 1, 26), "Z");
     }
 

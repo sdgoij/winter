@@ -43,6 +43,7 @@ impl Terminal {
                 self.state.set_parser_mode(ParserMode::AcceptC1, enabled);
             }
             self.dispatch_mut().apply_pending_presentation_state();
+            self.dispatch_mut().answer_pending_setting_request();
         }
     }
 
@@ -233,7 +234,7 @@ mod tests {
         let buffer = terminal.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
         let cell = buffer.get_cell_data_at(0, 0).unwrap();
-        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(4));
+        assert_eq!(cell.get_attributes().get_foreground(), types::TextColor::index16(1));
     }
 
     #[test]
@@ -259,6 +260,13 @@ mod tests {
         assert_eq!(buffer.cursor().position(), (3, 5));
         drop(buffer);
         assert!(terminal.page_manager_mut().active_page().attributes().is_intense());
+    }
+
+    #[test]
+    fn decrqss_answers_through_the_parser() {
+        let mut terminal = Terminal::new();
+        terminal.process_str("\x1b[1;31m\x1bP$qm\x1b\\");
+        assert_eq!(terminal.take_responses(), vec!["\x1bP1$r0;1;31m\x1b\\".to_string()]);
     }
 
     #[test]
