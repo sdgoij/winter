@@ -1,171 +1,130 @@
-//! `Hyperlinks` — hyperlink map for terminal buffer cells.
+//! `Hyperlinks` — the buffer's OSC 8 hyperlink registry.
 //!
-//! Ported from the hyperlink tracking code in the Windows Terminal C++ buffer module.
-//! Supports OSC 8 hyperlinks with generational indexing for invalidation.
+//! Ported from the hyperlink bookkeeping in `TextBuffer`
+//! (`_hyperlinkMap`, `_hyperlinkCustomIdMap`, `_currentHyperlinkId`). A cell
+//! carries the numeric id in its text attribute (`TextAttribute::hyperlink_id`);
+//! this map resolves it back to a URI.
+//!
+//! Upstream keys a caller-supplied id with a hash of the URI so the same custom
+//! id used for a different target is a different link. The key here is the
+//! `(custom id, uri)` pair, which has the same effect without needing the hash.
 
 use std::collections::HashMap;
 
-/// A hyperlink in the terminal buffer.
+/// A hyperlink registered in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hyperlink {
     /// The URI the hyperlink points to.
     pub uri: String,
-    /// The ID of this hyperlink (used for matching start/end pairs).
-    pub id: String,
-    /// Optional metadata associated with the hyperlink.
-    pub metadata: Option<String>,
+    /// The caller-supplied id from OSC 8; empty when the terminal allocated one.
+    pub custom_id: String,
 }
 
 impl Hyperlink {
     /// Creates a new hyperlink.
-    pub fn new(uri: String, id: String) -> Self {
-        Self {
-            uri,
-            id,
-            metadata: None,
-        }
-    }
-
-    /// Creates a new hyperlink with metadata.
-    pub fn with_metadata(mut self, metadata: String) -> Self {
-        self.metadata = Some(metadata);
-        self
+    pub fn new(uri: String, custom_id: String) -> Self {
+        Self { uri, custom_id }
     }
 }
 
-/// Manages hyperlinks in the terminal buffer.
-///
-/// Uses a generational approach for efficient invalidation: when the buffer
-/// changes, the generation is incremented, and all hyperlinks from the old
-/// generation are considered stale.
+/// Resolves the numeric hyperlink ids that cells carry back to their URIs.
 #[derive(Debug, Clone)]
 pub struct HyperlinkMap {
-    /// Maps hyperlink IDs to hyperlink data.
-    hyperlinks: HashMap<String, Hyperlink>,
-    /// Maps buffer row/column positions to hyperlink IDs.
-    /// Key: (row, col) -> hyperlink_id
-    position_map: HashMap<(i32, i32), String>,
-    /// The current generation number.
-    generation: u64,
-    /// Maximum number of hyperlinks before garbage collection.
-    max_size: usize,
+    /// Maps the numeric id to the hyperlink.
+    links: HashMap<u16, Hyperlink>,
+    /// Maps a `(custom id, uri)` pair to the numeric id, so a repeated OSC 8
+    /// start reuses the same link instead of allocating a new one.
+    custom_ids: HashMap<(String, String), u16>,
+    /// The next id to hand out. Zero means "no hyperlink", so it is skipped.
+    next_id: u16,
 }
 
 impl HyperlinkMap {
     /// Creates a new empty hyperlink map.
     pub fn new() -> Self {
         Self {
-            hyperlinks: HashMap::new(),
-            position_map: HashMap::new(),
-            generation: 0,
-            max_size: 10000,
+            links: HashMap::new(),
+            custom_ids: HashMap::new(),
+            next_id: 1,
         }
     }
 
-    /// Creates a hyperlink map with a custom maximum size.
-    pub fn with_max_size(max_size: usize) -> Self {
-        Self {
-            hyperlinks: HashMap::new(),
-            position_map: HashMap::new(),
-            generation: 0,
-            max_size,
-        }
-    }
-
-    /// Adds or updates a hyperlink.
+    /// Registers a hyperlink and returns the numeric id cells should carry.
     ///
-    /// The hyperlink will be associated with the current generation.
-    pub fn add(&mut self, uri: String, id: String, metadata: Option<String>) {
-        let link = Hyperlink {
-            uri,
-            id: id.clone(),
-            metadata,
+    /// Ported from `TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`: every
+    /// upstream call site registers and stores together, so they are one step
+    /// here. An empty `custom_id` always allocates; a repeated custom id for
+    /// the same URI returns the id allocated the first time.
+    pub fn register(&mut self, uri: &str, custom_id: &str) -> u16 {
+        let id = if custom_id.is_empty() {
+            self.allocate()
+        } else {
+            let key = (custom_id.to_string(), uri.to_string());
+            match self.custom_ids.get(&key) {
+                Some(&id) => id,
+                None => {
+                    let id = self.allocate();
+                    self.custom_ids.insert(key, id);
+                    id
+                }
+            }
         };
 
-        // Update or insert the hyperlink
-        self.hyperlinks.insert(id.clone(), link);
+        self.links.insert(
+            id,
+            Hyperlink {
+                uri: uri.to_string(),
+                custom_id: custom_id.to_string(),
+            },
+        );
+        id
+    }
 
-        // Bump generation to invalidate old entries
-        self.generation += 1;
-
-        // Garbage collect if needed
-        if self.hyperlinks.len() > self.max_size {
-            self.garbage_collect();
+    /// Allocates a fresh numeric id, skipping the zero sentinel.
+    fn allocate(&mut self) -> u16 {
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        if self.next_id == 0 {
+            self.next_id = 1;
         }
+        id
     }
 
-    /// Gets a hyperlink by ID.
-    pub fn get(&self, id: &str) -> Option<&Hyperlink> {
-        self.hyperlinks.get(id)
+    /// Gets a hyperlink by its numeric id.
+    pub fn get(&self, id: u16) -> Option<&Hyperlink> {
+        self.links.get(&id)
     }
 
-    /// Gets a hyperlink at a specific buffer position.
-    ///
-    /// Returns None if there's no hyperlink at that position or if the
-    /// hyperlink's generation has been bumped (indicating it's stale).
-    pub fn get_at(&self, row: i32, col: i32) -> Option<&Hyperlink> {
-        let id = self.position_map.get(&(row, col))?;
-        self.hyperlinks.get(id)
+    /// Resolves a numeric id to its URI, which is what the renderer needs.
+    pub fn uri(&self, id: u16) -> Option<&str> {
+        self.links.get(&id).map(|link| link.uri.as_str())
     }
 
-    /// Removes a hyperlink by ID.
-    pub fn remove(&mut self, id: &str) {
-        self.hyperlinks.remove(id);
-        self.position_map.retain(|_, v| v != id);
+    /// Removes a hyperlink by its numeric id.
+    pub fn remove(&mut self, id: u16) {
+        self.links.remove(&id);
+        self.custom_ids.retain(|_, value| *value != id);
     }
 
     /// Removes all hyperlinks.
     pub fn clear(&mut self) {
-        self.hyperlinks.clear();
-        self.position_map.clear();
+        self.links.clear();
+        self.custom_ids.clear();
     }
 
-    /// Gets the number of active hyperlinks.
-    pub fn count(&self) -> usize {
-        self.hyperlinks.len()
+    /// Returns the number of registered hyperlinks.
+    pub fn len(&self) -> usize {
+        self.links.len()
     }
 
     /// Returns whether there are any hyperlinks.
     pub fn is_empty(&self) -> bool {
-        self.hyperlinks.is_empty()
-    }
-
-    /// Returns the current generation number.
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Bumps the generation number, invalidating all hyperlinks.
-    pub fn bump_generation(&mut self) {
-        self.generation += 1;
+        self.links.is_empty()
     }
 
     /// Returns an iterator over all hyperlinks.
     pub fn iter(&self) -> impl Iterator<Item = &Hyperlink> {
-        self.hyperlinks.values()
-    }
-
-    /// Gets all hyperlinks that contain the given position.
-    ///
-    /// In a full implementation, this would track the full extent of each
-    /// hyperlink (start_row/start_col to end_row/end_col).
-    pub fn get_at_position(&self, _row: i32, _col: i32) -> Option<&Hyperlink> {
-        self.get_at(_row, _col)
-    }
-
-    /// Garbage collects old hyperlinks based on generation.
-    fn garbage_collect(&mut self) {
-        // For simplicity, keep only the most recent hyperlinks
-        // A more sophisticated approach would track individual hyperlink generations
-        let to_remove = self.hyperlinks.len() - self.max_size / 2;
-        if to_remove > 0 {
-            let mut ids: Vec<_> = self.hyperlinks.keys().cloned().collect();
-            ids.sort();
-            for id in ids.into_iter().take(to_remove) {
-                self.hyperlinks.remove(&id);
-            }
-            self.position_map.retain(|_, v| self.hyperlinks.contains_key(v));
-        }
+        self.links.values()
     }
 }
 
@@ -183,81 +142,99 @@ mod tests {
     fn test_new_map_is_empty() {
         let map = HyperlinkMap::new();
         assert!(map.is_empty());
-        assert_eq!(map.count(), 0);
+        assert_eq!(map.len(), 0);
     }
 
     #[test]
-    fn test_add_and_get() {
+    fn ids_start_at_one_and_resolve_to_the_uri() {
         let mut map = HyperlinkMap::new();
-        map.add("https://example.com".to_string(), "id1".to_string(), None);
+        let id = map.register("https://example.com", "");
 
-        let link = map.get("id1").unwrap();
-        assert_eq!(link.uri, "https://example.com");
-    }
-
-    #[test]
-    fn test_remove() {
-        let mut map = HyperlinkMap::new();
-        map.add("https://example.com".to_string(), "id1".to_string(), None);
+        assert_eq!(id, 1);
+        assert_eq!(map.uri(id), Some("https://example.com"));
+        assert_eq!(map.get(id).unwrap().custom_id, "");
         assert!(!map.is_empty());
-
-        map.remove("id1");
-        assert!(map.is_empty());
-        assert!(map.get("id1").is_none());
     }
 
     #[test]
-    fn test_clear() {
+    fn repeated_custom_ids_for_the_same_uri_reuse_the_link() {
         let mut map = HyperlinkMap::new();
-        map.add("https://a.com".to_string(), "a".to_string(), None);
-        map.add("https://b.com".to_string(), "b".to_string(), None);
-        assert_eq!(map.count(), 2);
+        let first = map.register("https://example.com", "custom");
+        let second = map.register("https://example.com", "custom");
+
+        assert_eq!(first, second);
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn the_same_custom_id_for_a_different_uri_allocates_a_new_link() {
+        let mut map = HyperlinkMap::new();
+        let first = map.register("https://one.example", "custom");
+        let second = map.register("https://two.example", "custom");
+
+        assert_ne!(first, second);
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_custom_id_always_allocates() {
+        let mut map = HyperlinkMap::new();
+        let first = map.register("https://example.com", "");
+        let second = map.register("https://example.com", "");
+
+        assert_ne!(first, second);
+        assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn removing_a_link_frees_its_custom_id_for_a_new_allocation() {
+        let mut map = HyperlinkMap::new();
+        let first = map.register("https://example.com", "custom");
+        map.remove(first);
+
+        assert!(map.is_empty());
+        assert_eq!(map.uri(first), None);
+
+        let second = map.register("https://example.com", "custom");
+        assert_ne!(second, first);
+    }
+
+    #[test]
+    fn clearing_removes_links_and_custom_ids() {
+        let mut map = HyperlinkMap::new();
+        map.register("https://a.example", "a");
+        map.register("https://b.example", "b");
 
         map.clear();
-        assert_eq!(map.count(), 0);
+
+        assert!(map.is_empty());
+        let id = map.register("https://a.example", "a");
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.uri(id), Some("https://a.example"));
     }
 
     #[test]
-    fn test_update_existing() {
+    fn allocation_skips_zero_when_the_id_wraps() {
         let mut map = HyperlinkMap::new();
-        map.add("https://old.com".to_string(), "id1".to_string(), None);
-        map.add("https://new.com".to_string(), "id1".to_string(), None);
+        map.next_id = u16::MAX;
 
-        let link = map.get("id1").unwrap();
-        assert_eq!(link.uri, "https://new.com");
+        let last = map.register("https://last.example", "");
+        let wrapped = map.register("https://wrapped.example", "");
+
+        assert_eq!(last, u16::MAX);
+        assert_eq!(wrapped, 1);
+        assert!(map.get(0).is_none());
     }
 
     #[test]
-    fn test_generation_bump() {
+    fn iter_visits_every_link() {
         let mut map = HyperlinkMap::new();
-        let gen1 = map.generation();
+        map.register("https://a.example", "");
+        map.register("https://b.example", "");
 
-        map.add("https://example.com".to_string(), "id1".to_string(), None);
-        assert!(map.generation() > gen1);
-    }
-
-    #[test]
-    fn test_with_metadata() {
-        let mut map = HyperlinkMap::new();
-        map.add(
-            "https://example.com".to_string(),
-            "id1".to_string(),
-            Some("metadata".to_string()),
-        );
-
-        let link = map.get("id1").unwrap();
-        assert_eq!(link.metadata.as_deref(), Some("metadata"));
-    }
-
-    #[test]
-    fn test_iter() {
-        let mut map = HyperlinkMap::new();
-        map.add("https://a.com".to_string(), "a".to_string(), None);
-        map.add("https://b.com".to_string(), "b".to_string(), None);
-
-        let uris: Vec<_> = map.iter().map(|h| &h.uri).collect();
-        assert!(uris.contains(&&"https://a.com".to_string()));
-        assert!(uris.contains(&&"https://b.com".to_string()));
+        let uris: Vec<&str> = map.iter().map(|link| link.uri.as_str()).collect();
+        assert!(uris.contains(&"https://a.example"));
+        assert!(uris.contains(&"https://b.example"));
     }
 }
 
@@ -267,32 +244,22 @@ mod proptests {
 
     use super::*;
 
-    prop_compose! {
-        fn any_uri()(
-            domain in "\\w{1,10}",
-            path in "\\w{1,20}",
-        ) -> String {
-            format!("https://{}.{}", domain, path)
-        }
-    }
-
-    prop_compose! {
-        fn any_id()(
-            id in "\\w{1,16}",
-        ) -> String {
-            id.to_string()
-        }
-    }
-
     proptest! {
         #[test]
-        fn test_add_and_retrieve(uri in any_uri(), id in any_id()) {
+        fn test_add_and_retrieve(domain in "\\w{1,10}", path in "\\w{1,20}") {
+            let uri = format!("https://{}.{}", domain, path);
             let mut map = HyperlinkMap::new();
-            map.add(uri.clone(), id.clone(), None);
-            let link = map.get(&id).unwrap();
-            prop_assert_eq!(&link.uri, &uri);
+            let id = map.register(&uri, "");
+            prop_assert_eq!(map.uri(id), Some(uri.as_str()));
+        }
+
+        #[test]
+        fn allocated_ids_are_never_zero(count in 0usize..1024) {
+            let mut map = HyperlinkMap::new();
+            for _ in 0..count {
+                prop_assert_ne!(map.register("https://example.com", ""), 0);
+            }
+            prop_assert_eq!(map.len(), count);
         }
     }
-
-    // Note: HyperlinkMap doesn't implement Arbitrary, so we use regular tests instead.
 }

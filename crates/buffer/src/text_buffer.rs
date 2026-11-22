@@ -328,6 +328,20 @@ impl TextBuffer {
         &self.hyperlinks
     }
 
+    /// Registers an OSC 8 hyperlink and returns the id cells carry.
+    ///
+    /// Ported from `TextBuffer::GetHyperlinkId`.
+    pub fn get_hyperlink_id(&mut self, uri: &str, custom_id: &str) -> u16 {
+        self.hyperlinks.register(uri, custom_id)
+    }
+
+    /// Resolves a cell's hyperlink id back to its URI.
+    ///
+    /// Ported from `TextBuffer::GetHyperlinkUriFromId`.
+    pub fn get_hyperlink_uri(&self, id: u16) -> Option<&str> {
+        self.hyperlinks.uri(id)
+    }
+
     /// Returns the selection.
     pub const fn selection(&self) -> Option<&Selection> {
         self.selection.as_ref()
@@ -1021,8 +1035,9 @@ mod tests {
     #[test]
     fn test_hyperlinks() {
         let mut buf = TextBuffer::new();
-        buf.hyperlinks_mut()
-            .add("https://example.com".into(), "id1".into(), None);
+        let id = buf.get_hyperlink_id("https://example.com", "custom");
+        assert!(id > 0);
+        assert_eq!(buf.get_hyperlink_uri(id), Some("https://example.com"));
         assert!(!buf.hyperlinks().is_empty());
     }
 

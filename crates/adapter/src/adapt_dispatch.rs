@@ -161,6 +161,12 @@ pub struct AdaptDispatch {
     tab_stops: Vec<bool>,
     /// Saved cursor states, indexed by buffer (0 main, 1 alternate).
     saved_cursor_state: [CursorState; 2],
+    /// The window title set by OSC 0/2, if any.
+    window_title: Option<String>,
+    /// The working-directory URI set by OSC 7, as given.
+    current_working_directory: Option<String>,
+    /// Clipboard content set by OSC 52, waiting for the host to take it.
+    clipboard_content: Option<String>,
 }
 
 impl AdaptDispatch {
@@ -191,6 +197,9 @@ impl AdaptDispatch {
             optional_features: std::collections::HashSet::new(),
             tab_stops: Vec::new(),
             saved_cursor_state: [CursorState::default(), CursorState::default()],
+            window_title: None,
+            current_working_directory: None,
+            clipboard_content: None,
         }
     }
 
@@ -252,6 +261,25 @@ impl AdaptDispatch {
     /// Drains the responses the adapter owes the host.
     pub fn take_responses(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_responses)
+    }
+
+    /// Returns the window title set by OSC 0/2.
+    pub fn window_title(&self) -> Option<&str> {
+        self.window_title.as_deref()
+    }
+
+    /// Returns the working-directory URI set by OSC 7.
+    ///
+    /// Upstream converts the file URI to a path with a Win32 API before handing
+    /// it to the host. That conversion belongs to the host layer here, so the
+    /// URI is recorded as given.
+    pub fn current_working_directory(&self) -> Option<&str> {
+        self.current_working_directory.as_deref()
+    }
+
+    /// Takes the clipboard content set by OSC 52.
+    pub fn take_clipboard_content(&mut self) -> Option<String> {
+        self.clipboard_content.take()
     }
 
     /// Returns whether insert/replace mode is enabled.
@@ -1568,6 +1596,42 @@ impl ITermDispatch for AdaptDispatch {
         self.optional_features = features;
     }
 
+    fn set_window_title(&mut self, title: &str) {
+        // Xterm caps titles set by an OSC at 1000 UTF-16 code units.
+        if title.encode_utf16().count() > 1000 {
+            return;
+        }
+        self.window_title = Some(title.to_string());
+    }
+
+    fn set_current_working_directory(&mut self, uri: &str) {
+        self.current_working_directory = Some(uri.to_string());
+    }
+
+    fn set_clipboard(&mut self, content: &str) {
+        self.clipboard_content = Some(content.to_string());
+    }
+
+    fn add_hyperlink(&mut self, uri: &str, params: &str) {
+        let page = self.page_manager.active_page();
+        let buffer = page.buffer();
+        let id = {
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            buffer.get_hyperlink_id(uri, params)
+        };
+
+        let mut attributes = page.attributes();
+        attributes.set_hyperlink_id(id);
+        page.set_attributes(attributes);
+    }
+
+    fn end_hyperlink(&mut self) {
+        let page = self.page_manager.active_page();
+        let mut attributes = page.attributes();
+        attributes.set_hyperlink_id(0);
+        page.set_attributes(attributes);
+    }
+
     fn cursor_save_state(&mut self) {
         let (row, column) = self.active_cursor_position();
         let index = self.cursor_state_index();
@@ -2059,6 +2123,11 @@ mod tests {
         dispatch.vt52_device_attributes();
         dispatch.request_terminal_parameters(ReportingPermission::Solicited);
         dispatch.set_optional_features(std::collections::HashSet::new());
+        dispatch.set_window_title("winterm");
+        dispatch.set_current_working_directory("file:///tmp");
+        dispatch.set_clipboard("copied");
+        dispatch.add_hyperlink("https://example.com", "");
+        dispatch.end_hyperlink();
         dispatch.cursor_save_state();
         dispatch.cursor_restore_state();
         dispatch.horizontal_tab_set();
@@ -2079,9 +2148,9 @@ mod tests {
         assert_eq!(dispatch.unhandled_count(), 0);
         assert_eq!(dispatch.last_unhandled(), None);
 
-        dispatch.set_window_title("x");
+        dispatch.set_color_table_entry(0, 0);
         assert_eq!(dispatch.unhandled_count(), 1);
-        assert_eq!(dispatch.last_unhandled(), Some("set_window_title"));
+        assert_eq!(dispatch.last_unhandled(), Some("set_color_table_entry"));
     }
 
     fn page_attributes(dispatch: &mut AdaptDispatch) -> types::TextAttribute {
@@ -2558,6 +2627,73 @@ mod tests {
         assert_eq!(dispatch.take_responses(), vec![format!("\x1bP1!~{expected:04X}\x1b\\")]);
     }
 
+    // OSC 0/2: xterm caps titles at 1000 UTF-16 code units.
+    #[test]
+    fn window_title_is_recorded_and_capped() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.set_window_title("winterm");
+        assert_eq!(dispatch.window_title(), Some("winterm"));
+
+        let too_long = "x".repeat(1001);
+        dispatch.set_window_title(&too_long);
+        assert_eq!(dispatch.window_title(), Some("winterm"));
+    }
+
+    #[test]
+    fn working_directory_uri_is_recorded() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.set_current_working_directory("file:///tmp/work");
+
+        assert_eq!(dispatch.current_working_directory(), Some("file:///tmp/work"));
+    }
+
+    #[test]
+    fn clipboard_content_waits_for_the_host() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.set_clipboard("copied");
+
+        assert_eq!(dispatch.take_clipboard_content().as_deref(), Some("copied"));
+        assert_eq!(dispatch.take_clipboard_content(), None);
+    }
+
+    // OSC 8: the id goes on the page attributes, so it is copied into every
+    // cell written until the hyperlink ends, and the URI is resolvable from
+    // the buffer.
+    #[test]
+    fn hyperlinks_set_the_page_id_and_are_resolvable() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.add_hyperlink("https://example.com", "custom");
+        let id = page_attributes(&mut dispatch).get_hyperlink_id();
+        assert!(id > 0);
+
+        dispatch.print('X');
+        assert_eq!(cell_hyperlink_id(&mut dispatch, 0, 0), id);
+        {
+            let buffer = dispatch.page_manager_mut().active_page().buffer();
+            let buffer = buffer.read().unwrap();
+            assert_eq!(buffer.get_hyperlink_uri(id), Some("https://example.com"));
+        }
+
+        dispatch.end_hyperlink();
+        assert_eq!(page_attributes(&mut dispatch).get_hyperlink_id(), 0);
+        dispatch.print('Y');
+        assert_eq!(cell_hyperlink_id(&mut dispatch, 0, 1), 0);
+    }
+
+    #[test]
+    fn repeated_hyperlink_starts_reuse_the_id() {
+        let mut dispatch = AdaptDispatch::new();
+
+        dispatch.add_hyperlink("https://example.com", "same");
+        let first = page_attributes(&mut dispatch).get_hyperlink_id();
+        dispatch.end_hyperlink();
+        dispatch.add_hyperlink("https://example.com", "same");
+
+        assert_eq!(page_attributes(&mut dispatch).get_hyperlink_id(), first);
+    }
+
     #[test]
     fn decset_changes_state_and_decrqm_reports_it() {
         let mut dispatch = AdaptDispatch::new();
@@ -2772,6 +2908,15 @@ mod tests {
         attributes.set_indexed_foreground(1);
         attributes.set_indexed_background(2);
         attributes
+    }
+
+    fn cell_hyperlink_id(dispatch: &mut AdaptDispatch, row: i32, column: i32) -> u16 {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        buffer
+            .get_cell_data_at(row, column)
+            .map(|cell| cell.get_attributes().get_hyperlink_id())
+            .unwrap_or(0)
     }
 
     #[test]

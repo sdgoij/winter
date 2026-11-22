@@ -11,12 +11,12 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
 | `types` | ~2.0k | 80 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
-| `buffer` | ~5.5k | 190 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed |
+| `buffer` | ~5.6k | 192 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed; OSC 8 hyperlink registry |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~8.2k | 116 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, save-restore and tab handlers ported |
+| `adapter` | ~8.4k | 121 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, rectangular, mode (incl. DECCOLM), report, hyperlink/OSC, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-646 tests, doc tests. Phases 5–14 are not started.
+653 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -43,8 +43,10 @@ settled.
    device reports (DSR/CPR/DECXCPR/DA1/DA2/DA3/VT52/DECREQTPARM), cursor
    save/restore (DECSC/DECRC), tab stops, charset designation and shifts, and
    rectangular operations (DECCARA, DECRARA with DECSACE extent, DECCRA,
-   DECFRA, DECERA, DECSERA, DECRQCRA).
-   Still ported nowhere: hyperlinks and OSC strings, sixel/DCS, DRCS, macros,
+   DECFRA, DECERA, DECSERA, DECRQCRA), and hyperlinks and OSC strings (OSC 8
+   into the buffer's hyperlink registry, OSC 0/2 title, OSC 7 CWD, OSC 52
+   clipboard).
+   Still ported nowhere: colour-table OSC strings, sixel/DCS, DRCS, macros,
    presentation state, and window manipulation.
    Everything else falls through to the trait default, which
    `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
@@ -55,6 +57,20 @@ settled.
    real conformance runner.
 
 **Settled.**
+
+- **Hyperlinks and OSC 0/2, 7 and 52 are ported.** OSC 8 allocates a numeric id
+  (`TextBuffer::GetHyperlinkId` plus `AddHyperlinkToMap`, which every upstream
+  caller does together) and puts it on the page attributes, so every cell
+  written until `end_hyperlink` carries it; the buffer resolves it back to the
+  URI. Repeated custom ids for the same URI reuse the id; the `(custom id, uri)`
+  pair replaces upstream's `custom id + hash(uri)` key with the same effect.
+  Titles over 1000 UTF-16 units are ignored, as xterm does.
+
+  OSC 7 records the URI as given: upstream converts it with a Win32 API
+  (`PathCreateFromUrlW`) before calling the host, and that conversion is the
+  host layer's job here. OSC 52 stores the content for the host to drain with
+  `take_clipboard_content`; it is not gated in the adapter, matching upstream
+  (the DA1 feature 52 bit and the app's setting are the gate).
 
 - **Rectangular operations are ported.** `_CalculateRectArea` is shared by all
   seven handlers, so origin-mode offsets, zero-as-extent and clamping are
