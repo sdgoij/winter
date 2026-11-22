@@ -9,6 +9,7 @@ description = "Console host — the input side the terminal feeds"
 
 [dependencies]
 bitflags.workspace = true
+buffer.workspace = true
 types.workspace = true
 utils.workspace = true
 vt.workspace = true

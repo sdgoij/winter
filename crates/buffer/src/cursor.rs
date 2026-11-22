@@ -22,6 +22,8 @@ pub struct Cursor {
     shape: CursorType,
     /// Width of the cursor in pixels (for non-rectangular cursors).
     width: i32,
+    /// Whether the cursor is drawn double-size to show insert/overtype mode.
+    double: bool,
     /// Where the cursor sat when the end of the line was reached.
     ///
     /// The wrap itself happens on the next character written, not on the one
@@ -41,6 +43,7 @@ impl Cursor {
             blinking: false,
             shape: CursorType::Legacy,
             width: 0,
+            double: false,
             delayed_eol_wrap: None,
         }
     }
@@ -175,6 +178,17 @@ impl Cursor {
         self.width = width;
     }
 
+    /// Returns whether the cursor is drawn double-size for insert/overtype.
+    pub const fn is_double(&self) -> bool {
+        self.double
+    }
+
+    /// Draws the cursor double-size for insert/overtype, as upstream's
+    /// `SetCursorDBMode` does.
+    pub fn set_double(&mut self, double: bool) {
+        self.double = double;
+    }
+
     /// Clamps the cursor position to be within buffer bounds.
     pub fn clamp_to_bounds(&mut self, max_row: i32, max_col: i32) {
         self.row = self.row.clamp(0, max_row - 1);
@@ -301,6 +315,16 @@ mod tests {
 
         cursor.set_shape(CursorType::FullBox);
         assert_eq!(cursor.shape(), CursorType::FullBox);
+    }
+
+    #[test]
+    fn a_cursor_can_be_drawn_double_size() {
+        let mut cursor = Cursor::new();
+        assert!(!cursor.is_double());
+        cursor.set_double(true);
+        assert!(cursor.is_double());
+        cursor.set_double(false);
+        assert!(!cursor.is_double());
     }
 }
 

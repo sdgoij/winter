@@ -17,9 +17,12 @@
 //! - [`input_state_machine_engine`] — `InputStateMachineEngine`, the grammar
 //!   that turns an application's VT input into console records
 //! - [`console_information`] — `ConsoleInformation`, the console's shared state
+//! - [`screen_info`] — `ScreenInformation`, one screen's buffer, viewport and
+//!   console modes
 
 pub mod console_information;
 pub mod history;
 pub mod input_buffer;
 pub mod input_state_machine_engine;
 pub mod read_data_cooked;
+pub mod screen_info;

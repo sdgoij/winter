@@ -40,3 +40,4 @@ Rules:
 | [009](009-platform-neutral-input.md) | Input translation takes portable events and a mode snapshot | Accepted |
 | [010](010-input-parser-in-the-host.md) | The input parser is ported with the host layer | Accepted |
 | [011](011-input-keyboard-layout.md) | The input engine synthesizes keys from a fixed US layout | Accepted |
+| [012](012-screen-information-scope.md) | `SCREEN_INFORMATION` is a buffer, viewport and console modes | Accepted |
