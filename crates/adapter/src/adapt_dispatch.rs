@@ -3758,14 +3758,14 @@ bitflags::bitflags! {
         const SCREEN_REVERSED = 1 << 22;
         /// Rectangular rather than stream attribute-change extent (DECSACE).
         const RECTANGULAR_CHANGE_EXTENT = 1 << 23;
-        /// Hold the frame until the program ends the block (mode 2026).
-        const SYNCHRONIZED_OUTPUT = 1 << 23;
         /// Sixel image display mode (DECSDM).
         const SIXEL_DISPLAY = 1 << 24;
         /// Keep the visible page following the active one (DECPCCM).
         const PAGE_CURSOR_COUPLING = 1 << 25;
+        /// Hold the frame until the program ends the block (mode 2026).
+        const SYNCHRONIZED_OUTPUT = 1 << 26;
         /// Send eight-bit control codes (S8C1T); the input encoder reads this.
-        const SEND_C1 = 1 << 26;
+        const SEND_C1 = 1 << 27;
     }
 }
 
@@ -3921,6 +3921,25 @@ mod tests {
 
     // The ratchet: a ported family must not report, and an unported one must.
     // When a family is ported, add it to the first half of this test.
+    #[test]
+    fn the_rectangular_extent_and_synchronized_output_flags_do_not_overlap() {
+        let mut dispatch = AdaptDispatch::new();
+        assert!(!dispatch.modes.contains(ModeFlags::RECTANGULAR_CHANGE_EXTENT));
+        assert!(!dispatch.modes.contains(ModeFlags::SYNCHRONIZED_OUTPUT));
+
+        // DECSACE must not switch mode 2026 on. The two modes shared a bit
+        // until this test existed.
+        dispatch.select_attribute_change_extent(ChangeExtent::Rectangle);
+        assert!(dispatch.modes.contains(ModeFlags::RECTANGULAR_CHANGE_EXTENT));
+        assert!(!dispatch.modes.contains(ModeFlags::SYNCHRONIZED_OUTPUT));
+
+        // And mode 2026 must not make the attribute-change extent rectangular.
+        dispatch.select_attribute_change_extent(ChangeExtent::Stream);
+        dispatch.set_mode(&ModeParams::SynchronizedOutput);
+        assert!(dispatch.modes.contains(ModeFlags::SYNCHRONIZED_OUTPUT));
+        assert!(!dispatch.modes.contains(ModeFlags::RECTANGULAR_CHANGE_EXTENT));
+    }
+
     #[test]
     fn ported_families_do_not_report_and_unported_ones_do() {
         let mut dispatch = AdaptDispatch::new();
