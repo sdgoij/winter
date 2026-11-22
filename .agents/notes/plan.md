@@ -16,9 +16,10 @@ Verified by running the gate, not by reading the previous status:
 | `adapter` | ~11.6k | 175 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~4.1k | 181 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; and `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll). 105 of the tests are the conformance corpus |
 | `renderer` | ~12.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
+| `host` | ~0.6k | 14 | Phase 6 has begun with `CommandHistory` from `history.cpp`: the per-application command ring, its retrieval semantics and the process-wide list |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1042 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
+1056 tests, doc tests. Phase 5 has begun; Phases 6–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -823,9 +824,13 @@ The Windows Terminal codebase maps to these Rust module groups:
   - [ ] **Tests:** cooked/raw/vt mode switching, read events, popup, line editing
 - [ ] `winterm/crates/host/src/cooked_read.rs` — `CookedReadData`
   - [ ] **Tests:** line edit (insert/delete/overwrite), arrow key navigation, history recall
-- [ ] `winterm/crates/host/src/scroll_history.rs` — `CommandHistory`
-  - [ ] **Tests:** add/get/clear, cycle through history, search history, duplicate suppression
-  - [ ] **Property tests:** cycling through history returns to most recent command
+- [x] `winterm/crates/host/src/history.rs` — `CommandHistory` and
+  `CommandHistoryList`, ported from `history.cpp`
+  - [x] **Tests:** add, empty, ring drop, duplicate suppression, retrieval both
+    ways with clamping, realloc, prefix and exact search, and the
+    per-application list
+  - [ ] **Property tests:** cycling through history returns to the most recent
+    command
 - [ ] `winterm/crates/host/src/handle.rs` — Handle management
 - [ ] `winterm/crates/host/src/output_stream.rs` — Output stream
 - [ ] `winterm/crates/host/src/scrolling.rs` — Scroll logic
