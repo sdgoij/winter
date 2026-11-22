@@ -157,7 +157,7 @@ tests pass.
   `utils → types → {buffer, vt} → adapter → term`. An edge that points left is a
   design error, not a `Cargo.toml` edit. `renderer` sits on `utils`, `types` and
   `buffer`; `host` sits on `types`, `vt` and `adapter`, because it consumes the
-  parser and the console interfaces.
+  parser and the console interfaces; `server` sits on `host`.
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
 - **`unsafe` is denied workspace-wide.** `utils` is the only crate that opts out,
@@ -198,6 +198,7 @@ Do not add call sites under an allowance.
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
 | `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
+| `crates/server` | The console API surface: shim policy, and the pty layer's home (ADR 015) |
 
 ## Where the port stands
 
@@ -214,7 +215,9 @@ layer with the read-data wait path; `registry.cpp`, `handle.cpp` and
 `tracing.cpp` follow. The read-data family's `IWaitRoutine` completion path,
 the cooked read's pager, the render settings and the window metrics wait for
 the server, renderer and window layers; `outputStream.cpp` has no counterpart
-(ADR 013). Phases 7–14 are not started.
+(ADR 013). Phase 7 has started with the server crate's portable policy
+(ADR 015); its pty layer waits for an `unsafe` decision, and Phases 8–14 are not
+started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

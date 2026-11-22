@@ -9,6 +9,7 @@ members = [
     "crates/term",
     "crates/renderer",
     "crates/host",
+    "crates/server",
 ]
 
 [workspace.package]
@@ -24,7 +25,8 @@ publish = false
 # `utils` sees nothing. `types` sees `utils`. `buffer` and `vt` see both and each
 # other not at all. `adapter` sees all three. `renderer` sees `utils`, `types`
 # and `buffer`, so `adapter` may later call into it. `host` sees `types`, `vt`
-# and `adapter`: it consumes the parser and the console interfaces. A crate that needs
+# and `adapter`: it consumes the parser and the console interfaces. `server`
+# sits on `host` and exposes the console's API surface. A crate that needs
 # something from a crate to its right is a design error, not a manifest to
 # edit; see .agents/notes/adr/001-workspace-layering.md.
 [workspace.dependencies]
@@ -35,6 +37,7 @@ vt = { path = "crates/vt" }
 adapter = { path = "crates/adapter" }
 term = { path = "crates/term" }
 renderer = { path = "crates/renderer" }
+server = { path = "crates/server" }
 
 bitflags = "2"
 fontdue = "0.9"

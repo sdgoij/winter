@@ -43,3 +43,4 @@ Rules:
 | [012](012-screen-information-scope.md) | `SCREEN_INFORMATION` is a buffer, viewport and console modes | Accepted |
 | [013](013-no-terminal-api-seam.md) | There is no `ITerminalApi` seam; the host drains queues | Accepted |
 | [014](014-selection-is-host-state.md) | Selection is host state; the buffer keeps no selection | Accepted |
+| [015](015-server-portable-scope.md) | The server layer keeps the console API's portable halves | Accepted |

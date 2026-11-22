@@ -1008,33 +1008,37 @@ porting skill requires.
 
 **Estimated effort:** 2.5 weeks (0.5 wks for tests)
 
-### Server Components
+The server's Windows driver plumbing is not ported (ADR 015): conhost's
+`ConDrvDeviceComm`, `Entrypoints`, `WinNTControl` and the API dispatcher tables
+serve `condrv.sys`, and a portable terminal has no driver to talk to. The
+portable policy modules land as they get consumers. The pty layer is the port's
+own and needs an `unsafe` decision (ADR 015) before it can start.
 
-- [ ] `winterm/crates/server/src/api_dispatchers.rs` — API dispatch table
-- [ ] `winterm/crates/server/src/api_message.rs` — API message format
-- [ ] `winterm/crates/server/src/api_message_state.rs` — Message state
-- [ ] `winterm/crates/server/src/api_sorter.rs` — API sorting
-- [ ] `winterm/crates/server/src/device_handle.rs` — Device handle
-- [ ] `winterm/crates/server/src/io_dispatchers.rs` — I/O dispatch
-- [ ] `winterm/crates/server/src/object_handle.rs` — Handle table
-- [ ] `winterm/crates/server/src/object_header.rs` — Object header
-- [ ] `winterm/crates/server/src/process_handle.rs` — Process handle tracking
-- [ ] `winterm/crates/server/src/process_list.rs` — Process list
-- [ ] `winterm/crates/server/src/wait_block.rs` — Wait block
-- [ ] `winterm/crates/server/src/wait_queue.rs` — Wait queue
-- [ ] `winterm/crates/server/src/win_nt_control.rs` — NT control
+### Portable Server Modules
+
+- [x] `winterm/crates/server/src/console_shim_policy.rs` — `ConsoleShimPolicy`
+  - [x] Ported from `ConsoleShimPolicy.cpp`: `cmd.exe`, `powershell.exe` and
+    `pwsh.exe`, ASCII case-insensitive, over the client's file name.
+  - [x] **Tests:** every case variant, both PowerShells, unrelated names, and
+    the full-path boundary
+  - Not ported: reading the image name from a process handle; the platform
+    layer supplies the name.
+- [ ] Handle tables, wait queues, process lists and the API sorter's size
+  validation — when a consumer exists.
+- [x] ~~`api_dispatchers.rs`, `api_message.rs`, `api_message_state.rs`,
+  `api_sorter.rs`, `device_handle.rs`, `io_dispatchers.rs`, `object_handle.rs`,
+  `object_header.rs`, `process_handle.rs`, `process_list.rs`,
+  `wait_block.rs`, `wait_queue.rs`, `win_nt_control.rs`~~
+  - Not ported: the console-driver protocol and NT object metadata (ADR 015).
 
 ### Cross-Platform PTY Abstraction
 
-- [ ] `winterm/crates/server/src/pty.rs` — PTY abstraction
-  - [ ] **Tests:** create, write, read, close, signal handling
-- [ ] `winterm/crates/server/src/conpty.rs` — Windows ConPTY
-  - [ ] **Tests:** pseudconsole create, process attach, IO, resize, close
-- [ ] `winterm/crates/server/src/posix_pty.rs` — POSIX PTY
-  - [ ] **Tests:** open pty, fork, master/slave IO, signal passthrough
-  - [ ] **Property tests:** writing N bytes to master results in N bytes readable on slave
-- [ ] `winterm/crates/server/src/device_comm.rs` — Device communication trait
-  - [ ] **Tests:** abstract write/read/close, all backends implement correctly
+- [ ] `winterm/crates/server/src/pty.rs` — the port's own pty trait
+- [ ] `winterm/crates/server/src/conpty.rs` — ConPTY
+- [ ] `winterm/crates/server/src/posix_pty.rs` — `openpty`
+- [ ] `winterm/crates/server/src/device_comm.rs` — device communication trait
+  - These are not upstream files; see ADR 015. Each backend needs FFI, and the
+    workspace denies `unsafe`, so an ADR comes first.
 
 ---
 

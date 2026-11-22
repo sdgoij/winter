@@ -17,7 +17,7 @@ that is not in the ring.
 
 ## Decision
 
-Five crates today, in this order:
+Nine crates today, in this order:
 
 ```text
 utils            geometry, colour, small-vec, locks, hash, unicode
@@ -25,7 +25,11 @@ utils            geometry, colour, small-vec, locks, hash, unicode
         ├── buffer   cells, rows, TextBuffer, selection, marks, search
         └── vt       DFA parser, parser operands, G0-G3 charsets
               └── adapter   dispatch state, page manager, sixel, macros
-                    └── renderer, host, server, input, app    (later phases)
+                    ├── term      parser-to-dispatch loop, `Terminal`, input
+                    ├── renderer  fonts, atlas, software paint path
+                    ├── host      console state, cooked read, selection
+                    │     └── server   console API surface
+                    └── input, settings, app   (later phases)
 ```
 
 1. An edge points right and never left. `types` may not depend on `buffer`; `vt`
@@ -37,8 +41,9 @@ utils            geometry, colour, small-vec, locks, hash, unicode
    a reviewer should think about it.
 3. A crate is created when its first real content exists, not when the plan
    names it. A crate for one type is a directory, not a boundary.
-4. Later phases follow the same rule: `renderer` and `host` sit beside `adapter`
-   and see `buffer` and `types`; only `app` sees everything.
+4. Later phases follow the same rule: `renderer`, `host` and `server` sit beside
+   `adapter`; `server` takes `host` and exposes the console API surface. Only
+   `app` sees everything.
 
 ## Rationale
 
