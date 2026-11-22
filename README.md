@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1452 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1456 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -102,13 +102,14 @@ The settings window (Ctrl+, or the gear beside the tabs) shows the file that was
 read, whether it parsed, and what is in force, and lists what normalization had
 to adjust — an unknown `default_profile`, a blank command, a clamped size
 (ADR 027). It can change the font size, the default profile and the default
-scheme and edit the profile list (name, command, arguments, title; add and
-remove): **Save** writes the file and reloads it, and **Revert** takes the file
-as it is. A saved file is also picked up
+scheme, edit the profile list (name, command, arguments, title; add and remove)
+and the keybinding list (chord and action per row; a chord that does not parse
+blocks **Save**): **Save** writes the file and reloads it, and **Revert** takes
+the file as it is. A saved file is also picked up
 within a second when another program writes it: chords, font size and colours
 apply at once, and a changed profile applies to the next tab. A save that does
 not parse leaves the running session alone and is reported in the window
-(ADRs 025, 028, 030).
+(ADRs 025, 028, 030, 031).
 
 ## Building and testing
 

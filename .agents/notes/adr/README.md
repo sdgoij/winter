@@ -56,6 +56,7 @@ Rules:
 | [025](025-settings-are-reloaded-by-polling.md) | A saved settings file is reloaded by polling its stamp; a bad save keeps the session | Accepted |
 | [026](026-settings-are-toml.md) | Settings are TOML with a schema `version`; a newer version is refused | Accepted |
 | [027](027-normalization-warns.md) | Normalization returns typed warnings; the window lists what it adjusted | Accepted |
-| [028](028-settings-window-edits.md) | The window edits font size and the default profile and scheme, saving atomically | Amended by 030 (the profile list) |
+| [028](028-settings-window-edits.md) | The window edits font size and the default profile and scheme, saving atomically | Amended by 030 and 031 |
 | [029](029-host-font-family.md) | The shell renders with the host's monospace family; italic is a real face when installed | Accepted |
-| [030](030-settings-window-edits-profiles.md) | The window edits the profile list; schemes and chords stay file-only | Accepted |
+| [030](030-settings-window-edits-profiles.md) | The window edits the profile list; schemes and chords stay file-only | Amended by 031 (keybindings) |
+| [031](031-settings-window-edits-keybindings.md) | The window edits keybindings; the list shown is the effective one; an invalid chord blocks Save | Accepted |

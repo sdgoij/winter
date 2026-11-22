@@ -234,9 +234,9 @@ resize, or drag a divider), a shell chosen by the profile, the window chords, a
 colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
 (ADRs 022–024), a settings window (Ctrl+,) that reports the file it loaded, lists
 what normalization adjusted (ADR 027) and edits the font size, the default
-profile and scheme and the profile list in place (ADRs 028, 030), and a poll
-that reloads the file when it is saved (ADR 025). Editing schemes and chords as
-lists, and the native backends, follow.
+profile and scheme, the profile list and the keybinding list in place (ADRs
+028, 030, 031), and a poll that reloads the file when it is saved (ADR 025).
+Editing schemes as lists, and the native backends, follow.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

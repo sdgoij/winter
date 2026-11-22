@@ -1046,6 +1046,7 @@ struct Draft {
     default_profile: Option<String>,
     default_scheme: Option<String>,
     profiles: Vec<ProfileDraft>,
+    keybindings: Vec<BindingDraft>,
 }
 
 /// One profile as the window edits it.
@@ -1081,6 +1082,32 @@ impl ProfileDraft {
     }
 }
 
+/// One chord as the window edits it.
+///
+/// The chord stays text until the document is built, so a half-typed chord is
+/// kept. A row whose text does not parse keeps the window from saving and is
+/// named in the window (ADR 031).
+struct BindingDraft {
+    keys: String,
+    action: settings::Action,
+}
+
+impl BindingDraft {
+    fn from_binding(binding: &settings::Keybinding) -> Self {
+        Self {
+            keys: binding.keys.to_string(),
+            action: binding.action,
+        }
+    }
+
+    fn to_binding(&self) -> Option<settings::Keybinding> {
+        Some(settings::Keybinding {
+            keys: settings::Chord::parse(&self.keys).ok()?,
+            action: self.action,
+        })
+    }
+}
+
 impl Draft {
     fn from_settings(settings: &Settings) -> Self {
         Self {
@@ -1088,22 +1115,31 @@ impl Draft {
             default_profile: settings.default_profile.clone(),
             default_scheme: settings.default_scheme.clone(),
             profiles: settings.profiles.iter().map(ProfileDraft::from_profile).collect(),
+            keybindings: settings.keybindings.iter().map(BindingDraft::from_binding).collect(),
         }
     }
 
     /// Whether the draft has edits that a save would write.
+    ///
+    /// An invalid chord counts as an edit: the window must not look clean while
+    /// a row cannot be saved.
     fn differs_from(&self, settings: &Settings) -> bool {
-        self.apply_to(settings) != *settings
+        self.document(settings).is_none_or(|document| document != *settings)
     }
 
-    /// The document a save writes: the settings in force with the edits applied.
-    fn apply_to(&self, settings: &Settings) -> Settings {
-        let mut settings = settings.clone();
-        settings.font.size = self.font_size;
-        settings.default_profile = self.default_profile.clone();
-        settings.default_scheme = self.default_scheme.clone();
-        settings.profiles = self.profiles.iter().map(ProfileDraft::to_profile).collect();
-        settings
+    /// The document a save writes, or None when a chord does not parse.
+    fn document(&self, settings: &Settings) -> Option<Settings> {
+        let mut document = settings.clone();
+        document.font.size = self.font_size;
+        document.default_profile = self.default_profile.clone();
+        document.default_scheme = self.default_scheme.clone();
+        document.profiles = self.profiles.iter().map(ProfileDraft::to_profile).collect();
+        document.keybindings = self
+            .keybindings
+            .iter()
+            .map(BindingDraft::to_binding)
+            .collect::<Option<Vec<_>>>()?;
+        Some(document)
     }
 }
 
@@ -1285,7 +1321,8 @@ impl App {
 
         egui::Window::new("Settings")
             .open(&mut open)
-            .resizable(false)
+            .default_width(520.0)
+            .resizable(true)
             .show(ctx, |ui| {
                 egui::Grid::new("winterm-settings-rows")
                     .num_columns(2)
@@ -1344,7 +1381,9 @@ impl App {
         let Some(draft) = &self.draft else {
             return;
         };
-        let document = draft.apply_to(&self.settings);
+        let Some(document) = draft.document(&self.settings) else {
+            return;
+        };
 
         match settings::save(&document) {
             Ok(()) => {
@@ -1931,36 +1970,39 @@ fn draft_editor(
     ui.label("Arguments are split on spaces; quote an argument in the file.");
 
     let mut remove = None;
-    egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
-        for (index, profile) in draft.profiles.iter_mut().enumerate() {
-            egui::Grid::new(("winterm-profile", index))
-                .num_columns(2)
-                .spacing([16.0, 4.0])
-                .show(ui, |ui| {
-                    ui.label("Name");
-                    ui.text_edit_singleline(&mut profile.name);
-                    ui.end_row();
+    egui::ScrollArea::vertical()
+        .id_salt("winterm-profiles")
+        .max_height(220.0)
+        .show(ui, |ui| {
+            for (index, profile) in draft.profiles.iter_mut().enumerate() {
+                egui::Grid::new(("winterm-profile", index))
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut profile.name);
+                        ui.end_row();
 
-                    ui.label("Command");
-                    ui.text_edit_singleline(&mut profile.command);
-                    ui.end_row();
+                        ui.label("Command");
+                        ui.text_edit_singleline(&mut profile.command);
+                        ui.end_row();
 
-                    ui.label("Arguments");
-                    ui.text_edit_singleline(&mut profile.args);
-                    ui.end_row();
+                        ui.label("Arguments");
+                        ui.text_edit_singleline(&mut profile.args);
+                        ui.end_row();
 
-                    ui.label("Title");
-                    ui.text_edit_singleline(&mut profile.title);
-                    ui.end_row();
+                        ui.label("Title");
+                        ui.text_edit_singleline(&mut profile.title);
+                        ui.end_row();
 
-                    ui.label("");
-                    if ui.small_button("Remove").clicked() {
-                        remove = Some(index);
-                    }
-                    ui.end_row();
-                });
-        }
-    });
+                        ui.label("");
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(index);
+                        }
+                        ui.end_row();
+                    });
+            }
+        });
     if let Some(index) = remove {
         draft.profiles.remove(index);
     }
@@ -1971,9 +2013,55 @@ fn draft_editor(
     }
 
     ui.separator();
+    ui.strong("Keybindings");
+    ui.label("A chord is [ctrl+][alt+][shift+]<key>. The file has the full chord syntax.");
+
+    let mut remove = None;
+    egui::ScrollArea::vertical()
+        .id_salt("winterm-bindings")
+        .max_height(200.0)
+        .show(ui, |ui| {
+            for (index, binding) in draft.keybindings.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut binding.keys).desired_width(150.0));
+                    egui::ComboBox::from_id_salt(("winterm-binding-action", index))
+                        .selected_text(binding.action.name())
+                        .show_ui(ui, |ui| {
+                            for action in settings::Action::ALL {
+                                ui.selectable_value(&mut binding.action, *action, action.name());
+                            }
+                        });
+                    if ui.small_button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                });
+            }
+        });
+    if let Some(index) = remove {
+        draft.keybindings.remove(index);
+    }
+    if ui.button("Add binding").clicked() {
+        draft.keybindings.push(BindingDraft {
+            keys: String::new(),
+            action: settings::Action::NewTab,
+        });
+    }
+
+    let invalid: Vec<&str> = draft
+        .keybindings
+        .iter()
+        .filter(|binding| binding.to_binding().is_none())
+        .map(|binding| binding.keys.as_str())
+        .collect();
+    if !invalid.is_empty() {
+        ui.colored_label(CONFLICT, format!("These chords do not parse: {}", invalid.join(", ")));
+    }
+
+    ui.separator();
+    let valid = draft.document(settings).is_some();
     let dirty = draft.differs_from(settings);
     ui.horizontal(|ui| {
-        if ui.add_enabled(dirty, egui::Button::new("Save")).clicked() {
+        if ui.add_enabled(dirty && valid, egui::Button::new("Save")).clicked() {
             *save = true;
         }
         if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
@@ -2574,16 +2662,19 @@ mod tests {
 
         draft.font_size = 22.0;
         assert!(draft.differs_from(&settings));
-        let document = draft.apply_to(&settings);
+        let document = draft.document(&settings).expect("document");
         assert_eq!(document.font.size, 22.0);
         assert_eq!(document.default_profile.as_deref(), Some("a"));
 
         draft.default_profile = Some("b".to_string());
-        assert_eq!(draft.apply_to(&settings).default_profile.as_deref(), Some("b"));
+        assert_eq!(
+            draft.document(&settings).expect("document").default_profile.as_deref(),
+            Some("b")
+        );
 
         // Choosing the built-in palette writes no scheme name.
         draft.default_scheme = None;
-        assert_eq!(draft.apply_to(&settings).default_scheme, None);
+        assert_eq!(draft.document(&settings).expect("document").default_scheme, None);
         assert!(draft.differs_from(&settings));
     }
 
@@ -2636,10 +2727,49 @@ mod tests {
             .push(ProfileDraft::from_profile(&settings::Profile::default()));
         assert!(draft.differs_from(&settings));
 
-        let document = draft.apply_to(&settings);
+        let document = draft.document(&settings).expect("document");
         assert_eq!(document.profiles.len(), 3);
         assert_eq!(document.profiles[1].command, "bash");
         assert_eq!(document.profiles[2].name, "default");
+    }
+
+    #[test]
+    fn a_binding_round_trips_through_the_draft_and_rejects_a_bad_chord() {
+        let binding = settings::Keybinding {
+            keys: settings::Chord::parse("ctrl+alt+t").expect("chord"),
+            action: settings::Action::NewTab,
+        };
+
+        let draft = BindingDraft::from_binding(&binding);
+        assert_eq!(draft.keys, "ctrl+alt+t");
+        assert_eq!(draft.to_binding(), Some(binding));
+
+        let bad = BindingDraft {
+            keys: "ctrl+a+b".to_string(),
+            action: settings::Action::Copy,
+        };
+        assert_eq!(bad.to_binding(), None);
+    }
+
+    #[test]
+    fn the_draft_edits_the_keybindings_and_blocks_a_bad_chord() {
+        let settings =
+            settings::parse("[[keybindings]]\nkeys = \"ctrl+alt+t\"\naction = \"newTab\"").expect("settings");
+        let mut draft = Draft::from_settings(&settings);
+        assert!(!draft.differs_from(&settings));
+
+        // The list is the effective one, defaults included.
+        assert_eq!(draft.keybindings.len(), settings.keybindings.len());
+
+        draft.keybindings[0].action = settings::Action::Copy;
+        assert!(draft.differs_from(&settings));
+        let document = draft.document(&settings).expect("document");
+        assert_eq!(document.keybindings[0].action, settings::Action::Copy);
+
+        // A chord that does not parse keeps the document from being built.
+        draft.keybindings[0].keys = "ctrl+a+b".to_string();
+        assert!(draft.document(&settings).is_none());
+        assert!(draft.differs_from(&settings));
     }
 
     #[test]
