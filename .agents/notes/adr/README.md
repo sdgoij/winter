@@ -66,3 +66,4 @@ Rules:
 | [035](035-themes.md) | A theme is the four fills the tab strip paints; the rest of upstream's `Theme` is WinUI-only | Accepted |
 | [036](036-control-connection-events.md) | The connection is a trait, the control owns the terminal, the widget owns the viewport; an exit closes the tab | Accepted |
 | [037](037-registry-settings.md) | The console's registry settings are a portable schema; the Win32 reads belong to the server layer | Accepted |
+| [038](038-shell-modules.md) | The egui shell is `app`, `config`, `terminal_widget`, `window` and `icon`; settings, themes and a wgpu pass have no counterpart | Accepted |

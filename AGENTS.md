@@ -229,7 +229,8 @@ It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
 paints the buffer through egui on winit and wgpu (ADR 018), as a `Control` over
 a `Connection` trait with the viewport and selection in the widget and an event
 queue for the bell, a notification and an exit — a shell that exits closes its
-tab (ADR 036) — with wheel
+tab (ADR 036) — split into `app.rs`, `terminal_widget.rs`, `config.rs`,
+`window.rs` and `icon.rs` (ADR 038) — with wheel
 scrollback, mouse selection that reaches into history and scrolls when a drag
 leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC

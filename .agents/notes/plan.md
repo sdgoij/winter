@@ -20,11 +20,11 @@ Verified by running the gate, not by reading the previous status:
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~2.8k | 82 | Phase 10 (ADRs 022–032, 034, 035): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
-| `winterm` | ~6.4k | 117 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
+| `winterm` | ~6.6k | 121 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, desktop notifications
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1567 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1571 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1146,9 +1146,10 @@ last-click position — goes with it, not into `term`.
 ### Platform Backends
 
 The first shell is egui on winit and wgpu (ADR 018), in
-`crates/winterm/src/ui.rs`. The rows below are retired: they assume four
+`crates/winterm/src/app.rs`, `terminal_widget.rs`, `config.rs`, `window.rs`
+and `icon.rs` (ADR 038). The rows below are retired: they assume four
 hand-written backends, and ADR 018 defers them until the application works
-everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
+everywhere. A native backend replaces those five without touching `session.rs` or
 `grid.rs`.
 
 - [x] ~~`winterm/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
@@ -1181,7 +1182,9 @@ everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
 - [x] `winterm/crates/winterm/src/blink.rs` — the cursor's blink state
   - **Tests:** alternation at the period, steady when the cursor is not
     blinking or the window is unfocused, and the delay to the next toggle.
-- [x] `winterm/crates/winterm/src/ui.rs` — the egui shell
+- [x] ~~`winterm/crates/winterm/src/ui.rs`~~ — the egui shell
+  - Split into `app.rs`, `terminal_widget.rs`, `config.rs`, `window.rs` and
+    `icon.rs` when it reached 4,000 lines (ADR 038).
   - Mouse: a tracking application owns clicks, drags and the wheel; Shift is
     the selection override. Without tracking, drag selects, double-click
     selects a word, triple-click selects a row and Alt makes a block
@@ -1209,7 +1212,7 @@ everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
 
 Phase 9 has started inside the Phase 8 shell: `crates/winterm/src/tabs.rs` is
 the tab list (add, close, select, wrap), `layout.rs` is the pane tree, and
-`ui.rs` draws the strip, splits the panes and owns the window-level chords:
+`app.rs` draws the strip, splits the panes and owns the window-level chords:
 Ctrl+Shift+T/W (tab), Ctrl+Shift+D/E (split), Ctrl+Tab (switch), Alt+Arrow
 (focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard), Ctrl+Shift+P
 (the command palette) and Ctrl+Shift+F (the find bar). The plus menu starts any
@@ -1217,34 +1220,62 @@ profile by name. The rest of `src/cascadia` remains.
 
 ### Application Core
 
-- [ ] `winterm/crates/winterm/src/app.rs` — App lifecycle
-- [ ] `winterm/crates/winterm/src/config.rs` — Config loading/saving
-- [ ] `winterm/crates/winterm/src/settings.rs` — Settings model
-- [ ] `winterm/crates/winterm/src/theme.rs` — Theme system
-- [ ] `winterm/crates/winterm/src/window.rs` — Window management
-- [ ] `winterm/crates/winterm/src/icon.rs` — Embedded resources
+- [x] `winterm/crates/winterm/src/app.rs` — App lifecycle
+  - Landed as the window itself, from `App.cpp` and `AppHost.cpp` (ADR 038):
+    `App` and its tabs, the tab strip, the command palette, the chord map, the
+    font registration and `run`. It drains what every terminal reports once a
+    frame and turns an event into attention, a toast or a closed tab.
+- [x] `winterm/crates/winterm/src/config.rs` — Config loading/saving
+  - The settings window and its draft, from `TerminalSettingsEditor/` and the
+    way `CascadiaSettings` is loaded and saved: the per-list drafts, the form,
+    the preview, atomic save and the poll that reloads a saved file. The file
+    itself is `crates/settings` (ADRs 025–032, 034).
+- [x] ~~`winterm/crates/winterm/src/settings.rs`~~ — Settings model
+  - Not ported: the model is `crates/settings` (the file, profiles, chords,
+    schemes, themes) and the per-terminal slice is `term_settings.rs` (ADR 036).
+    A second model in the shell would be a copy.
+- [x] ~~`winterm/crates/winterm/src/theme.rs`~~ — Theme system
+  - Not ported: themes are `crates/settings/src/themes.rs`, applied by the tab
+    strip (ADR 035).
+- [x] `winterm/crates/winterm/src/window.rs` — Window management
+  - The three viewport commands the shell asks for — a title, an attention
+    request and a close — named so the toolkit's vocabulary stays in one place
+    (ADR 038).
+- [x] `winterm/crates/winterm/src/icon.rs` — Embedded resources
+  - The window icon is drawn rather than shipped: a dark rounded square with a
+    prompt chevron and an underscore, at the 64×64 a window manager wants. There
+    is no resource pipeline here and a binary asset would be unreadable
+    (ADR 038). **Tests:** the size, the rounded corners, the painted middle, the
+    background, and that the prompt covers pixels in its colour.
 
 ### Tab & Pane Management
 
 - [x] ~~`winterm/crates/winterm/src/tab_bar.rs`~~ — Tab row
-  - Drawn in `ui.rs`: one selectable title per tab, a close button and a plus
+  - Drawn in `app.rs`: one selectable title per tab, a close button and a plus
     menu that starts any profile by name. **Tests:** the chord map
     (Ctrl+Shift+T/W, Ctrl+Tab) and the profile a name selects, not the pixels.
 - [x] ~~`winterm/crates/winterm/src/tab.rs`~~ — Tab state
-  - Landed as `tabs.rs` (the list) plus `Tab` in `ui.rs` (one session, its
+  - Landed as `tabs.rs` (the list) plus `Tab` in `app.rs` (one session, its
     terminal and its view). **Tests:** add, close, select and wrap, including
     the active index after a neighbour closes.
 - [x] ~~`winterm/crates/winterm/src/pane.rs`~~ — Pane management
   - Landed as `layout.rs` (the binary split tree with fractional rectangles)
-    plus `Pane`/`Tab` in `ui.rs`. **Tests:** split, remove with collapse,
+    plus `Pane` in `terminal_widget.rs` and `Tab` in `app.rs`. **Tests:** split, remove with collapse,
     nearest-boundary resize, ratio clamping and the focus walk in a 2x2 grid.
-- [ ] `winterm/crates/winterm/src/terminal_widget.rs` — egui terminal viewport
-- [ ] `winterm/crates/winterm/src/terminal_renderer.rs` — wgpu render pass
+- [x] `winterm/crates/winterm/src/terminal_widget.rs` — egui terminal viewport
+  - `TermControl.cpp` as `Pane`: painting a `grid` snapshot, turning egui events
+    into `term` keys and mouse records, the find bar, the scrollbar and the
+    bell's flash, over the `Control` that owns the terminal (ADR 036). The
+    viewport and the selection stay here, as ADR 019 has them (ADR 038).
+- [x] ~~`winterm/crates/winterm/src/terminal_renderer.rs`~~ — wgpu render pass
+  - Not ported: egui's painter *is* the render pass, on top of wgpu through
+    eframe, and `renderer`'s software backend is the path that is tested. A
+    second pass would duplicate it (ADRs 007, 018, 038).
 
 ### Command Palette & Settings
 
 - [x] ~~`winterm/crates/winterm/src/command_palette.rs`~~ — Command palette
-  - Landed in `ui.rs` as `Palette` and `palette_window`: Ctrl+Shift+P (the
+  - Landed in `app.rs` as `Palette` and `palette_window`: Ctrl+Shift+P (the
     `commandPalette` action) opens a filter field over a list holding a tab per
     profile and then the window's actions, each with the chord the file binds to
     it. The filter matches a label in any case, the arrows wrap the selection,
@@ -1252,7 +1283,7 @@ profile by name. The rest of `src/cascadia` remains.
     filter, the open/close reset, and that a text field or the palette keeps
     keys out of the shell, not the pixels.
 - [x] ~~`winterm/crates/winterm/src/settings_editor.rs`~~ — Settings editor
-  - Landed in `ui.rs`: the settings window edits everything the schema
+  - Landed in `config.rs`: the settings window edits everything the schema
     holds — font size, the default profile and scheme, the profile list, the
     keybinding list and the color schemes (a text field and a swatch per
     colour; an empty field means the built-in colour). **Save** writes the
@@ -1260,16 +1291,16 @@ profile by name. The rest of `src/cascadia` remains.
     reloads it; a dirty draft blocks the reload poll and reports the conflict
     (ADRs 028, 030–032). **Tests:** the draft's diff and document, the profile,
     chord and scheme round-trips, and the invalid chord and colour blocks, in
-    `ui.rs`; directory creation and overwrite in `parser.rs`.
+    `config.rs`; directory creation and overwrite in `parser.rs`.
   - [x] A preview of the document as it will be written.
-    Landed as the **Preview** collapsible in `ui.rs`: `Draft::preview` renders
+    Landed as the **Preview** collapsible in `config.rs`: `Draft::preview` renders
     the same document **Save** writes through `settings::to_toml`, and a value
     that does not parse leaves it empty with a line naming the row that blocks
     the save. The window itself now scrolls, because the editor had grown past
     a screen's height and put **Save** below the bottom edge. **Tests:** the
     preview is the document a save writes, and a broken colour leaves it empty.
 - [x] ~~`winterm/crates/winterm/src/search.rs`~~ — In-terminal search overlay
-  - Landed as the find bar in `ui.rs`, on Ctrl+Shift+F (the `find` action) over
+  - Landed as the find bar in `terminal_widget.rs`, on Ctrl+Shift+F (the `find` action) over
     `TextBuffer::find_text`: every match in the document, history included, is
     highlighted and the current one more strongly; Enter and Shift+Enter wrap
     through them and scroll each into the middle of the view, and Escape closes
@@ -1286,7 +1317,7 @@ profile by name. The rest of `src/cascadia` remains.
     state, not the pixels. The ICU regular-expression mode is not ported.
 - [x] ~~`winterm/crates/winterm/src/scrollbar.rs`~~ — Scrollbar with marks
   - Landed as `scrollbar.rs` (toolkit-free geometry and drag state) and the
-    pane's right-edge track in `ui.rs`: the thumb shows where the view sits, a
+    pane's right-edge track in `terminal_widget.rs`: the thumb shows where the view sits, a
     press on the track centres the clicked row, a press on a prompt tick brings
     that prompt into view, the thumb drags, and every shell-integration prompt
     is a tick, red when its command failed. The snapshot carries the marks
@@ -1335,7 +1366,7 @@ profile by name. The rest of `src/cascadia` remains.
 - [x] `winterm/crates/winterm/src/term_settings.rs` — Per-terminal settings
   - `TerminalSettings` resolves the command, the tab's title and the scheme when
     a tab opens, as upstream's `TerminalSettings` is resolved from a profile.
-    The command-and-title rules moved here from `ui.rs` (ADR 036). **Tests:**
+    The command-and-title rules moved here from the shell (ADR 036). **Tests:**
     the default profile's command and title, a named profile, a profile title
     overriding the program name, the scheme, and a program with no stem.
 - [x] `winterm/crates/winterm/src/term_events.rs` — Event callbacks
@@ -1404,7 +1435,7 @@ editor, and migration follows.
 - [x] `winterm/crates/settings/src/actions.rs` — Action definitions
   - Flat command names (`newTab`, `splitHorizontal`, `focusLeft`, …,
     `unbound`); the application maps them to window actions.
-    **Tests:** the schema-driven cases in `lib.rs` and `ui.rs`.
+    **Tests:** the schema-driven cases in `lib.rs` and `app.rs`.
 - [x] `winterm/crates/settings/src/themes.rs` — Theme definitions
   - Upstream's `Theme` narrowed to the four fills this shell draws — the tab
     row and a tab, focused and not — because the rest of `Theme.idl` (Mica, a
