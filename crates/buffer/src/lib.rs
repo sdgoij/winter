@@ -36,6 +36,7 @@ pub mod search;
 pub mod selection;
 pub mod text_attribute_behavior;
 pub mod text_buffer;
+pub mod text_buffer_cell_iterator;
 pub mod text_buffer_text_iterator;
 
 // Re-export key types.
@@ -57,5 +58,6 @@ pub use selection::{Selection, SelectionPoint, SelectionType};
 // path working (ADR 002).
 pub use text_attribute_behavior::TextAttributeBehavior;
 pub use text_buffer::{LogicalLine, TextBuffer};
+pub use text_buffer_cell_iterator::TextBufferCellIterator;
 pub use text_buffer_text_iterator::{TextBufferRowIterator, TextBufferTextIterator};
 pub use types::TextAttribute;
