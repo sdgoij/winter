@@ -8,11 +8,13 @@ use adapter::{AdaptDispatch, PageManager};
 use types::VTInt;
 use vt::{ParserMode, StateMachine, VtState};
 
+use crate::input::{KeyEvent, TerminalInput};
 use crate::output_engine::OutputStateMachineEngine;
 
 /// A terminal: the VT parser driving an `ITermDispatch`.
 pub struct Terminal {
     state: StateMachine<OutputStateMachineEngine<AdaptDispatch>>,
+    input: TerminalInput,
 }
 
 impl Terminal {
@@ -25,7 +27,24 @@ impl Terminal {
     pub fn with_dispatch(dispatch: AdaptDispatch) -> Self {
         Self {
             state: StateMachine::new(OutputStateMachineEngine::new(dispatch)),
+            input: TerminalInput::new(),
         }
+    }
+
+    /// Translates a key event into the bytes to write to the pty.
+    ///
+    /// The input modes come from the adapter, which is their one home
+    /// (ADR 009). `None` means the key has no VT encoding and the host may
+    /// handle it itself.
+    pub fn handle_key(&mut self, event: &KeyEvent) -> Option<String> {
+        let modes = self.dispatch().input_modes();
+        self.input.handle_key(event, &modes)
+    }
+
+    /// Translates a focus change into the bytes to write to the pty.
+    pub fn handle_focus(&mut self, focused: bool) -> Option<String> {
+        let modes = self.dispatch().input_modes();
+        self.input.handle_focus(focused, &modes)
     }
 
     /// Processes a chunk of terminal output.
@@ -187,6 +206,7 @@ impl Default for Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::{Key, KeyEvent};
 
     #[test]
     fn a_device_attributes_query_queues_a_response() {
@@ -323,6 +343,52 @@ mod tests {
         let mut terminal = Terminal::new();
         terminal.process_str("\x1b[1;31m\x1bP$qm\x1b\\");
         assert_eq!(terminal.take_responses(), vec!["\x1bP1$r0;1;31m\x1b\\".to_string()]);
+    }
+
+    #[test]
+    fn input_modes_come_from_the_adapter() {
+        let mut terminal = Terminal::new();
+
+        // Without application cursor mode, a cursor key is a CSI sequence.
+        assert_eq!(
+            terminal.handle_key(&KeyEvent::down(Key::Left)).as_deref(),
+            Some("\x1b[D")
+        );
+
+        terminal.process_str("\x1b[?1h");
+        assert_eq!(
+            terminal.handle_key(&KeyEvent::down(Key::Left)).as_deref(),
+            Some("\x1bOD")
+        );
+
+        // DECBKM makes Backspace send BS rather than DEL.
+        terminal.process_str("\x1b[?67h");
+        assert_eq!(
+            terminal.handle_key(&KeyEvent::down(Key::Backspace)).as_deref(),
+            Some("\x08")
+        );
+
+        // S8C1T switches the introducers to single-byte C1.
+        terminal.process_str("\x1b G");
+        assert_eq!(
+            terminal
+                .handle_key(&KeyEvent {
+                    modifiers: crate::input::Modifiers {
+                        left_ctrl: true,
+                        ..crate::input::Modifiers::default()
+                    },
+                    ..KeyEvent::down(Key::Left)
+                })
+                .as_deref(),
+            Some("\u{9b}1;5D")
+        );
+
+        // Focus reporting is off until the mode is set; S7C1T restores the
+        // two-byte introducer.
+        terminal.process_str("\x1b F");
+        assert_eq!(terminal.handle_focus(true), None);
+        terminal.process_str("\x1b[?1004h");
+        assert_eq!(terminal.handle_focus(true).as_deref(), Some("\x1b[I"));
     }
 
     #[test]

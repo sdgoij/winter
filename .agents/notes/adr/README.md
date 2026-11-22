@@ -37,3 +37,4 @@ Rules:
 | [006](006-render-loop-model.md) | The renderer is host-driven; no thread, timers are data | Accepted |
 | [007](007-gpu-backend-and-surface.md) | The GPU backend is created by the UI layer with a surface | Accepted |
 | [008](008-font-discovery.md) | Fonts are found by scanning host-supplied directories, read with a small SFNT reader | Accepted |
+| [009](009-platform-neutral-input.md) | Input translation takes portable events and a mode snapshot | Accepted |

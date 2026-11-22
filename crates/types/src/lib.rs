@@ -13,6 +13,7 @@
 //! - [`text_attribute`] — `TextAttribute` for character rendering attributes
 //! - [`charsets`] — 94/96-character translation tables
 //! - [`dispatch_types`] — VT parameter types, dispatch enums, and mode flags
+//! - [`input_modes`] — the snapshot of input-affecting modes an input engine reads
 //! - [`sgr_stack`] — `SgrStack` for XTPUSHSGR / XTPOPSGR
 //! - [`viewport`] — `Viewport` screen dimension type
 //! - [`line_rendition`] — `LineRendition` for DECDHL/DECSWL/DECDWL
@@ -28,6 +29,7 @@ pub mod color_fix;
 pub mod color_table;
 pub mod cursor_type;
 pub mod dispatch_types;
+pub mod input_modes;
 pub mod line_rendition;
 pub mod mark_kind;
 pub mod sgr_stack;
@@ -43,6 +45,7 @@ pub use codepoint_width::codepoint_width;
 pub use color_table::ColorTable;
 pub use cursor_type::CursorType;
 pub use dispatch_types::*;
+pub use input_modes::InputModes;
 pub use line_rendition::LineRendition;
 pub use mark_kind::MarkKind;
 pub use sgr_stack::SgrStack;

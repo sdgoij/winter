@@ -18,7 +18,7 @@ use types::color_table::{
     CURSOR_COLOR, ColorAlias, ColorTable, DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, SELECTION_BACKGROUND, TABLE_SIZE,
     color_from_hls, color_from_rgb100, color_to_hls, color_to_rgb100,
 };
-use types::{CharacterAttributes, LineRendition, MarkKind, TextAttribute, TextColor, UnderlineStyle};
+use types::{CharacterAttributes, InputModes, LineRendition, MarkKind, TextAttribute, TextColor, UnderlineStyle};
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -916,6 +916,32 @@ impl AdaptDispatch {
     /// Returns the ANSI/VT52 parser mode last requested by DECANM.
     pub const fn is_ansi_mode(&self) -> bool {
         self.ansi_mode
+    }
+
+    /// Returns the input-affecting modes as the input engine reads them.
+    ///
+    /// The adapter is the one home for terminal state (ADR 002); the input
+    /// engine gets a snapshot per event rather than its own copy (ADR 009).
+    pub fn input_modes(&self) -> InputModes {
+        InputModes {
+            line_feed: self.modes.contains(ModeFlags::LNM),
+            ansi: self.ansi_mode,
+            auto_repeat: self.modes.contains(ModeFlags::DECARM),
+            keypad: self.modes.contains(ModeFlags::DECNKM),
+            cursor_key: self.modes.contains(ModeFlags::DECCKM),
+            backarrow_key: self.modes.contains(ModeFlags::DECBKM),
+            win32_input: self.modes.contains(ModeFlags::WIN32_INPUT),
+            send_c1: self.modes.contains(ModeFlags::SEND_C1),
+            utf8_mouse: self.modes.contains(ModeFlags::MOUSE_UTF8),
+            sgr_mouse: self.modes.contains(ModeFlags::MOUSE_SGR),
+            default_mouse: self.modes.contains(ModeFlags::MOUSE_VT200),
+            button_event_mouse: self.modes.contains(ModeFlags::MOUSE_BUTTON),
+            any_event_mouse: self.modes.contains(ModeFlags::MOUSE_ANY),
+            focus_event: self.modes.contains(ModeFlags::FOCUS_EVENT),
+            alternate_scroll: self.modes.contains(ModeFlags::ALTERNATE_SCROLL),
+            in_alternate_buffer: self.using_alt_buffer,
+            kitty_flags: self.kitty_flags,
+        }
     }
 
     /// The size of the visible page, which is what the window reports describe.
@@ -3582,7 +3608,9 @@ impl ITermDispatch for AdaptDispatch {
         let _ = coding_system;
     }
 
-    fn send_c1_controls(&mut self, _enabled: bool) {}
+    fn send_c1_controls(&mut self, enabled: bool) {
+        self.set_mode_flag(ModeFlags::SEND_C1, enabled);
+    }
 
     fn announce_code_structure(&mut self, _ansi_level: VTInt) {}
 
@@ -3731,6 +3759,8 @@ bitflags::bitflags! {
         const SIXEL_DISPLAY = 1 << 24;
         /// Keep the visible page following the active one (DECPCCM).
         const PAGE_CURSOR_COUPLING = 1 << 25;
+        /// Send eight-bit control codes (S8C1T); the input encoder reads this.
+        const SEND_C1 = 1 << 26;
     }
 }
 

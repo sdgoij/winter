@@ -10,8 +10,10 @@
 //! The parser feeds bytes. Printed text is decoded here, through one UTF-8
 //! decoder with an explicit replacement policy, before it reaches the buffer.
 
+pub mod input;
 pub mod output_engine;
 pub mod terminal;
 
+pub use input::{Key, KeyEvent, Modifiers, TerminalInput};
 pub use output_engine::OutputStateMachineEngine;
 pub use terminal::Terminal;
