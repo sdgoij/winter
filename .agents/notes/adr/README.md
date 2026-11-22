@@ -56,3 +56,4 @@ Rules:
 | [025](025-settings-are-reloaded-by-polling.md) | A saved settings file is reloaded by polling its stamp; a bad save keeps the session | Accepted |
 | [026](026-settings-are-toml.md) | Settings are TOML with a schema `version`; a newer version is refused | Accepted |
 | [027](027-normalization-warns.md) | Normalization returns typed warnings; the window lists what it adjusted | Accepted |
+| [028](028-settings-window-edits.md) | The window edits font size and the default profile and scheme, saving atomically | Accepted |

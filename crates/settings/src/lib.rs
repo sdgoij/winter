@@ -22,7 +22,8 @@ pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
 pub use parser::{
-    LoadError, Loaded, SettingsError, load, load_with_report, parse, parse_with_warnings, settings_path, to_toml,
+    LoadError, Loaded, SaveError, SettingsError, load, load_with_report, parse, parse_with_warnings, save, save_to,
+    settings_path, to_toml,
 };
 pub use profiles::{Profile, default_shell};
 pub use validation::Warning;

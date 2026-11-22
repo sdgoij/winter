@@ -80,6 +80,60 @@ pub fn to_toml(settings: &Settings) -> String {
     toml::to_string_pretty(settings).unwrap_or_default()
 }
 
+/// Writes `settings` to the platform's settings file.
+///
+/// The document is written beside the target and renamed over it, so a reader —
+/// including this application's own watcher — never sees half a file (ADR 028).
+pub fn save(settings: &Settings) -> Result<(), SaveError> {
+    let Some(path) = settings_path() else {
+        return Err(SaveError::NoPath);
+    };
+    save_to(&path, settings).map_err(SaveError::Io)
+}
+
+/// Writes `settings` to `path`, creating the directory it needs.
+pub fn save_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let temporary = path.with_extension("toml.tmp");
+    std::fs::write(&temporary, to_toml(settings))?;
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+/// Why the settings file could not be written.
+#[derive(Debug)]
+pub enum SaveError {
+    /// This platform has no settings directory.
+    NoPath,
+    /// The file could not be written.
+    Io(std::io::Error),
+}
+
+impl fmt::Display for SaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoPath => f.write_str("this platform has no settings directory"),
+            Self::Io(error) => write!(f, "the settings file could not be written: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NoPath => None,
+            Self::Io(error) => Some(error),
+        }
+    }
+}
+
 /// Returns where this platform keeps the settings file.
 pub fn settings_path() -> Option<PathBuf> {
     Some(settings_path_in(&config_base()?))
@@ -285,6 +339,34 @@ mod tests {
         assert_eq!(loaded.settings, Settings::default());
         assert!(matches!(loaded.error, Some(LoadError::Unreadable { .. })));
         assert!(loaded.error.expect("error").to_string().contains("could not be read"));
+    }
+
+    #[test]
+    fn a_save_creates_the_directory_and_writes_a_loadable_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("winterm").join("settings.toml");
+
+        let settings = Settings::default();
+        save_to(&path, &settings).expect("save");
+
+        let loaded = load_from_path(Some(path.clone()));
+        assert_eq!(loaded.error, None);
+        assert_eq!(loaded.settings, settings);
+        assert!(!path.with_extension("toml.tmp").exists(), "the temporary file is gone");
+    }
+
+    #[test]
+    fn a_second_save_replaces_the_first() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("settings.toml");
+
+        let first = parse("version = 1\n\n[font]\nsize = 20\n").expect("parse");
+        save_to(&path, &first).expect("save");
+
+        let second = parse("version = 1\n\n[font]\nsize = 24\n").expect("parse");
+        save_to(&path, &second).expect("save");
+
+        assert_eq!(load_from_path(Some(path)).settings.font.size, 24.0);
     }
 
     #[test]

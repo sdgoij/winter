@@ -863,6 +863,45 @@ const fn divider_cursor(axis: Axis) -> egui::CursorIcon {
     }
 }
 
+/// The colour of a conflict notice in the settings window.
+const CONFLICT: egui::Color32 = egui::Color32::from_rgb(220, 170, 60);
+
+/// The settings the window can edit, held apart from the settings in force.
+///
+/// Whether the draft is dirty is computed by comparing it with the settings in
+/// force, so no widget has to remember to set a flag (ADR 028).
+struct Draft {
+    font_size: f32,
+    default_profile: Option<String>,
+    default_scheme: Option<String>,
+}
+
+impl Draft {
+    fn from_settings(settings: &Settings) -> Self {
+        Self {
+            font_size: settings.font.size,
+            default_profile: settings.default_profile.clone(),
+            default_scheme: settings.default_scheme.clone(),
+        }
+    }
+
+    /// Whether the draft has edits that a save would write.
+    fn differs_from(&self, settings: &Settings) -> bool {
+        self.font_size != settings.font.size
+            || self.default_profile != settings.default_profile
+            || self.default_scheme != settings.default_scheme
+    }
+
+    /// The document a save writes: the settings in force with the edits applied.
+    fn apply_to(&self, settings: &Settings) -> Settings {
+        let mut settings = settings.clone();
+        settings.font.size = self.font_size;
+        settings.default_profile = self.default_profile.clone();
+        settings.default_scheme = self.default_scheme.clone();
+        settings
+    }
+}
+
 /// The window: a tab strip and the active tab.
 struct App {
     tabs: Tabs<Tab>,
@@ -877,6 +916,10 @@ struct App {
     settings_error: Option<String>,
     /// What normalization had to decide for the file, in the window's words.
     settings_warnings: Vec<String>,
+    /// The editable copy the settings window shows, while it is open.
+    draft: Option<Draft>,
+    /// The file changed on disk while the draft had unsaved edits.
+    settings_conflict: bool,
     /// Whether the settings window is showing.
     settings_open: bool,
     /// The settings file's stamp when it was last read, so a save is noticed.
@@ -927,6 +970,8 @@ impl App {
             settings_path: loaded.path,
             settings_error: loaded.error.map(|error| error.to_string()),
             settings_warnings,
+            draft: None,
+            settings_conflict: false,
             settings_open: false,
             settings_stamp,
             sides: ModifierSides::default(),
@@ -994,8 +1039,22 @@ impl App {
                     tab.paste_text(&text);
                 }
             }
-            TabAction::ToggleSettings => self.settings_open = !self.settings_open,
+            TabAction::ToggleSettings => self.toggle_settings(),
         }
+    }
+
+    /// Shows or hides the settings window, rebuilding the draft when it opens.
+    ///
+    /// Closing discards unsaved edits, which is what the window says while the
+    /// draft is dirty.
+    fn toggle_settings(&mut self) {
+        self.settings_open = !self.settings_open;
+        self.settings_conflict = false;
+        self.draft = if self.settings_open {
+            Some(Draft::from_settings(&self.settings))
+        } else {
+            None
+        };
     }
 
     fn close_tab(&mut self, index: usize, ctx: &egui::Context) {
@@ -1004,9 +1063,18 @@ impl App {
         }
     }
 
-    /// Draws what the settings file said and whether it was used.
+    /// Draws what the settings file said, whether it was used, and the fields
+    /// the window can change.
     fn settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
+        let mut save = false;
+        let mut revert = false;
+        let rows = settings_rows(
+            &self.settings,
+            self.settings_path.as_deref(),
+            self.settings_error.as_deref(),
+        );
+
         egui::Window::new("Settings")
             .open(&mut open)
             .resizable(false)
@@ -1015,19 +1083,27 @@ impl App {
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        for (label, value) in settings_rows(
-                            &self.settings,
-                            self.settings_path.as_deref(),
-                            self.settings_error.as_deref(),
-                        ) {
-                            ui.strong(label);
+                        for (label, value) in &rows {
+                            ui.strong(*label);
                             ui.label(value);
                             ui.end_row();
                         }
                     });
 
                 ui.separator();
-                ui.label("Changes are picked up when the file is saved.");
+                if let Some(draft) = self.draft.as_mut() {
+                    draft_editor(
+                        ui,
+                        draft,
+                        &self.settings,
+                        self.settings_conflict,
+                        &mut save,
+                        &mut revert,
+                    );
+                }
+
+                ui.separator();
+                ui.label("The file is also reloaded when another program saves it.");
 
                 if !self.settings_warnings.is_empty() {
                     ui.separator();
@@ -1037,7 +1113,42 @@ impl App {
                     }
                 }
             });
+
         self.settings_open = open;
+        if !self.settings_open {
+            self.draft = None;
+            self.settings_conflict = false;
+        }
+
+        if save {
+            self.save_draft();
+        }
+        if revert {
+            self.reload_settings();
+        }
+    }
+
+    /// Writes the draft and applies what was written.
+    ///
+    /// The document is read back through the same path as startup, so what runs
+    /// is always the file's own settings, normalized.
+    fn save_draft(&mut self) {
+        let Some(draft) = &self.draft else {
+            return;
+        };
+        let document = draft.apply_to(&self.settings);
+
+        match settings::save(&document) {
+            Ok(()) => {
+                self.settings_conflict = false;
+                self.settings_error = None;
+                self.reload_settings();
+                if self.settings_open {
+                    self.draft = Some(Draft::from_settings(&self.settings));
+                }
+            }
+            Err(error) => self.settings_error = Some(error.to_string()),
+        }
     }
 
     /// Draws the tab strip and returns what the user clicked.
@@ -1079,6 +1190,7 @@ impl App {
     /// the command it started with.
     fn reload_settings(&mut self) {
         let loaded = settings::load_with_report();
+        self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
         if let Some(error) = loaded.error {
             // A half-written save must not wipe a running session: the previous
             // settings stay in force and the window reports the error.
@@ -1098,6 +1210,10 @@ impl App {
             if let Some(tab) = self.tabs.get_mut(index) {
                 tab.apply_scheme(scheme.as_ref());
             }
+        }
+
+        if self.settings_open {
+            self.draft = Some(Draft::from_settings(&self.settings));
         }
     }
 }
@@ -1139,8 +1255,17 @@ impl eframe::App for App {
         if let Some(path) = &self.settings_path {
             let stamp = settings::stamp(path);
             if stamp != self.settings_stamp {
-                self.settings_stamp = stamp;
-                self.reload_settings();
+                let dirty = self
+                    .draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.differs_from(&self.settings));
+                if dirty {
+                    // Loading would discard the edit in progress; the window
+                    // asks the user to choose between saving and reverting.
+                    self.settings_conflict = true;
+                } else {
+                    self.reload_settings();
+                }
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
@@ -1544,6 +1669,73 @@ fn settings_rows(settings: &Settings, path: Option<&Path>, error: Option<&str>) 
     rows.push(("Font", format!("{} pt", settings.font.size)));
 
     rows
+}
+
+/// Draws the editable fields and the Save/Revert buttons.
+fn draft_editor(
+    ui: &mut egui::Ui,
+    draft: &mut Draft,
+    settings: &Settings,
+    conflict: bool,
+    save: &mut bool,
+    revert: &mut bool,
+) {
+    egui::Grid::new("winterm-settings-editor")
+        .num_columns(2)
+        .spacing([16.0, 4.0])
+        .show(ui, |ui| {
+            ui.strong("Font size");
+            ui.add(egui::DragValue::new(&mut draft.font_size).range(4.0..=100.0).speed(0.5));
+            ui.end_row();
+
+            ui.strong("Default profile");
+            let selected = draft.default_profile.clone().unwrap_or_default();
+            let selected = if selected.is_empty() {
+                "(none)".to_string()
+            } else {
+                selected
+            };
+            egui::ComboBox::from_id_salt("winterm-settings-profile")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for profile in &settings.profiles {
+                        ui.selectable_value(&mut draft.default_profile, Some(profile.name.clone()), &profile.name);
+                    }
+                });
+            ui.end_row();
+
+            ui.strong("Scheme");
+            let selected = draft.default_scheme.clone().unwrap_or_else(|| "built-in".to_string());
+            egui::ComboBox::from_id_salt("winterm-settings-scheme")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut draft.default_scheme, None, "built-in");
+                    for scheme in &settings.schemes {
+                        ui.selectable_value(&mut draft.default_scheme, Some(scheme.name.clone()), &scheme.name);
+                    }
+                });
+            ui.end_row();
+        });
+
+    let dirty = draft.differs_from(settings);
+    ui.horizontal(|ui| {
+        if ui.add_enabled(dirty, egui::Button::new("Save")).clicked() {
+            *save = true;
+        }
+        if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
+            *revert = true;
+        }
+    });
+
+    if conflict {
+        ui.colored_label(
+            CONFLICT,
+            "The file changed on disk. Save overwrites it; Revert loads it.",
+        );
+    }
+    if dirty {
+        ui.label("Unsaved changes are discarded when this window closes.");
+    }
 }
 
 /// Turns a profile into the command a tab starts and the title to show.
@@ -2037,6 +2229,48 @@ mod tests {
             command_for(&settings.keybindings, &key(egui::Key::W, true, true, false)),
             Some(TabAction::CloseActive)
         );
+    }
+
+    #[test]
+    fn a_draft_knows_its_edits_and_builds_the_document_a_save_writes() {
+        let settings = settings::parse(
+            r#"
+                default_profile = "a"
+                default_scheme = "s"
+
+                [[profiles]]
+                name = "a"
+                command = "sh"
+
+                [[profiles]]
+                name = "b"
+                command = "sh"
+
+                [[schemes]]
+                name = "s"
+
+                [font]
+                size = 18
+            "#,
+        )
+        .expect("settings");
+
+        let mut draft = Draft::from_settings(&settings);
+        assert!(!draft.differs_from(&settings));
+
+        draft.font_size = 22.0;
+        assert!(draft.differs_from(&settings));
+        let document = draft.apply_to(&settings);
+        assert_eq!(document.font.size, 22.0);
+        assert_eq!(document.default_profile.as_deref(), Some("a"));
+
+        draft.default_profile = Some("b".to_string());
+        assert_eq!(draft.apply_to(&settings).default_profile.as_deref(), Some("b"));
+
+        // Choosing the built-in palette writes no scheme name.
+        draft.default_scheme = None;
+        assert_eq!(draft.apply_to(&settings).default_scheme, None);
+        assert!(draft.differs_from(&settings));
     }
 
     #[test]
