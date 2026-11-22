@@ -106,7 +106,7 @@ pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
 }
 
 /// One tick per prompt, flagged when the command that followed it failed.
-fn mark_ticks(buffer: &TextBuffer) -> Vec<MarkTick> {
+pub(crate) fn mark_ticks(buffer: &TextBuffer) -> Vec<MarkTick> {
     let marks = buffer.marks();
     let mut ticks = Vec::new();
 

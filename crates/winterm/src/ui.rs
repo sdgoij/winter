@@ -35,6 +35,8 @@ const FALLBACK_SELECTION: egui::Color32 = egui::Color32::from_rgb(38, 79, 120);
 const DIVIDER: egui::Color32 = egui::Color32::from_rgb(60, 60, 60);
 /// How close to a divider a press has to be, in pixels, to grab it.
 const DIVIDER_GRAB: f32 = 4.0;
+/// How close to a scrollbar tick a press has to be, in pixels, to take it.
+const MARK_GRAB: f32 = 4.0;
 /// The line around the focused pane.
 const FOCUS_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 140, 200);
 /// The egui family the host's regular monospace face is registered under.
@@ -770,16 +772,16 @@ impl Pane {
         }
     }
 
-    /// How many rows the document holds, history included.
-    fn document_height(&mut self) -> i32 {
+    /// The document height and its prompt ticks, read under one lock.
+    fn scroll_facts(&mut self) -> (i32, Vec<grid::MarkTick>) {
         let buffer = self.terminal.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        buffer.document_height()
+        (buffer.document_height(), grid::mark_ticks(&buffer))
     }
 
     /// Handles a press or drag on the scrollbar, returning whether it took one.
     fn handle_scrollbar(&mut self, input: &PointerInput, area: egui::Rect) -> bool {
-        let document = self.document_height();
+        let (document, marks) = self.scroll_facts();
         let visible = self.size.1;
         if document <= visible {
             self.scrollbar.release();
@@ -797,11 +799,21 @@ impl Pane {
             && let Some(hover) = input.hover
             && track.contains(hover)
         {
-            let press = self
-                .scrollbar
-                .press(fraction(hover).clamp(0.0, 1.0), self.view.scroll(), document, visible);
-            if let scrollbar::Press::Jump(scroll) = press {
-                self.view.set_scroll(scroll, document - visible);
+            let pressed = fraction(hover).clamp(0.0, 1.0);
+            let positions: Vec<f32> = marks
+                .iter()
+                .map(|mark| scrollbar::position(mark.row, document))
+                .collect();
+
+            if let Some(index) = scrollbar::tick_at(&positions, pressed, MARK_GRAB / track.height()) {
+                // A prompt tick is a precise target: it brings the prompt into
+                // view rather than centring the clicked fraction.
+                self.view.scroll_to_row(marks[index].row, visible, document);
+            } else {
+                let press = self.scrollbar.press(pressed, self.view.scroll(), document, visible);
+                if let scrollbar::Press::Jump(scroll) = press {
+                    self.view.set_scroll(scroll, document - visible);
+                }
             }
             handled = true;
         } else if self.scrollbar.dragging() && input.primary_down {

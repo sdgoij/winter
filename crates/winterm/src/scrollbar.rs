@@ -89,6 +89,19 @@ pub fn position(row: i32, document: i32) -> f32 {
     (row as f32 / document as f32).clamp(0.0, 1.0)
 }
 
+/// The index of the tick a press at `fraction` lands on.
+///
+/// `tolerance` is how far from a tick, as a fraction of the track, still
+/// counts. When two ticks are within reach, the nearer one wins.
+pub fn tick_at(positions: &[f32], fraction: f32, tolerance: f32) -> Option<usize> {
+    positions
+        .iter()
+        .enumerate()
+        .filter(|(_, position)| (fraction - **position).abs() <= tolerance)
+        .min_by(|(_, found), (_, other)| (fraction - **found).abs().total_cmp(&(fraction - **other).abs()))
+        .map(|(index, _)| index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +155,19 @@ mod tests {
         assert_eq!(position(50, 100), 0.5);
         assert_eq!(position(200, 100), 1.0);
         assert_eq!(position(5, 0), 0.0);
+    }
+
+    #[test]
+    fn a_press_lands_on_the_nearest_tick_within_reach() {
+        let ticks = [0.1, 0.5, 0.9];
+        assert_eq!(tick_at(&ticks, 0.12, 0.05), Some(0));
+        assert_eq!(tick_at(&ticks, 0.48, 0.05), Some(1));
+
+        // Two ticks in reach: the nearer one wins.
+        assert_eq!(tick_at(&[0.50, 0.52], 0.505, 0.05), Some(0));
+
+        // A press between ticks, and an empty track, find nothing.
+        assert_eq!(tick_at(&ticks, 0.3, 0.05), None);
+        assert_eq!(tick_at(&[], 0.3, 0.05), None);
     }
 }
