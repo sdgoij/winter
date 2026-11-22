@@ -542,7 +542,10 @@ fn is_wide_lead(screen: &ScreenInformation, position: Point) -> bool {
 /// Returns whether the cell at `position` is the trailing half of a wide
 /// character.
 fn is_trailing_half(screen: &ScreenInformation, position: Point) -> bool {
-    position.x > 0 && is_wide_lead(screen, Point::new(position.x - 1, position.y))
+    screen
+        .text_buffer()
+        .get_row_at_screen_line(position.y)
+        .is_some_and(|row| row.is_trailing_half(position.x))
 }
 
 /// Returns whether the cell at `position` is a word delimiter.

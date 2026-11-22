@@ -414,8 +414,8 @@ The Windows Terminal codebase maps to these Rust module groups:
   - [x] **Tests:** creation, clamp, contains point, area, intersection, union,
     the inclusive/exclusive bounds, bounds walking and reading-order comparison
 - [x] `winterm/crates/types/src/line_rendition.rs` — `LineRendition` conversion functions
-  - [x] **Tests:** `ScreenToBufferLine`, `BufferToScreenLine` for all rendition types, roundtrip
-  - [x] **Property tests:** `BufferToScreenLine(ScreenToBufferLine(x)) == x` (line_rendition.rs proptests)
+  - [x] **Tests:** `ScreenToBufferLine`, `BufferToScreenLine` and the inclusive
+    point form for single- and double-width renditions
 - [x] `winterm/crates/types/src/codepoint_width.rs` — Unicode width detection
   - [x] **Tests:** ASCII, CJK, emoji, combining marks, surrogate pairs
   - [x] **Property tests:** width matches `unicode_width::UnicodeWidthChar::width()` for all test cases (codepoint_width.rs proptests)
@@ -469,9 +469,10 @@ The Windows Terminal codebase maps to these Rust module groups:
 ### TextBuffer Core
 
 - [x] `crates/buffer/src/text_buffer.rs` — `TextBuffer` (circular scrollback)
-  - [x] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetPlainText()`, `GetWithControlSequences()`, `GenHTML()`, `GenRTF()`, `GetTextRects()`, `GetTextSpans()`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
+  - [x] **Tests:** create, resize, resize_with_reflow, resize_traditional, `GetRowByOffset()`, `GetCellDataAt()`, `GetTextDataAt()`, `Write()`, `WriteLine()`, `FillRect()`, `ScrollRows()`, `CopyRow()`, cursor navigation, word boundary detection, `GetWordStart/End`, `GetGlyphStart/End`, `MoveToNextGlyph`, `ScreenToBufferPosition`, `BufferToScreenPosition`, `GetTextRects()`, `GetTextSpans()`, `GetPlainText(CopyRequest)`, hyperlink map, `SearchText()`, `GetMarkExtents()`, `ClearMarksInRange()`, mutation ID tracking
   - [x] **Property tests:** writing then reading same cells returns original data; `GetPlainText()` for empty buffer is `""`; reflow preserves total character count
   - [ ] **Snapshot tests:** write known text pattern, compare rendered output
+  - Not ported: `GetWithControlSequences()`, `GenHTML()` and `GenRTF()`
 - [ ] `crates/buffer/src/text_buffer_cell_iterator.rs` — Cell iterator
   - [ ] **Tests:** advance to column, line iteration, bounds, empty buffer
 - [x] `crates/buffer/src/text_buffer_text_iterator.rs` — Text iterator
@@ -498,8 +499,10 @@ The Windows Terminal codebase maps to these Rust module groups:
   - [x] **Property tests:** URI lookup is bidirectional for same ID; removing all hyperlinks empties map
 - [x] ~~`crates/buffer/src/selection.rs` — Selection~~
   - Removed: ADR 014 moves the selection state and its operations to the host.
-    The buffer gains a rectangle-to-text read when the copy path needs it.
-- [ ] `crates/buffer/src/clipboard.rs` — Clipboard formatting
+  - [x] The rectangle-to-text read it promised landed as
+    `TextBuffer::get_text_rects`, `get_text_spans` and `get_plain_text`,
+    with the `Row` glyph and readable-content rules they need.
+- [ ] `crates/buffer/src/clipboard.rs` — Clipboard formatting (`GenHTML`/`GenRTF`)
 
 ### Row Memory Layout
 
@@ -919,17 +922,19 @@ porting skill requires.
     the exclusive end, the saved cursor, the line-versus-block predicate, and
     `ShouldAllowMouseDragSelection`; plus `InitializeMarkSelection`,
     `InitializeMouseSelection`, `CheckAndSetAlternateSelection`,
-    `AdjustSelection`, `ExtendSelection`, `ClearSelection`, `SelectNewRegion`
-    and `SelectAll` (whose input-line half takes the no-input-line path, so
-    "all" ends at the saved cursor or the cursor).
+    `AdjustSelection`, `ExtendSelection`, `ClearSelection`, `SelectNewRegion`,
+    `SelectAll` (whose input-line half takes the no-input-line path, so
+    "all" ends at the saved cursor or the cursor), `GetSelectionSpans` and the
+    plain-text half of the clipboard copy.
   - [x] **Tests:** mark and mouse start, the one-cell rectangle, the Alt flip,
     extending with clamping, adjust stopping the drag, cursor save and restore,
     both clear paths, the no-op clear, replacing a selection through
     `SelectNewRegion`, select-all in line and block form, its saved-cursor end,
-    and the restored viewport origin
+    the restored viewport origin, line and block copy text, and the spans of
+    both forms
   - Not ported: painting and the accessibility notifications (renderer and
-    window), the clipboard write and `GetSelectionSpans` (they need the
-    buffer's rectangle-to-text read), and colour selection
+    window), the formatted clipboard data (`GenHTML`/`GenRTF`) and colour
+    selection
 - [x] `winterm/crates/host/src/selection_input.rs` — Selection input
   - [x] Ported from `selectionInput.cpp`: `HandleKeySelectionEvent` (Escape,
     Enter and Ctrl+C/Ctrl+Insert copy, mark-mode navigation, mouse-selection

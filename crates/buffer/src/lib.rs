@@ -54,7 +54,7 @@ pub use search::{SearchMatch, SearchOptions};
 // lives in `types`; the re-export keeps the historical `buffer::TextAttribute`
 // path working (ADR 002).
 pub use text_attribute_behavior::TextAttributeBehavior;
-pub use text_buffer::{LogicalLine, TextBuffer};
+pub use text_buffer::{CopyRequest, LogicalLine, TextBuffer};
 pub use text_buffer_cell_iterator::TextBufferCellIterator;
 pub use text_buffer_text_iterator::{TextBufferRowIterator, TextBufferTextIterator};
 pub use types::TextAttribute;

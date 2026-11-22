@@ -393,24 +393,94 @@ impl Row {
         0
     }
 
-    /// Gets the column index of the first non-space character from the right.
+    /// Gets the column one past the row's readable content.
+    ///
+    /// Ported from `ROW::MeasureRight`: a wrapped row is read to its full width
+    /// and an explicit line ends after its last non-space column.
     pub fn measure_right(&self) -> i32 {
-        for (i, cell) in self.cells.iter().enumerate().rev() {
+        if self.wrap {
+            self.width
+        } else {
+            self.get_last_non_space_column()
+        }
+    }
+
+    /// Gets the column one past the last non-space character.
+    ///
+    /// Ported from `ROW::GetLastNonSpaceColumn`: the result is a column
+    /// measurement, so a wide glyph contributes both of its columns, and an
+    /// all-space row reports 0.
+    pub fn get_last_non_space_column(&self) -> i32 {
+        for (index, cell) in self.cells.iter().enumerate().rev() {
             if !cell.is_whitespace() {
-                return i as i32;
+                return index as i32 + i32::from(cell.column_width().max(1));
             }
         }
         0
     }
 
-    /// Gets the column position of the last non-space character.
-    pub fn get_last_non_space_column(&self) -> i32 {
-        self.measure_right()
+    /// Returns how many columns of this row hold content.
+    ///
+    /// Ported from `ROW::GetReadableColumnCount`. The double-byte padding
+    /// upstream subtracts never occurs here, because the adapter wraps a wide
+    /// glyph that would not fit instead of padding it.
+    pub fn get_readable_column_count(&self) -> i32 {
+        self.width
     }
 
-    /// Gets the number of readable columns (non-whitespace).
-    pub fn get_readable_column_count(&self) -> i32 {
-        self.cells.iter().filter(|c| !c.is_whitespace()).count() as i32
+    /// Returns whether the cell at `column` is the trailing half of a wide
+    /// character.
+    pub fn is_trailing_half(&self, column: i32) -> bool {
+        column > 0 && self.get_cell(column - 1).is_wide_lead()
+    }
+
+    /// Returns the starting column of the glyph at `column`.
+    ///
+    /// Ported from `ROW::AdjustToGlyphStart`: a column that falls on the
+    /// trailing half of a wide glyph moves back to its lead.
+    pub fn adjust_to_glyph_start(&self, column: i32) -> i32 {
+        let mut column = column.clamp(0, self.width - 1);
+        while column > 0 && self.is_trailing_half(column) {
+            column -= 1;
+        }
+        column
+    }
+
+    /// Returns the exclusive column after the glyph at `column`.
+    ///
+    /// Ported from `ROW::AdjustToGlyphEnd`.
+    pub fn adjust_to_glyph_end(&self, column: i32) -> i32 {
+        let mut column = column.clamp(0, self.width);
+        while column < self.width && self.is_trailing_half(column) {
+            column += 1;
+        }
+        column
+    }
+
+    /// Returns the text of the columns `begin..end`.
+    ///
+    /// Ported from `ROW::GetText(begin, end)`. A blank cell reads as a space,
+    /// which is what upstream stores there, while the trailing half of a wide
+    /// character contributes nothing of its own.
+    pub fn get_text_range(&self, begin: i32, end: i32) -> String {
+        let readable = self.get_readable_column_count();
+        let begin = begin.clamp(0, readable);
+        let end = end.clamp(begin, readable);
+
+        let mut text = String::new();
+        for column in begin..end {
+            if self.is_trailing_half(column) {
+                continue;
+            }
+
+            let cell = self.get_cell(column);
+            if cell.is_empty() {
+                text.push(' ');
+            } else {
+                text.push_str(cell.chars());
+            }
+        }
+        text
     }
 
     /// Returns whether the row is entirely whitespace.
@@ -738,6 +808,62 @@ mod tests {
     fn test_negative_column() {
         let row = Row::new(80);
         row.get_cell(-1); // negative
+    }
+
+    #[test]
+    fn the_readable_end_is_one_past_the_last_non_space_cell() {
+        let mut row = Row::new(10);
+        for (column, character) in "abc".chars().enumerate() {
+            row.write_char(column as i32, character, false);
+        }
+        assert_eq!(row.get_last_non_space_column(), 3);
+
+        // A wide glyph contributes both of its columns.
+        let mut wide = Row::new(10);
+        wide.write_char(0, '中', false);
+        assert_eq!(wide.get_last_non_space_column(), 2);
+
+        assert_eq!(Row::new(10).get_last_non_space_column(), 0);
+    }
+
+    #[test]
+    fn a_wrapped_row_reads_to_its_full_width() {
+        let mut row = Row::new(10);
+        row.write_char(0, 'a', false);
+        row.write_char(1, 'b', false);
+        assert_eq!(row.measure_right(), 2);
+
+        row.set_wrap(true);
+        assert_eq!(row.measure_right(), 10);
+    }
+
+    #[test]
+    fn glyph_adjustment_moves_off_the_trailing_half() {
+        let mut row = Row::new(10);
+        row.write_char(0, '中', false);
+        row.write_char(2, 'a', false);
+
+        // Column 1 is the trailing half of the glyph at column 0.
+        assert_eq!(row.adjust_to_glyph_start(1), 0);
+        assert_eq!(row.adjust_to_glyph_start(2), 2);
+        // An end that already sits on a leading column stays there; one inside
+        // a glyph moves past it.
+        assert_eq!(row.adjust_to_glyph_end(0), 0);
+        assert_eq!(row.adjust_to_glyph_end(1), 2);
+        assert_eq!(row.adjust_to_glyph_end(2), 2);
+    }
+
+    #[test]
+    fn text_ranges_read_blanks_as_spaces_and_skip_trailers() {
+        let mut row = Row::new(5);
+        row.write_char(0, '中', false);
+        row.write_char(2, 'a', false);
+
+        assert_eq!(row.get_text_range(0, 5), "中a  ");
+        // The range starting on the trailing half picks up only the glyph's
+        // leading column's text, then the character after it.
+        assert_eq!(row.get_text_range(1, 3), "a");
+        assert_eq!(row.get_text_range(3, 3), "");
     }
 }
 

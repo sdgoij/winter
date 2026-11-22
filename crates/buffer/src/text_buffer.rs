@@ -14,6 +14,9 @@ use crate::marks::Marks;
 use crate::output_cell::OutputCell;
 use crate::row::Row;
 use types::LineRendition;
+use types::Viewport;
+use types::line_rendition::{screen_to_buffer_line, screen_to_buffer_line_inclusive};
+use utils::{InclusiveRect, Point, PointSpan, Size};
 
 /// The default scrollback buffer height (number of rows).
 pub const DEFAULT_SCROLLBACK_HEIGHT: i32 = 300;
@@ -229,6 +232,90 @@ impl<T: Clone> std::ops::Index<usize> for VecDequeCompat<T> {
 impl<T: Clone> std::ops::IndexMut<usize> for VecDequeCompat<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index).expect("Index out of bounds")
+    }
+}
+
+/// A request to copy a region of the buffer.
+///
+/// Ported from `TextBuffer::CopyRequest`. The row range `begin.y..=end.y` is
+/// inclusive; on the last row `end.x` is exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyRequest {
+    /// The first cell of the region.
+    pub begin: Point,
+    /// The last row's exclusive column.
+    pub end: Point,
+    /// The leftmost column of a block selection.
+    pub min_x: i32,
+    /// The rightmost column of a block selection.
+    pub max_x: i32,
+    /// The region is a rectangle rather than a line-wise selection.
+    pub block_selection: bool,
+    /// Trim trailing whitespace on rows that are formatted.
+    pub trim_trailing_whitespace: bool,
+    /// Insert a line break after formatted rows.
+    pub include_line_break: bool,
+    /// Format wrapped rows instead of joining them to the next row.
+    pub format_wrapped_rows: bool,
+    /// The points are buffer coordinates rather than screen coordinates.
+    pub buffer_coordinates: bool,
+}
+
+impl CopyRequest {
+    /// Builds a request, clamping it into `buffer`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        buffer: &TextBuffer,
+        begin: Point,
+        end: Point,
+        block_selection: bool,
+        include_line_break: bool,
+        trim_trailing_whitespace: bool,
+        format_wrapped_rows: bool,
+        buffer_coordinates: bool,
+    ) -> Self {
+        let begin = begin.max(Point::new(0, 0));
+        // Upstream clamps with a point comparison (row first), not column by
+        // column, so a point above the last row keeps its column.
+        let end = end.min(Point::new(buffer.screen_width - 1, buffer.buffer_height - 1));
+
+        Self {
+            begin,
+            end,
+            min_x: begin.x.min(end.x),
+            max_x: begin.x.max(end.x),
+            block_selection,
+            trim_trailing_whitespace,
+            include_line_break,
+            format_wrapped_rows,
+            buffer_coordinates,
+        }
+    }
+
+    /// Builds a request from the clipboard's configuration.
+    ///
+    /// Ported from `CopyRequest::FromConfig`: a single line collapses the rows
+    /// unless it is a block selection, and rows are trimmed only when they are
+    /// formatted.
+    pub fn from_config(
+        buffer: &TextBuffer,
+        begin: Point,
+        end: Point,
+        single_line: bool,
+        block_selection: bool,
+        trim_block_selection: bool,
+        buffer_coordinates: bool,
+    ) -> Self {
+        Self::new(
+            buffer,
+            begin,
+            end,
+            block_selection,
+            !single_line || block_selection,
+            !single_line && (!block_selection || trim_block_selection),
+            block_selection,
+            buffer_coordinates,
+        )
     }
 }
 
@@ -851,7 +938,10 @@ impl TextBuffer {
     }
 
     /// Gets the text content of all rows as a string.
-    pub fn get_plain_text(&self) -> String {
+    ///
+    /// A diagnostic helper, not upstream's `GetPlainText`; the copy path is
+    /// [`get_plain_text`](Self::get_plain_text).
+    pub fn get_all_text(&self) -> String {
         let mut result = String::new();
         for i in 0..self.rows.len() {
             let row = &self.rows[i];
@@ -859,6 +949,197 @@ impl TextBuffer {
             result.push('\n');
         }
         result
+    }
+
+    /// Returns the rows a selection covers as inclusive rectangles.
+    ///
+    /// Ported from `TextBuffer::GetTextRects`. A block selection uses the same
+    /// columns on every row; a line-wise one runs from the first point's column
+    /// to the end of its row, then full rows, then the last point's column.
+    /// Each row is widened to whole wide characters.
+    pub fn get_text_rects(
+        &self,
+        start: Point,
+        end: Point,
+        block_selection: bool,
+        buffer_coordinates: bool,
+    ) -> Vec<InclusiveRect> {
+        let (higher, lower) = if start <= end { (start, end) } else { (end, start) };
+        let buffer = self.buffer_viewport();
+        let mut rects = Vec::with_capacity((1 + lower.y - higher.y).max(0) as usize);
+
+        for row in higher.y..=lower.y {
+            let mut text_row = if block_selection || higher.y == lower.y {
+                InclusiveRect::new(higher.x.min(lower.x), row, higher.x.max(lower.x), row)
+            } else {
+                let left = if row == higher.y { higher.x } else { buffer.left() };
+                let right = if row == lower.y {
+                    lower.x
+                } else {
+                    buffer.right_inclusive()
+                };
+                InclusiveRect::new(left, row, right, row)
+            };
+
+            if !buffer_coordinates {
+                text_row = screen_to_buffer_line(text_row, self.get_line_rendition(row));
+            }
+
+            self.expand_text_row(&mut text_row);
+            rects.push(text_row);
+        }
+
+        rects
+    }
+
+    /// Returns the spans a selection covers.
+    ///
+    /// Ported from `TextBuffer::GetTextSpans`: one span per row for a block
+    /// selection, and a single span for a line-wise one.
+    pub fn get_text_spans(
+        &self,
+        start: Point,
+        end: Point,
+        block_selection: bool,
+        buffer_coordinates: bool,
+    ) -> Vec<PointSpan> {
+        if block_selection {
+            return self
+                .get_text_rects(start, end, true, buffer_coordinates)
+                .into_iter()
+                .map(|rect| {
+                    PointSpan::new(
+                        Point::new(rect.left(), rect.top()),
+                        Point::new(rect.right(), rect.bottom()),
+                    )
+                })
+                .collect();
+        }
+
+        let (mut higher, mut lower) = if start <= end { (start, end) } else { (end, start) };
+        if !buffer_coordinates {
+            higher = screen_to_buffer_line_inclusive(higher, self.get_line_rendition(higher.y));
+            lower = screen_to_buffer_line_inclusive(lower, self.get_line_rendition(lower.y));
+        }
+
+        let mut span = InclusiveRect::new(higher.x, higher.y, lower.x, lower.y);
+        self.expand_text_row(&mut span);
+        vec![PointSpan::new(
+            Point::new(span.left(), span.top()),
+            Point::new(span.right(), span.bottom()),
+        )]
+    }
+
+    /// Widens a row so it does not split a wide character.
+    ///
+    /// Ported from `TextBuffer::_ExpandTextRow`.
+    fn expand_text_row(&self, row: &mut InclusiveRect) {
+        let buffer = self.buffer_viewport();
+
+        let mut left = Point::new(row.left(), row.top());
+        if buffer.contains(left) && self.cell_is_trailing_half(left) {
+            buffer.decrement_in_exclusive_bounds(&mut left);
+            *row = InclusiveRect::new(left.x, row.top(), row.right(), row.bottom());
+        }
+
+        let mut right = Point::new(row.right(), row.bottom());
+        if buffer.contains(right) && self.cell_is_trailing_half(right) {
+            buffer.increment_in_exclusive_bounds(&mut right);
+            *row = InclusiveRect::new(row.left(), row.top(), right.x, row.bottom());
+        }
+    }
+
+    /// Returns whether the cell at `position` is the trailing half of a wide
+    /// character.
+    fn cell_is_trailing_half(&self, position: Point) -> bool {
+        self.get_row_at_screen_line(position.y)
+            .is_some_and(|row| row.is_trailing_half(position.x))
+    }
+
+    /// Returns the columns and line-break flag for one row of a copy request.
+    ///
+    /// Ported from `TextBuffer::_RowCopyHelper`.
+    fn row_copy_helper(&self, request: &CopyRequest, row_index: i32, row: &Row) -> (i32, i32, bool) {
+        let rendition = row.line_rendition();
+
+        let (row_begin, mut row_end) = if request.block_selection {
+            let min_x = if request.buffer_coordinates {
+                request.min_x
+            } else {
+                screen_to_buffer_line_inclusive(Point::new(request.min_x, row_index), rendition).x
+            };
+            let max_x = if request.buffer_coordinates {
+                request.max_x
+            } else {
+                screen_to_buffer_line_inclusive(Point::new(request.max_x, row_index), rendition).x
+            };
+            (min_x, max_x)
+        } else {
+            let begin = if request.buffer_coordinates {
+                request.begin
+            } else {
+                screen_to_buffer_line_inclusive(request.begin, rendition)
+            };
+            let end = if request.buffer_coordinates {
+                request.end
+            } else {
+                screen_to_buffer_line_inclusive(request.end, rendition)
+            };
+
+            let row_begin = if row_index != begin.y { 0 } else { begin.x };
+            let row_end = if row_index != end.y {
+                row.get_readable_column_count()
+            } else {
+                end.x
+            };
+            (row_begin, row_end)
+        };
+
+        // The selection does not stop on glyph boundaries, so widen the range
+        // rather than copy half a wide character.
+        let row_begin = row.adjust_to_glyph_start(row_begin);
+        row_end = row.adjust_to_glyph_end(row_end);
+
+        // Wrapped rows are joined unless the caller asks for them to be
+        // formatted like explicit lines.
+        let should_format_row = request.format_wrapped_rows || !row.is_wrap();
+
+        if should_format_row && request.trim_trailing_whitespace {
+            row_end = row_end.min(row.get_last_non_space_column());
+        }
+
+        (row_begin, row_end, should_format_row && request.include_line_break)
+    }
+
+    /// Returns the cells of `request` as plain text.
+    ///
+    /// Ported from `TextBuffer::GetPlainText(const CopyRequest&)`. Rows are
+    /// joined by `\r\n` when the request asks for line breaks; a row that was
+    /// wrapped by the buffer is joined to the next one instead.
+    pub fn get_plain_text(&self, request: &CopyRequest) -> String {
+        if request.begin > request.end {
+            return String::new();
+        }
+
+        let mut text = String::new();
+        for row_index in request.begin.y..=request.end.y {
+            let Some(row) = self.get_row_at_screen_line(row_index) else {
+                continue;
+            };
+
+            let (row_begin, row_end, add_line_break) = self.row_copy_helper(request, row_index, row);
+            text.push_str(&row.get_text_range(row_begin, row_end));
+
+            if add_line_break && row_index != request.end.y {
+                text.push_str("\r\n");
+            }
+        }
+        text
+    }
+
+    /// Returns the buffer's extent as a viewport.
+    fn buffer_viewport(&self) -> Viewport {
+        Viewport::new(Size::new(self.screen_width, self.buffer_height))
     }
 
     fn new_line(&mut self) {
@@ -944,17 +1225,10 @@ impl TextBuffer {
 
 /// The number of columns a row contributes to its logical line.
 ///
-/// One past the last non-space column for an explicit line and the full width
-/// for a wrapped one. `Row::measure_right` returns the column itself (unlike
-/// upstream's exclusive `ROW::MeasureRight`), hence the `+ 1`.
+/// `Row::measure_right` already gives one past the last non-space column for
+/// an explicit line and the full width for a wrapped one.
 fn row_content_limit(row: &Row) -> i32 {
-    if row.is_wrap() {
-        row.width()
-    } else if row.is_all_spaces() {
-        0
-    } else {
-        row.measure_right() + 1
-    }
+    row.measure_right()
 }
 
 /// Rewraps logical lines at `width`.
@@ -1236,9 +1510,235 @@ mod tests {
     #[test]
     fn test_get_plain_text() {
         let buf = TextBuffer::new();
-        let plain = buf.get_plain_text();
+        let plain = buf.get_all_text();
         // Should be empty (all rows are empty)
         assert!(!plain.contains("Hello"));
+    }
+
+    /// Writes a line into a screen row, advancing by each character's width.
+    fn write_row(buffer: &mut TextBuffer, row_index: i32, text: &str, wrap: bool) {
+        let row = buffer
+            .get_row_at_screen_line_mut(row_index)
+            .expect("row is within the page");
+        row.set_wrap(wrap);
+
+        let mut column = 0;
+        for character in text.chars() {
+            row.write_char(column, character, false);
+            column += i32::from(types::codepoint_width(character as u32).max(1));
+        }
+    }
+
+    #[test]
+    fn copy_rects_follow_the_selection_shape() {
+        // Ported from `TextBufferTests::GetTextRects`.
+        let mut buffer = TextBuffer::with_dimensions(20, 50, 0);
+        for (index, text) in ["0123456789", " 中3456中", "  中45中", "中234567中", "0123456789"]
+            .iter()
+            .enumerate()
+        {
+            write_row(&mut buffer, index as i32, text, false);
+        }
+
+        let start = Point::new(1, 0);
+        let end = Point::new(8, 4);
+
+        assert_eq!(
+            buffer.get_text_rects(start, end, false, false),
+            vec![
+                InclusiveRect::new(1, 0, 19, 0),
+                InclusiveRect::new(0, 1, 19, 1),
+                InclusiveRect::new(0, 2, 19, 2),
+                InclusiveRect::new(0, 3, 19, 3),
+                InclusiveRect::new(0, 4, 8, 4),
+            ]
+        );
+
+        // A block selection stops on the same columns; widening only kicks in
+        // when an edge lands on the trailing half of a wide glyph.
+        assert_eq!(
+            buffer.get_text_rects(start, end, true, false),
+            vec![
+                InclusiveRect::new(1, 0, 8, 0),
+                InclusiveRect::new(1, 1, 9, 1),
+                InclusiveRect::new(1, 2, 8, 2),
+                InclusiveRect::new(0, 3, 8, 3),
+                InclusiveRect::new(1, 4, 8, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn copy_spans_are_one_per_block_row_and_one_for_a_line() {
+        let mut buffer = TextBuffer::with_dimensions(10, 10, 0);
+        write_row(&mut buffer, 0, "ab", false);
+        write_row(&mut buffer, 1, "cd", false);
+
+        let start = Point::new(0, 0);
+        let end = Point::new(2, 1);
+
+        assert_eq!(
+            buffer.get_text_spans(start, end, true, false),
+            vec![
+                PointSpan::new(Point::new(0, 0), Point::new(2, 0)),
+                PointSpan::new(Point::new(0, 1), Point::new(2, 1)),
+            ]
+        );
+        assert_eq!(
+            buffer.get_text_spans(start, end, false, false),
+            vec![PointSpan::new(Point::new(0, 0), Point::new(2, 1))]
+        );
+    }
+
+    #[test]
+    fn plain_text_follows_the_copy_configuration() {
+        // Ported from the non-wrapped half of `TextBufferTests::GetPlainText`.
+        let mut buffer = TextBuffer::with_dimensions(10, 20, 0);
+        for (index, text) in ["12345", "  345", "123  ", "  3  "].iter().enumerate() {
+            write_row(&mut buffer, index as i32, text, false);
+        }
+
+        let request = |block: bool, include_line_break: bool, trim: bool| {
+            CopyRequest::new(
+                &buffer,
+                Point::new(0, 0),
+                Point::new(5, 4),
+                block,
+                include_line_break,
+                trim,
+                false,
+                false,
+            )
+        };
+
+        assert_eq!(
+            buffer.get_plain_text(&request(false, true, true)),
+            "12345\r\n  345\r\n123\r\n  3\r\n"
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(false, true, false)),
+            "12345     \r\n  345     \r\n123       \r\n  3       \r\n     "
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(true, true, false)),
+            "12345\r\n  345\r\n123  \r\n  3  \r\n     "
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(false, false, false)),
+            concat!("12345     ", "  345     ", "123       ", "  3       ", "     ")
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(true, false, false)),
+            concat!("12345", "  345", "123  ", "  3  ", "     ")
+        );
+        assert_eq!(buffer.get_plain_text(&request(false, false, true)), "12345  345123  3");
+    }
+
+    #[test]
+    fn wrapped_rows_join_unless_they_are_formatted() {
+        // Ported from the wrapped half of `TextBufferTests::GetPlainText`. Rows
+        // 0, 2 and 3 were filled to the width by a wrapping write.
+        let mut buffer = TextBuffer::with_dimensions(5, 20, 0);
+        for (index, (text, wrap)) in [
+            ("12345", true),
+            ("67   ", false),
+            ("  345", true),
+            ("123  ", true),
+            ("  ", false),
+        ]
+        .iter()
+        .enumerate()
+        {
+            write_row(&mut buffer, index as i32, text, *wrap);
+        }
+
+        let request = |block: bool, include_line_break: bool, trim: bool| {
+            CopyRequest::new(
+                &buffer,
+                Point::new(0, 0),
+                Point::new(5, 5),
+                block,
+                include_line_break,
+                trim,
+                block,
+                false,
+            )
+        };
+
+        assert_eq!(
+            buffer.get_plain_text(&request(false, true, true)),
+            "1234567\r\n  345123  \r\n"
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(false, true, false)),
+            "1234567   \r\n  345123       \r\n     "
+        );
+        assert_eq!(buffer.get_plain_text(&request(false, false, true)), "1234567  345123  ");
+        assert_eq!(
+            buffer.get_plain_text(&request(false, false, false)),
+            concat!("12345", "67   ", "  345", "123  ", "     ", "     ")
+        );
+
+        assert_eq!(
+            buffer.get_plain_text(&request(true, true, true)),
+            "12345\r\n67\r\n  345\r\n123\r\n\r\n"
+        );
+        assert_eq!(
+            buffer.get_plain_text(&request(true, true, false)),
+            "12345\r\n67   \r\n  345\r\n123  \r\n     \r\n     "
+        );
+        assert_eq!(buffer.get_plain_text(&request(true, false, true)), "1234567  345123");
+        assert_eq!(
+            buffer.get_plain_text(&request(true, false, false)),
+            concat!("12345", "67   ", "  345", "123  ", "     ", "     ")
+        );
+    }
+
+    #[test]
+    fn the_config_form_builds_the_clipboard_flags() {
+        let buffer = TextBuffer::with_dimensions(10, 20, 0);
+        let begin = Point::new(0, 0);
+        let end = Point::new(5, 4);
+
+        let single_line = CopyRequest::from_config(&buffer, begin, end, true, false, false, false);
+        assert!(!single_line.include_line_break);
+        assert!(!single_line.trim_trailing_whitespace);
+        assert!(!single_line.format_wrapped_rows);
+
+        let lines = CopyRequest::from_config(&buffer, begin, end, false, false, false, false);
+        assert!(lines.include_line_break);
+        assert!(lines.trim_trailing_whitespace);
+        assert!(!lines.format_wrapped_rows);
+
+        let block = CopyRequest::from_config(&buffer, begin, end, false, true, false, false);
+        assert!(block.include_line_break);
+        assert!(!block.trim_trailing_whitespace);
+        assert!(block.format_wrapped_rows);
+
+        let block_single = CopyRequest::from_config(&buffer, begin, end, true, true, false, false);
+        assert!(block_single.include_line_break);
+        assert!(!block_single.trim_trailing_whitespace);
+        assert!(block_single.format_wrapped_rows);
+    }
+
+    #[test]
+    fn a_request_clamps_by_row_like_upstream() {
+        let buffer = TextBuffer::with_dimensions(5, 20, 0);
+
+        // A point above the last row keeps its column, because upstream clamps
+        // with a point comparison rather than column by column.
+        let request = CopyRequest::new(
+            &buffer,
+            Point::new(-2, 0),
+            Point::new(5, 5),
+            false,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert_eq!(request.begin, Point::new(0, 0));
+        assert_eq!(request.end, Point::new(5, 5));
     }
 
     #[test]
@@ -1677,7 +2177,7 @@ mod proptests {
 
         #[test]
         fn test_plain_text_is_readable(buf in any_text_buffer()) {
-            let text = buf.get_plain_text();
+            let text = buf.get_all_text();
             // Plain text should contain only printable chars and newlines
             prop_assert!(text.chars().all(|c| c.is_ascii_graphic() || c == '\n'));
         }

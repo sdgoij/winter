@@ -16,7 +16,8 @@ use crate::scrolling::Scrolling;
 use crate::selection_input::{input_line_boundaries, is_within_boundaries};
 use crate::selection_state::{SelectionFlags, SelectionState};
 use crate::utils::{compare_coords, get_opposite_corner};
-use utils::{InclusiveRect, Point};
+use buffer::{CopyRequest, TextBuffer};
+use utils::{InclusiveRect, Point, PointSpan, Size};
 
 impl SelectionState {
     /// Starts a mark-mode selection at the cursor.
@@ -234,6 +235,35 @@ impl SelectionState {
 
         // Showing the selection may have scrolled the view; put it back.
         let _ = screen.set_viewport_origin(true, window_origin, false);
+    }
+
+    /// Returns the visible selection as text spans.
+    ///
+    /// Ported from `Selection::GetSelectionSpans`. The upstream generation
+    /// cache is an optimisation only, so the spans are recomputed here.
+    pub fn selection_spans(&self, buffer: &TextBuffer, buffer_size: Size) -> Vec<PointSpan> {
+        if !self.is_visible() {
+            return Vec::new();
+        }
+
+        let (start, end) = self.selection_anchors(buffer_size);
+        buffer.get_text_spans(start, end, !self.is_line_selection(), false)
+    }
+
+    /// Returns the selection as plain text, ready for the clipboard.
+    ///
+    /// The request is the one `Clipboard::StoreSelectionToClipboard` builds;
+    /// `single_line` is upstream's Shift-held collapse to one line.
+    pub fn plain_text(&self, buffer: &TextBuffer, single_line: bool) -> String {
+        if !self.is_area_selected() {
+            return String::new();
+        }
+
+        let buffer_size = Size::new(buffer.screen_width(), buffer.buffer_height());
+        let (start, end) = self.selection_anchors(buffer_size);
+        let request =
+            CopyRequest::from_config(buffer, start, end, single_line, !self.is_line_selection(), false, false);
+        buffer.get_plain_text(&request)
     }
 }
 
@@ -472,5 +502,94 @@ mod tests {
         selection.select_all(&mut console, &mut screen, &mut scrolling);
 
         assert_eq!(screen.viewport().origin(), Point { x: 0, y: 3 });
+    }
+
+    fn write_row(screen: &mut ScreenInformation, row_index: i32, text: &str) {
+        let row = screen
+            .text_buffer_mut()
+            .get_row_at_screen_line_mut(row_index)
+            .expect("row is within the page");
+        for (column, character) in text.chars().enumerate() {
+            row.write_char(column as i32, character, false);
+        }
+    }
+
+    #[test]
+    fn a_line_selection_reads_as_plain_text() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+        write_row(&mut screen, 1, "world");
+
+        let mut selection = SelectionState::new();
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 4, y: 1 }, &mut screen);
+
+        assert_eq!(selection.plain_text(screen.text_buffer(), false), "hi\r\nworld");
+        // Shift collapses the rows into one line but, as upstream does, leaves
+        // the unwritten columns in place.
+        assert_eq!(selection.plain_text(screen.text_buffer(), true), "hi        world");
+    }
+
+    #[test]
+    fn a_block_selection_keeps_its_columns() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+        write_row(&mut screen, 1, "world");
+
+        let mut selection = SelectionState::new();
+        selection.set_line_selection(false);
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 4, y: 1 }, &mut screen);
+
+        assert_eq!(selection.plain_text(screen.text_buffer(), false), "hi   \r\nworld");
+        // A block selection keeps its line structure even when collapsed.
+        assert_eq!(selection.plain_text(screen.text_buffer(), true), "hi   \r\nworld");
+    }
+
+    #[test]
+    fn an_invisible_selection_has_no_spans() {
+        let screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let selection = SelectionState::new();
+
+        assert!(
+            selection
+                .selection_spans(screen.text_buffer(), utils::Size::new(10, 5))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_spans_follow_the_selection_form() {
+        let mut console = ConsoleInformation::new();
+        let mut screen = ScreenInformation::new(10, 5, 0, TextAttribute::new(), TextAttribute::new());
+        let mut scrolling = Scrolling::new();
+        write_row(&mut screen, 0, "hi");
+        write_row(&mut screen, 1, "world");
+
+        let mut selection = SelectionState::new();
+        assert!(screen.set_cursor_position(Point { x: 0, y: 0 }));
+        selection.initialize_mark_selection(&mut console, &mut screen, &mut scrolling);
+        selection.extend_selection(Point { x: 4, y: 1 }, &mut screen);
+
+        let size = utils::Size::new(10, 5);
+        assert_eq!(
+            selection.selection_spans(screen.text_buffer(), size),
+            vec![PointSpan::new(Point { x: 0, y: 0 }, Point { x: 5, y: 1 })]
+        );
+
+        selection.set_line_selection(false);
+        assert_eq!(
+            selection.selection_spans(screen.text_buffer(), size),
+            vec![
+                PointSpan::new(Point { x: 0, y: 0 }, Point { x: 5, y: 0 }),
+                PointSpan::new(Point { x: 0, y: 1 }, Point { x: 5, y: 1 }),
+            ]
+        );
     }
 }
