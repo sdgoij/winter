@@ -5,7 +5,7 @@
 
 use types::{TextAttribute, VTInt};
 
-use buffer::TextBuffer;
+use buffer::{DEFAULT_SCROLLBACK_HEIGHT, TextBuffer};
 use utils::inclusive_rect::InclusiveRect;
 
 /// Maximum number of pages.
@@ -144,13 +144,12 @@ impl PageManager {
         if self.pages[idx].is_none() {
             let (width, height) = self.size;
             let viewport = InclusiveRect::new(0, 0, width - 1, height - 1);
-            // Page 2 is the alternate screen; every other page is a main buffer.
-            // PageManager does not own scrollback sizing, so the main pages here
-            // start with none.
+            // Page 2 is the alternate screen; every other page is a main buffer
+            // with the default history behind it.
             let buffer = if page_number == 2 {
                 TextBuffer::new_alternate(width, height)
             } else {
-                TextBuffer::with_dimensions(width, height, 0)
+                TextBuffer::with_dimensions(width, height, DEFAULT_SCROLLBACK_HEIGHT)
             };
             self.pages[idx] = Some(Page::new(
                 std::sync::Arc::new(std::sync::RwLock::new(buffer)),
@@ -257,6 +256,20 @@ mod tests {
         pm.deactivate_alternate();
         assert_eq!(pm.active_page_number, 1);
         assert_eq!(pm.visible_page_number, 1);
+    }
+
+    #[test]
+    fn main_pages_keep_history_and_the_alternate_page_does_not() {
+        let mut pm = PageManager::new();
+
+        let main = pm.get(1).buffer();
+        let main = main.read().unwrap();
+        assert_eq!(main.scrollback_height(), DEFAULT_SCROLLBACK_HEIGHT);
+        drop(main);
+
+        let alternate = pm.get(2).buffer();
+        let alternate = alternate.read().unwrap();
+        assert_eq!(alternate.scrollback_height(), 0);
     }
 
     #[test]

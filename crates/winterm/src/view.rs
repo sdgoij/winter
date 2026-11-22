@@ -192,6 +192,11 @@ impl View {
         self.scroll = 0;
     }
 
+    /// Moves the view to `scroll` rows above the live screen.
+    pub fn set_scroll(&mut self, scroll: i32, max: i32) {
+        self.scroll = scroll.clamp(0, max.max(0));
+    }
+
     /// Scrolls so `row` sits in the middle of the screen, as far as the ends
     /// allow.
     ///
@@ -288,6 +293,16 @@ impl ClickTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_set_scroll_clamps_to_the_history() {
+        let mut view = View::new();
+
+        view.set_scroll(4, 3);
+        assert_eq!(view.scroll(), 3);
+        view.set_scroll(-2, 3);
+        assert_eq!(view.scroll(), 0);
+    }
 
     #[test]
     fn a_scrolled_to_row_lands_in_the_middle_of_the_screen() {

@@ -11,18 +11,18 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~6.5k | 211 + 1 ignored | Complete for Phase 1; `PointSpan` joins the geometry primitives |
 | `types` | ~6.0k | 121 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, `VTID`, `VTParameters` (with sub-parameters), `LineRendition`, the charset tables, `SgrStack`, the colour table, `ColorFix` (Oklab nudging), XParseColor, the X11 colour-name tables, `InputModes`, the console `InputRecord` vocabulary and `FilterStringForPaste` |
-| `buffer` | ~7.3k | 220 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), document rows for copies that cross history (ADR 020), and `find_text`, the `search.cpp` logical-line search that reports every match in document coordinates |
+| `buffer` | ~7.3k | 221 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF), document rows for copies that cross history (ADR 020), and `find_text`, the `search.cpp` logical-line search that reports every match in document coordinates |
 | `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
-| `adapter` | ~9.7k | 180 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
+| `adapter` | ~9.7k | 182 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
 | `term` | ~5.5k | 186 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
 | `renderer` | ~6.4k | 123 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
 | `settings` | ~1.8k | 53 | Phase 10 (ADRs 022–032): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names, colour schemes applied to the adapter's table, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, and a stamp the application polls to reload a save |
-| `winterm` | ~5.4k | 85 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
+| `winterm` | ~5.6k | 94 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `grid`, `view`, `blink`, `tabs`, `layout` and `ui` (egui on winit/wgpu). Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, and a settings window that reports the file, lists what it adjusted and edits every setting it holds — profiles, keybindings, schemes, font size and defaults — work |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1484 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1496 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phase 9 has
@@ -1177,7 +1177,7 @@ the tab list (add, close, select, wrap), `layout.rs` is the pane tree, and
 Ctrl+Shift+T/W (tab), Ctrl+Shift+D/E (split), Ctrl+Tab (switch), Alt+Arrow
 (focus), Alt+Shift+Arrow (resize), Ctrl+Shift+C/V (clipboard), Ctrl+Shift+P
 (the command palette) and Ctrl+Shift+F (the find bar). The plus menu starts any
-profile by name. The scrollbar and the rest of `src/cascadia` remain.
+profile by name. The rest of `src/cascadia` remains.
 
 ### Application Core
 
@@ -1242,8 +1242,16 @@ profile by name. The scrollbar and the rest of `src/cascadia` remain.
     `Unicode` sample, an autowrap match, a line break that stops one, wide
     characters, overlap, case, history, the scroll, the row spans, and the bar's
     state, not the pixels. The ICU regular-expression mode is not ported.
-- [ ] `winterm/crates/winterm/src/scrollbar.rs` — Scrollbar with marks
-  - [ ] **Tests:** drag, click, scroll mark indicators, mark categories
+- [x] ~~`winterm/crates/winterm/src/scrollbar.rs`~~ — Scrollbar with marks
+  - Landed as `scrollbar.rs` (toolkit-free geometry and drag state) and the
+    pane's right-edge track in `ui.rs`: the thumb shows where the view sits, a
+    press on the track centres the clicked row, the thumb drags, and every
+    shell-integration prompt is a tick, red when its command failed. The
+    snapshot carries the marks (`grid::MarkTick`, paired with the command's exit
+    code by row). **Tests:** the thumb/scroll mapping, grab and drag, prompt and
+    error ticks, and the track's place on the pane, not the pixels.
+  - The adapter's main pages now start with `DEFAULT_SCROLLBACK_HEIGHT` rows of
+    history; without them the window had no scrollback to show.
 
 ### Keybindings & Actions
 

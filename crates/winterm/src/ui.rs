@@ -23,7 +23,7 @@ use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGRO
 use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
-use crate::{blink::Blink, grid, session::Session, tabs::Tabs, view::View};
+use crate::{blink::Blink, grid, scrollbar, session::Session, tabs::Tabs, view::View};
 
 /// The colour used when the palette has no default background.
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
@@ -253,6 +253,8 @@ struct Pane {
     view: View,
     /// The find bar's query and matches.
     find: FindBar,
+    /// The scrollbar's drag state.
+    scrollbar: scrollbar::Scrollbar,
     /// The title the shell set with OSC 0/2.
     osc_title: Option<String>,
     /// The grid size the terminal and pty were last told about.
@@ -282,6 +284,7 @@ impl Pane {
             session,
             view: View::new(),
             find: FindBar::default(),
+            scrollbar: scrollbar::Scrollbar::default(),
             osc_title: None,
             size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
@@ -441,6 +444,14 @@ impl Pane {
             self.last_mouse_cell = None;
             return;
         };
+
+        // The scrollbar owns presses and drags on its strip; the wheel still
+        // reaches the viewport below.
+        if (input.primary_pressed || input.primary_released || self.scrollbar.dragging())
+            && self.handle_scrollbar(&input, area)
+        {
+            return;
+        }
 
         // A selection drag that leaves the pane keeps extending: the pointer
         // claims the edge row and the view scrolls one row towards it, so the
@@ -745,6 +756,90 @@ impl Pane {
         }
     }
 
+    /// How many rows the document holds, history included.
+    fn document_height(&mut self) -> i32 {
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        buffer.document_height()
+    }
+
+    /// Handles a press or drag on the scrollbar, returning whether it took one.
+    fn handle_scrollbar(&mut self, input: &PointerInput, area: egui::Rect) -> bool {
+        let document = self.document_height();
+        let visible = self.size.1;
+        if document <= visible {
+            self.scrollbar.release();
+            return false;
+        }
+
+        let track = scrollbar_track(area);
+        if track.height() <= 0.0 {
+            return false;
+        }
+        let fraction = |position: egui::Pos2| (position.y - track.min.y) / track.height();
+
+        let mut handled = false;
+        if input.primary_pressed
+            && let Some(hover) = input.hover
+            && track.contains(hover)
+        {
+            let press = self
+                .scrollbar
+                .press(fraction(hover).clamp(0.0, 1.0), self.view.scroll(), document, visible);
+            if let scrollbar::Press::Jump(scroll) = press {
+                self.view.set_scroll(scroll, document - visible);
+            }
+            handled = true;
+        } else if self.scrollbar.dragging() && input.primary_down {
+            if let Some(hover) = input.hover
+                && let Some(scroll) = self.scrollbar.drag(fraction(hover), document, visible)
+            {
+                self.view.set_scroll(scroll, document - visible);
+            }
+            handled = true;
+        }
+
+        if input.primary_released {
+            let was_dragging = self.scrollbar.dragging();
+            self.scrollbar.release();
+            handled |= was_dragging;
+        }
+
+        handled
+    }
+
+    /// Draws the bar over the pane's right edge.
+    fn paint_scrollbar(&self, painter: &egui::Painter, area: egui::Rect, screen: &grid::Screen) {
+        let track = scrollbar_track(area);
+        if track.height() <= 0.0 {
+            return;
+        }
+
+        painter.rect_filled(track, 0, scrollbar_track_color());
+
+        for mark in &screen.marks {
+            let y = track.min.y + scrollbar::position(mark.row, screen.document_height) * track.height();
+            let color = if mark.error {
+                scrollbar_error_color()
+            } else {
+                scrollbar_mark_color()
+            };
+            painter.line_segment(
+                [egui::pos2(track.min.x, y), egui::pos2(track.max.x, y)],
+                egui::Stroke::new(1.5, color),
+            );
+        }
+
+        let (top, height) = scrollbar::thumb(self.view.scroll(), screen.document_height, screen.height);
+        let height = (height * track.height()).max(scrollbar::MIN_THUMB).min(track.height());
+        let top = (top * track.height()).min(track.height() - height);
+        let thumb = egui::Rect::from_min_size(
+            egui::pos2(track.min.x + 1.0, track.min.y + top),
+            egui::vec2(track.width() - 2.0, height),
+        );
+        painter.rect_filled(thumb, 2, scrollbar_thumb_color());
+    }
+
     /// Adds the pane's grid size to the pane's own rect.
     fn fit(&mut self, rect: egui::Rect, cell: egui::Vec2) {
         let columns = ((rect.width() / cell.x).floor() as i32).max(1);
@@ -919,6 +1014,10 @@ impl Pane {
                 .map(|color| egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160))
                 .unwrap_or_else(|| egui::Color32::from_rgba_unmultiplied(230, 230, 230, 160));
             paint_cursor(&painter, origin, cell, screen.cursor_shape, color);
+        }
+
+        if screen.document_height > screen.height {
+            self.paint_scrollbar(&painter, area, &screen);
         }
     }
 }
@@ -2073,6 +2172,27 @@ impl eframe::App for App {
     }
 }
 
+/// The strip the scrollbar occupies on the pane's right edge.
+fn scrollbar_track(area: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(egui::pos2(area.max.x - scrollbar::WIDTH, area.min.y), area.max)
+}
+
+fn scrollbar_track_color() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(0, 0, 0, 90)
+}
+
+fn scrollbar_thumb_color() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(160, 160, 160, 200)
+}
+
+fn scrollbar_mark_color() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(110, 170, 255, 220)
+}
+
+fn scrollbar_error_color() -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(235, 90, 90, 235)
+}
+
 /// The modifier sides egui collapses but the encoder distinguishes.
 #[derive(Debug, Clone, Copy, Default)]
 struct ModifierSides {
@@ -3154,6 +3274,16 @@ mod tests {
         assert_eq!(command_title(&PtyCommand::new("cmd.exe")), "cmd");
         assert_eq!(command_title(&PtyCommand::new("/bin/sh")), "sh");
         assert_eq!(command_title(&PtyCommand::new("")), "shell");
+    }
+
+    #[test]
+    fn the_scrollbar_sits_on_the_right_edge() {
+        let area = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let track = scrollbar_track(area);
+
+        assert_eq!(track.max, area.max);
+        assert_eq!(track.min.y, area.min.y);
+        assert_eq!(track.width(), scrollbar::WIDTH);
     }
 
     #[test]

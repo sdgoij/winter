@@ -5,7 +5,7 @@
 //! window backend decides how to draw them.
 
 use buffer::{Row, TextBuffer};
-use types::{CursorType, TextAttribute};
+use types::{CursorType, MarkKind, TextAttribute};
 
 /// A run of adjacent cells that share an attribute.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,6 +27,15 @@ pub struct RowSnapshot {
     pub runs: Vec<RunSnapshot>,
 }
 
+/// A shell-integration mark the scrollbar draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkTick {
+    /// The document row the mark starts on.
+    pub row: i32,
+    /// Whether the command that followed it failed.
+    pub error: bool,
+}
+
 /// The visible screen at one instant.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Screen {
@@ -36,8 +45,12 @@ pub struct Screen {
     pub height: i32,
     /// The document row shown at the top of the screen.
     pub top: i32,
+    /// How many rows the document holds, history included.
+    pub document_height: i32,
     /// One entry per screen row.
     pub rows: Vec<RowSnapshot>,
+    /// The prompt marks the scrollbar draws.
+    pub marks: Vec<MarkTick>,
     /// The cursor cell, zero-based, `(column, row)`.
     pub cursor: (i32, i32),
     /// Whether the cursor is currently visible.
@@ -82,12 +95,40 @@ pub fn snapshot_at(buffer: &TextBuffer, scroll: i32) -> Screen {
         width,
         height,
         top: first,
+        document_height: total,
         rows,
+        marks: mark_ticks(buffer),
         cursor: (column, row),
         cursor_visible: cursor.is_visible() && scroll == 0,
         cursor_shape: cursor.shape(),
         cursor_blinking: cursor.is_blinking(),
     }
+}
+
+/// One tick per prompt, flagged when the command that followed it failed.
+fn mark_ticks(buffer: &TextBuffer) -> Vec<MarkTick> {
+    let marks = buffer.marks();
+    let mut ticks = Vec::new();
+
+    for prompt in marks.iter().filter(|mark| mark.kind() == MarkKind::Prompt) {
+        // The command that follows a prompt carries its exit code. The nearest
+        // command at or after the prompt is that one; insertion order alone
+        // cannot say, because marks on the same row may be stored in either
+        // order.
+        let error = marks
+            .iter()
+            .filter(|mark| mark.kind() == MarkKind::Command && mark.start_row() >= prompt.start_row())
+            .min_by_key(|mark| mark.start_row())
+            .and_then(|mark| mark.error())
+            .is_some_and(|code| code != 0);
+
+        ticks.push(MarkTick {
+            row: prompt.start_row(),
+            error,
+        });
+    }
+
+    ticks
 }
 
 fn row_snapshot(line: &Row, width: i32) -> RowSnapshot {
@@ -145,6 +186,33 @@ mod tests {
 
         // The buffer stores `(row, column)`; a painter needs `(column, row)`.
         assert_eq!(snapshot(&buffer).cursor, (7, 3));
+    }
+
+    #[test]
+    fn a_snapshot_carries_the_document_height_and_its_prompt_marks() {
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 4);
+        buffer.write_string("one");
+        // A full-page scroll keeps the evicted row in the scrollback.
+        buffer.scroll_region_up(0, 1);
+
+        buffer.marks_mut().start_prompt(0);
+        buffer.marks_mut().start_command(0);
+        buffer.marks_mut().start_output(1);
+        buffer.marks_mut().end_current_command(2, Some(1));
+
+        let screen = snapshot(&buffer);
+        assert_eq!(screen.document_height, 3);
+        assert_eq!(screen.marks, vec![MarkTick { row: 0, error: true }]);
+    }
+
+    #[test]
+    fn a_successful_command_marks_no_error() {
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 0);
+        buffer.marks_mut().start_prompt(0);
+        buffer.marks_mut().start_command(0);
+        buffer.marks_mut().end_current_command(0, Some(0));
+
+        assert_eq!(snapshot(&buffer).marks, vec![MarkTick { row: 0, error: false }]);
     }
 
     #[test]

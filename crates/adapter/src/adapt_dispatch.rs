@@ -882,7 +882,9 @@ impl AdaptDispatch {
     fn start_shell_integration_mark(&mut self, kind: MarkKind) {
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
-        let row = buffer.cursor().position().0;
+        // Marks live in document coordinates (history first); the cursor
+        // reports a screen row.
+        let row = buffer.scrollback_len() as i32 + buffer.cursor().position().0;
         match kind {
             MarkKind::Prompt => buffer.marks_mut().start_prompt(row),
             MarkKind::Command => buffer.marks_mut().start_command(row),
@@ -897,7 +899,7 @@ impl AdaptDispatch {
     fn end_shell_integration_command(&mut self, error: Option<u32>) {
         let buffer = self.page_manager.active_page().buffer();
         let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
-        let row = buffer.cursor().position().0;
+        let row = buffer.scrollback_len() as i32 + buffer.cursor().position().0;
         buffer.marks_mut().end_current_command(row, error);
         drop(buffer);
         self.pending_shell_integration_marks += 1;
@@ -3782,6 +3784,27 @@ mod tests {
         assert!(!dispatch.is_origin_mode());
         assert!(dispatch.is_auto_wrap());
         assert!(!dispatch.is_alternate_buffer_active());
+    }
+
+    #[test]
+    fn a_shell_integration_mark_is_on_the_document_row() {
+        let mut dispatch = AdaptDispatch::new();
+        {
+            let handle = dispatch.page_manager_mut().active_page().buffer();
+            let mut buffer = handle.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let height = buffer.screen_height();
+            buffer.scroll_region_up(0, height - 1);
+            buffer.cursor_mut().set_position(5, 0);
+        }
+
+        dispatch.do_finalterm_action("A");
+
+        let handle = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = handle.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(buffer.scrollback_len(), 1);
+        let mark = buffer.marks().iter().next().expect("a prompt mark");
+        assert_eq!(mark.kind(), MarkKind::Prompt);
+        assert_eq!(mark.start_row(), 6, "the history precedes the screen");
     }
 
     #[test]

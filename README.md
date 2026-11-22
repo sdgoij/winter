@@ -30,7 +30,7 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, normalization, the platform path | Phase 10 (ADRs 022–026) |
 | [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
 
-1484 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1496 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -92,7 +92,10 @@ The plus button starts any profile by name; Ctrl+Shift+P opens the command
 palette, which lists a tab per profile followed by the window's actions with the
 chord each is bound to (type to filter, arrows move, Enter runs, Escape closes).
 Ctrl+Shift+F opens the find bar: every match in the history and on screen is
-highlighted, Enter and Shift+Enter step through them, and Escape closes it.
+highlighted, Enter and Shift+Enter step through them, and Escape closes it. A
+scrollbar on the right edge shows where the view sits in the history; its thumb
+drags, the track jumps, and the prompts a shell reports with OSC 133 are ticks,
+red when the command failed.
 
 A scheme names any of `foreground`, `background`, `cursor_color`,
 `selection_background`, `black` … `white` and `bright_black` … `bright_white`. A

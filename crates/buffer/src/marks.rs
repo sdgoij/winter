@@ -160,6 +160,11 @@ impl Marks {
         self.marks.len()
     }
 
+    /// Returns the marks, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = &BufferMark> {
+        self.marks.iter()
+    }
+
     /// Returns whether there are any marks.
     pub fn is_empty(&self) -> bool {
         self.marks.is_empty()
@@ -285,6 +290,19 @@ mod tests {
             .find(|mark| mark.kind() == MarkKind::Command)
             .expect("a command mark");
         assert_eq!(command.error(), Some(3));
+    }
+
+    #[test]
+    fn test_marks_iterate_in_order() {
+        let mut marks = Marks::new();
+        marks.start_prompt(20);
+        marks.start_prompt(10);
+        marks.start_command(30);
+
+        assert_eq!(
+            marks.iter().map(BufferMark::start_row).collect::<Vec<_>>(),
+            [10, 20, 30]
+        );
     }
 
     #[test]
