@@ -17,6 +17,7 @@
 //! - [`font_info_base`] — `FontInfoBase` face name, family, weight, code page
 //! - [`font_info_desired`] — `FontInfoDesired` requested cell metrics
 //! - [`font_info`] — `FontInfo` measured cell metrics
+//! - [`font_cache`] — the process-wide font collection from `FontCache.h`
 //! - [`render_data`] — `RenderData`, the terminal state the engine reads
 //! - [`render_engine`] — `RenderEngine`, `RenderError`, `RenderResult`, `StartPaint`
 //! - [`render_engine_base`] — `RenderEngineBase`, the shared title/frame state
@@ -29,6 +30,7 @@ pub mod cluster;
 pub mod composition;
 pub mod css_length;
 pub mod cursor_options;
+pub mod font_cache;
 pub mod font_info;
 pub mod font_info_base;
 pub mod font_info_desired;
@@ -52,6 +54,7 @@ pub use cluster::Cluster;
 pub use composition::{Composition, CompositionRange};
 pub use css_length::{CSSLengthPercentage, ReferenceFrame};
 pub use cursor_options::CursorOptions;
+pub use font_cache::{FontCollection, FontFace, PREFERRED_MONOSPACE_FAMILIES};
 pub use font_info::{CellSizeInDIP, FontInfo};
 pub use font_info_base::{DEFAULT_RASTER_FONT_FACENAME, DEFAULT_TT_FONT_FACENAME, FontInfoBase, LF_FACESIZE};
 pub use font_info_desired::FontInfoDesired;

@@ -16,6 +16,7 @@ use fontdue::{Font, FontSettings, Metrics};
 use crate::atlas::common::{FontId, ShapedGlyph};
 use crate::atlas::shaping::ShapingBackend;
 use crate::atlas::software::{GlyphBitmap, GlyphRasterizer};
+use crate::font_cache::FontFace;
 
 /// Rasterises glyphs with `fontdue`.
 pub struct FontDueRasterizer {
@@ -34,6 +35,21 @@ impl FontDueRasterizer {
     pub fn from_file(path: impl AsRef<Path>, size: f32) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
         Self::from_bytes(bytes, size).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    }
+
+    /// Creates a rasteriser for a face found by the font collection.
+    ///
+    /// The face index is passed through, so a face inside a `ttcf` collection
+    /// opens the same entry the collection named.
+    pub fn from_face(face: &FontFace, size: f32) -> std::io::Result<Self> {
+        let bytes = std::fs::read(face.path())?;
+        let settings = FontSettings {
+            collection_index: face.index(),
+            ..FontSettings::default()
+        };
+        Font::from_bytes(bytes, settings)
+            .map(|font| Self { font, size })
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }
 
     /// Returns the glyph index for a character, or zero when absent.
