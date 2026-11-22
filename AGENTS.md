@@ -204,9 +204,10 @@ Do not add call sites under an allowance.
 Phases 1–5 are complete. Phase 6 (the console host) is under way:
 `history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model,
 `InputStateMachineEngine.cpp`, the portable halves of `consoleInformation.cpp`
-and `screenInfo.cpp`, `settings.cpp`, and `alias.cpp` (with its expansion wired
-into the cooked read) are ported, so the input records have a console, a screen,
-its settings and working aliases. `inputKeyInfo.cpp` is next. The read-data family's `IWaitRoutine` completion path, the cooked read's
+and `screenInfo.cpp`, `settings.cpp`, `alias.cpp` (with its expansion wired into
+the cooked read) and `inputKeyInfo.cpp` are ported, so the input records have a
+console, a screen, its settings, working aliases and a key description.
+`scrolling.cpp` is next. The read-data family's `IWaitRoutine` completion path, the cooked read's
 pager, the render settings and the window metrics wait for the server, renderer
 and window layers; `outputStream.cpp` has no counterpart (ADR 013). Phases 7–14
 are not started.

@@ -21,11 +21,13 @@
 //!   console modes
 //! - [`settings`] — `Settings`, the console's configurable values
 //! - [`alias`] — the `doskey`-style command aliases and their expansion
+//! - [`input_key_info`] — `InputKeyInfo`, one key press and its modifiers
 
 pub mod alias;
 pub mod console_information;
 pub mod history;
 pub mod input_buffer;
+pub mod input_key_info;
 pub mod input_state_machine_engine;
 pub mod read_data_cooked;
 pub mod screen_info;
