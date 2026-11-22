@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use server::pty::{PtyCommand, PtySize};
 use term::Terminal;
-use term::input::{Key, KeyEvent, Modifiers as KeyModifiers, MouseEvent, WHEEL_DELTA, WheelAxis};
+use term::input::{
+    Key, KeyEvent, Modifiers as KeyModifiers, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA,
+    WheelAxis,
+};
 use types::color_table::{ColorAlias, ColorTable};
 use types::text_color::{ColorType, TextColor};
 
@@ -46,6 +49,8 @@ struct App {
     clipboard: Option<arboard::Clipboard>,
     /// The grid size the terminal and pty were last told about.
     size: (i32, i32),
+    /// The cell the pointer was last forwarded from, for motion deduplication.
+    last_mouse_cell: Option<(i32, i32)>,
     /// Right Alt is held, which is what makes an AltGr chord distinct from
     /// Ctrl+Alt (ADR 017's `is_alt_gr`).
     right_alt: bool,
@@ -68,6 +73,7 @@ impl App {
             view: View::new(),
             clipboard: arboard::Clipboard::new().ok(),
             size: (i32::from(size.cols), i32::from(size.rows)),
+            last_mouse_cell: None,
             right_alt: false,
             right_ctrl: false,
             exited: false,
@@ -197,7 +203,10 @@ impl App {
         let _ = self.session.resize(size);
     }
 
-    /// Handles the pointer: wheel, click and drag.
+    /// Handles the pointer: wheel, buttons, motion and selection.
+    ///
+    /// A tracking application owns the mouse; Shift is the user's override and
+    /// starts a selection instead.
     fn handle_pointer(&mut self, ctx: &egui::Context, area: egui::Rect, cell: egui::Vec2) {
         if cell.x <= 0.0 || cell.y <= 0.0 {
             return;
@@ -205,18 +214,28 @@ impl App {
 
         let input = ctx.input(|input| PointerInput {
             hover: input.pointer.hover_pos(),
-            pressed: input.pointer.primary_pressed(),
-            down: input.pointer.primary_down(),
+            primary_pressed: input.pointer.button_pressed(egui::PointerButton::Primary),
+            primary_down: input.pointer.button_down(egui::PointerButton::Primary),
+            primary_released: input.pointer.button_released(egui::PointerButton::Primary),
+            middle_pressed: input.pointer.button_pressed(egui::PointerButton::Middle),
+            middle_down: input.pointer.button_down(egui::PointerButton::Middle),
+            middle_released: input.pointer.button_released(egui::PointerButton::Middle),
+            secondary_pressed: input.pointer.button_pressed(egui::PointerButton::Secondary),
+            secondary_down: input.pointer.button_down(egui::PointerButton::Secondary),
+            secondary_released: input.pointer.button_released(egui::PointerButton::Secondary),
             scroll: input.smooth_scroll_delta.y,
-            alt: input.modifiers.alt,
+            modifiers: input.modifiers,
         });
 
         let Some(position) = input.hover.filter(|position| area.contains(*position)) else {
+            self.last_mouse_cell = None;
             return;
         };
         let Some(cell_position) = self.cell_at(area, cell, position) else {
             return;
         };
+
+        let forwards = forwards_to_application(self.terminal.is_tracking_mouse_input(), input.modifiers.shift);
 
         if input.scroll != 0.0 {
             let lines = (input.scroll / cell.y).round() as i32;
@@ -226,10 +245,15 @@ impl App {
                 lines
             };
 
-            // A tracking application, or the alternate screen's scroll, owns
-            // the wheel; otherwise it moves the viewport.
+            // Shift keeps the wheel for the viewport; otherwise a tracking
+            // application, or the alternate screen's scroll, owns it.
             let wheel = MouseEvent::wheel(cell_position, WheelAxis::Vertical, lines * WHEEL_DELTA);
-            match self.terminal.handle_mouse(&wheel) {
+            let bytes = if input.modifiers.shift {
+                None
+            } else {
+                self.terminal.handle_mouse(&wheel)
+            };
+            match bytes {
                 Some(bytes) => self.write(&bytes),
                 None => {
                     let max = self.max_scroll();
@@ -238,21 +262,80 @@ impl App {
             }
         }
 
-        if input.pressed {
-            self.view.scroll_to_bottom();
-            let count = self.view.click(cell_position, Instant::now());
+        if forwards {
+            let moved = self.last_mouse_cell != Some(cell_position);
+            self.last_mouse_cell = Some(cell_position);
+            let buttons = mouse_buttons(input.primary_down, input.middle_down, input.secondary_down);
+            let modifiers = key_modifiers(input.modifiers, self.right_alt, self.right_ctrl);
 
-            if count >= 3 {
-                let width = self.screen_width();
-                self.view.select_line(cell_position.1, width);
-            } else if count == 2 {
-                let text = self.row_text(cell_position.1);
-                self.view.select_word(&text, cell_position);
-            } else {
-                self.view.select(cell_position, input.alt);
+            self.send_mouse_buttons(&input, cell_position, buttons, modifiers);
+
+            let dragging = buttons.left || buttons.middle || buttons.right;
+            if moved || dragging {
+                let event = MouseEvent {
+                    position: cell_position,
+                    kind: MouseEventKind::Move,
+                    buttons,
+                    modifiers,
+                    delta: 0,
+                };
+                if let Some(bytes) = self.terminal.handle_mouse(&event) {
+                    self.write(&bytes);
+                }
             }
-        } else if input.down && self.view.selection().is_some() {
-            self.view.extend(cell_position);
+        } else {
+            self.last_mouse_cell = None;
+
+            if input.primary_pressed {
+                self.view.scroll_to_bottom();
+                let count = self.view.click(cell_position, Instant::now());
+
+                if count >= 3 {
+                    let width = self.screen_width();
+                    self.view.select_line(cell_position.1, width);
+                } else if count == 2 {
+                    let text = self.row_text(cell_position.1);
+                    self.view.select_word(&text, cell_position);
+                } else {
+                    self.view.select(cell_position, input.modifiers.alt);
+                }
+            } else if input.primary_down && self.view.selection().is_some() {
+                self.view.extend(cell_position);
+            }
+        }
+    }
+
+    /// Forwards button presses and releases to a tracking application.
+    fn send_mouse_buttons(
+        &mut self,
+        input: &PointerInput,
+        position: (i32, i32),
+        buttons: MouseButtons,
+        modifiers: KeyModifiers,
+    ) {
+        for (button, pressed, released) in [
+            (MouseButton::Left, input.primary_pressed, input.primary_released),
+            (MouseButton::Middle, input.middle_pressed, input.middle_released),
+            (MouseButton::Right, input.secondary_pressed, input.secondary_released),
+        ] {
+            if !pressed && !released {
+                continue;
+            }
+
+            let event = MouseEvent {
+                position,
+                kind: if pressed {
+                    MouseEventKind::Press(button)
+                } else {
+                    MouseEventKind::Release(button)
+                },
+                buttons,
+                modifiers,
+                delta: 0,
+            };
+            if let Some(bytes) = self.terminal.handle_mouse(&event) {
+                self.write(&bytes);
+            }
         }
     }
 
@@ -459,10 +542,34 @@ impl eframe::App for App {
 /// The pointer state one frame needs.
 struct PointerInput {
     hover: Option<egui::Pos2>,
-    pressed: bool,
-    down: bool,
+    primary_pressed: bool,
+    primary_down: bool,
+    primary_released: bool,
+    middle_pressed: bool,
+    middle_down: bool,
+    middle_released: bool,
+    secondary_pressed: bool,
+    secondary_down: bool,
+    secondary_released: bool,
     scroll: f32,
-    alt: bool,
+    modifiers: egui::Modifiers,
+}
+
+/// Returns whether the application, rather than the selection, gets the mouse.
+///
+/// Shift is the user's override: it selects even while an application tracks
+/// the mouse, which is how a person copies text out of a full-screen program.
+const fn forwards_to_application(tracking: bool, shift: bool) -> bool {
+    tracking && !shift
+}
+
+/// Maps the pointer's buttons to the protocol's set of held buttons.
+const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> MouseButtons {
+    MouseButtons {
+        left: primary,
+        middle,
+        right: secondary,
+    }
 }
 
 fn default_command() -> PtyCommand {
@@ -707,5 +814,40 @@ mod tests {
         assert_eq!(to_cells(0), 1);
         assert_eq!(to_cells(120), 120);
         assert_eq!(to_cells(i32::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn shift_takes_the_mouse_back_from_a_tracking_application() {
+        assert!(forwards_to_application(true, false));
+        assert!(!forwards_to_application(true, true));
+        assert!(!forwards_to_application(false, false));
+    }
+
+    #[test]
+    fn the_pointer_buttons_map_to_the_protocol_buttons() {
+        assert_eq!(
+            mouse_buttons(true, false, false),
+            MouseButtons {
+                left: true,
+                middle: false,
+                right: false,
+            }
+        );
+        assert_eq!(
+            mouse_buttons(false, true, false),
+            MouseButtons {
+                left: false,
+                middle: true,
+                right: false,
+            }
+        );
+        assert_eq!(
+            mouse_buttons(false, false, true),
+            MouseButtons {
+                left: false,
+                middle: false,
+                right: true,
+            }
+        );
     }
 }

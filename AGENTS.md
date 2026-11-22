@@ -223,9 +223,9 @@ the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp a
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
 It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
 paints the buffer through egui on winit and wgpu (ADR 018), with wheel
-scrollback, mouse selection and copy/paste (ADR 019). The app's remaining
-tab and pane machinery and the native backends are next; Phases 9–14 are not
-started.
+scrollback, mouse selection, mouse forwarding to a tracking application (Shift
+selects instead) and copy/paste (ADR 019). The app's remaining tab and pane
+machinery and the native backends are next; Phases 9–14 are not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

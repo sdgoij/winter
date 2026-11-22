@@ -14,14 +14,14 @@ Verified by running the gate, not by reading the previous status:
 | `buffer` | ~7.1k | 206 | Phase 2 — scrollback, `logical_lines` and `resize` (reflow), OSC 8 hyperlink registry, per-row image bands (ADR 005), rectangle scrolling, line rendition, the read-side `TextBufferCellIterator`, the selection copy path (`GetTextRects`/`GetTextSpans`, plain/HTML/RTF) |
 | `vt` | ~1.9k | 46 | Phase 3 — the full DFA ported from `stateMachine.cpp`: parameters, sub-parameters, intermediates, OSC/DCS strings and VT52; drives an `IStateMachineEngine`. No fuzz target; the conformance corpus lives beside the `term` loop |
 | `adapter` | ~9.7k | 180 | Phase 4 state and interfaces; print, SGR, cursor, margins, insert/delete, scrolling, paging, erase, rectangular, mode (incl. DECCOLM/DECANM), report, presentation state, line rendition, DECRQSS, DRCS, hyperlink/OSC, colour table (incl. DECAC), macro, window, sixel, kitty, sound, save-restore, tab handlers and the ConEmu/iTerm2/FinalTerm/VS Code/WT/urxvt action strings ported |
-| `term` | ~5.5k | 185 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp and AltGr aliasing. 105 of the tests are the conformance corpus |
+| `term` | ~5.5k | 186 | The parser-to-dispatch loop, ported from `OutputStateMachineEngine.cpp`: C0, ESC, CSI, OSC, DCS and VT52 mapping; byte-to-UTF-8 decoding; a `Terminal` façade that applies DECANM, C1, presentation-state and DECRQSS work to the adapter; `TerminalInput`'s key and mouse encoders from `terminalInput.cpp` and `mouseInput.cpp` (regular forms, kitty protocol, win32-input-mode, focus, the default/UTF-8/SGR mouse encodings, alternate scroll); and `Terminal.cpp`'s focus dedup, viewport clamp, AltGr aliasing and mouse-tracking report. 105 of the tests are the conformance corpus |
 | `renderer` | ~6.4k | 121 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame`; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser; and the `FontCache.h` collection with its SFNT face reader (ADR 008). A GPU backend is not written |
 | `host` | ~9.0k | 246 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio`, `registry`, `handle` and `tracing` wait for the server, driver and ETW layers |
 | `server` | ~1.0k | 12 | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016). The driver protocol is deliberately not ported |
-| `winterm` | ~1.5k | 22 | Phase 8's shell (ADRs 018, 019): `session` (the pty and its pump), `grid` (a buffer snapshot: runs, text, cursor, history), `view` (scroll offset and selection) and `ui` (egui on winit/wgpu). Mouse selection, copy/paste and scrollback work; scrollback selection, a repaint waker and the rest of the app are next |
+| `winterm` | ~1.6k | 24 | Phase 8's shell (ADRs 018, 019): `session` (the pty and its pump), `grid` (a buffer snapshot: runs, text, cursor, history), `view` (scroll offset and selection) and `ui` (egui on winit/wgpu). Mouse selection and a tracking application's mouse, copy/paste and scrollback work; scrollback selection, a repaint waker and the rest of the app are next |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1350 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1353 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018). Phases 9–14
@@ -1137,10 +1137,11 @@ everywhere. A native backend replaces `ui.rs` without touching `session.rs` or
     backwards drag spans, block spans, word and line expansion, and the copied
     text of a line and a block selection.
 - [x] `winterm/crates/winterm/src/ui.rs` — the egui shell
-  - Mouse: wheel scrolls history (or is forwarded to a tracking application),
-    drag selects, double-click selects a word, triple-click selects a row, Alt
-    makes a block selection. Ctrl+Shift+C/V copy and paste; Ctrl+C/X/V reach
-    the shell because eframe's clipboard shortcuts are off.
+  - Mouse: a tracking application owns clicks, drags and the wheel; Shift is
+    the selection override. Without tracking, drag selects, double-click
+    selects a word, triple-click selects a row and Alt makes a block
+    selection. Ctrl+Shift+C/V copy and paste; Ctrl+C/X/V reach the shell
+    because eframe's clipboard shortcuts are off.
   - **Tests:** the key map, modifier sides and the AltGr chord, palette
     resolution, and the pty cell clamp.
   - The frame loop polls the pump every 8 ms; a repaint waker replaces the poll

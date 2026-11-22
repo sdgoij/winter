@@ -92,6 +92,15 @@ impl Terminal {
         self.input.handle_mouse(&clamped, &modes)
     }
 
+    /// Returns whether an application asked for mouse tracking.
+    ///
+    /// The window uses this to decide whether a click belongs to the
+    /// application (and Shift is the user's override) or starts a selection.
+    pub fn is_tracking_mouse_input(&self) -> bool {
+        let modes = self.dispatch().input_modes();
+        self.input.is_tracking_mouse_input(&modes)
+    }
+
     /// Formats clipboard text for the pty.
     ///
     /// The text is filtered (control codes dropped, line endings rewritten to
@@ -558,6 +567,18 @@ mod tests {
             ..KeyEvent::down(Key::Char('q'))
         };
         assert_eq!(terminal.handle_key(&event).as_deref(), Some("@"));
+    }
+
+    #[test]
+    fn mouse_tracking_is_reported_from_the_input_modes() {
+        let mut terminal = Terminal::new();
+        assert!(!terminal.is_tracking_mouse_input());
+
+        terminal.process_str("\x1b[?1000h");
+        assert!(terminal.is_tracking_mouse_input());
+
+        terminal.process_str("\x1b[?1000l");
+        assert!(!terminal.is_tracking_mouse_input());
     }
 
     #[test]
