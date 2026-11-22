@@ -15,6 +15,10 @@ pub const VK_SHIFT: u16 = 0x10;
 pub const VK_CONTROL: u16 = 0x11;
 /// Alt.
 pub const VK_MENU: u16 = 0x12;
+/// Pause.
+pub const VK_PAUSE: u16 = 0x13;
+/// Caps Lock.
+pub const VK_CAPITAL: u16 = 0x14;
 /// Escape.
 pub const VK_ESCAPE: u16 = 0x1B;
 /// Page up.
@@ -67,6 +71,10 @@ pub const VK_F10: u16 = 0x79;
 pub const VK_F11: u16 = 0x7A;
 /// The twelfth function key.
 pub const VK_F12: u16 = 0x7B;
+/// Num Lock.
+pub const VK_NUMLOCK: u16 = 0x90;
+/// Scroll Lock.
+pub const VK_SCROLL: u16 = 0x91;
 /// Left Shift.
 pub const VK_LSHIFT: u16 = 0xA0;
 /// Right Shift.

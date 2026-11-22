@@ -197,7 +197,7 @@ Do not add call sites under an allowance.
 | `crates/adapter` | `ITermDispatch`, page management, sixel, macros, charsets |
 | `crates/term` | The parser-to-dispatch loop, the `Terminal` handle, key and mouse encoding |
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
-| `crates/host` | The console side: history, input buffer, cooked read, input parser, selection |
+| `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
 
 ## Where the port stands
 
@@ -205,13 +205,14 @@ Phases 1–5 are complete. Phase 6 (the console host) is under way:
 `history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model,
 `InputStateMachineEngine.cpp`, the portable halves of `consoleInformation.cpp`
 and `screenInfo.cpp`, `settings.cpp`, `alias.cpp` (with its expansion wired into
-the cooked read), `inputKeyInfo.cpp`, `scrolling.cpp` and `selection.cpp` are
-ported, so the input records have a console, a screen, its settings, working
-aliases, a key description, scroll handling and a selection. `selectionInput.cpp`
-is next. The read-data family's `IWaitRoutine` completion path, the cooked
-read's pager, the render settings and the window metrics wait for the server,
-renderer and window layers; `outputStream.cpp` has no counterpart (ADR 013).
-Phases 7–14 are not started.
+the cooked read), `inputKeyInfo.cpp`, `scrolling.cpp`, `selection.cpp` and
+`selectionInput.cpp` are ported, so the input records have a console, a screen,
+its settings, working aliases, a key description, scroll handling, and a
+selection moved by keys and the mouse. `directio.cpp` is next. The read-data
+family's `IWaitRoutine` completion path, the cooked read's pager, the render
+settings and the window metrics wait for the server, renderer and window
+layers; `outputStream.cpp` has no counterpart (ADR 013). Phases 7–14 are not
+started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

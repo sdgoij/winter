@@ -13,6 +13,7 @@
 //! decide whether a key record is a character or an editing action.
 
 use crate::alias::AliasTable;
+use crate::cmdline::delimiter_class;
 use crate::history::{CommandHistory, Index, SearchDirection};
 use crate::input_buffer::{InputBuffer, InputMode};
 use types::virtual_key::{
@@ -26,10 +27,6 @@ const END: usize = usize::MAX;
 
 /// Upstream's `CommandNumberMaxInputLength`.
 const COMMAND_NUMBER_MAX_INPUT_LENGTH: usize = 5;
-
-/// The console's default word delimiters, from `registry.cpp`; space is always
-/// a delimiter and is not in the list.
-const WORD_DELIMITERS: [char; 12] = ['\\', '+', '!', ':', '=', '/', '.', '<', '>', ';', '|', '&'];
 
 /// Upstream's `EXTKEY_ERASE_PREV_WORD`: Ctrl+Backspace.
 const ERASE_PREV_WORD: char = '\u{7f}';
@@ -793,18 +790,6 @@ fn find_char(chars: &[char], from: usize, character: char) -> Option<usize> {
         .skip(from)
         .find(|&(_, &candidate)| candidate == character)
         .map(|(index, _)| index)
-}
-
-/// Returns the class upstream's `DelimiterClass` assigns: 0 for a regular
-/// character, 1 for a space and 2 for a configured delimiter.
-fn delimiter_class(character: char) -> u8 {
-    if character == ' ' {
-        1
-    } else if WORD_DELIMITERS.contains(&character) {
-        2
-    } else {
-        0
-    }
 }
 
 /// The next grapheme boundary after `position`.

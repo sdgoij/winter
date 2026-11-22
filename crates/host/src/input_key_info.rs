@@ -9,6 +9,9 @@
 //! keyboard state; they belong to the input and window layers.
 
 use types::ControlKeyState;
+use types::virtual_key::{
+    VK_CAPITAL, VK_CONTROL, VK_LWIN, VK_MENU, VK_NUMLOCK, VK_PAUSE, VK_RWIN, VK_SCROLL, VK_SHIFT,
+};
 
 /// A key press, as the console's selection and input code sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +81,18 @@ impl InputKeyInfo {
     pub const fn has_no_modifiers(&self) -> bool {
         !self.is_alt_pressed() && !self.is_ctrl_pressed() && !self.is_shift_pressed()
     }
+}
+
+/// Returns whether pressing `virtual_key` alone changes a system state.
+///
+/// Ported from `IsSystemKey` in `input.cpp`. A mouse selection is cancelled by
+/// any key that is not one of these, so a modifier press or a lock toggle must
+/// not end it.
+pub const fn is_system_key(virtual_key: u16) -> bool {
+    matches!(
+        virtual_key,
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_PAUSE | VK_CAPITAL | VK_LWIN | VK_RWIN | VK_NUMLOCK | VK_SCROLL
+    )
 }
 
 #[cfg(test)]
@@ -209,5 +224,20 @@ mod tests {
             ..NONE
         });
         assert!(info.has_no_modifiers());
+    }
+
+    #[test]
+    fn the_modifiers_and_locks_are_system_keys() {
+        for virtual_key in [
+            VK_SHIFT, VK_CONTROL, VK_MENU, VK_PAUSE, VK_CAPITAL, VK_LWIN, VK_RWIN, VK_NUMLOCK, VK_SCROLL,
+        ] {
+            assert!(
+                is_system_key(virtual_key),
+                "expected {virtual_key:#x} to be a system key"
+            );
+        }
+
+        assert!(!is_system_key(types::virtual_key::VK_ESCAPE));
+        assert!(!is_system_key(u16::from(b'a')));
     }
 }

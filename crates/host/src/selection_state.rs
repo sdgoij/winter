@@ -11,7 +11,7 @@
 
 use bitflags::bitflags;
 use buffer::Cursor;
-use types::CursorType;
+use types::{CursorType, Viewport};
 use utils::{InclusiveRect, Point, Size};
 
 use crate::console_information::{ConsoleFlags, ConsoleInformation};
@@ -168,6 +168,11 @@ impl SelectionState {
         cursor.set_position(saved.position.y, saved.position.x);
     }
 
+    /// Returns the cursor position saved when the selection began, if any.
+    pub(crate) fn saved_cursor_position(&self) -> Option<Point> {
+        self.saved_cursor.map(|saved| saved.position)
+    }
+
     /// Returns the corner the selection started from.
     pub const fn selection_anchor(&self) -> Point {
         self.anchor
@@ -255,6 +260,11 @@ impl SelectionState {
         self.flags.insert(flags);
     }
 
+    /// Clears flag bits.
+    pub(crate) fn remove_flags(&mut self, flags: SelectionFlags) {
+        self.flags.remove(flags);
+    }
+
     /// Sets whether the alternate selection form is used.
     ///
     /// Together with the line flag this chooses line or block selection; the
@@ -291,14 +301,7 @@ impl Default for SelectionState {
 /// Advances `position` by one cell inside a viewport that has one extra column
 /// past its inclusive right, upstream's `Viewport::IncrementInExclusiveBounds`.
 fn increment_in_exclusive_bounds(position: &mut Point, size: Size) {
-    let width = i64::from(size.width()) + 1;
-    let height = i64::from(size.height());
-    let maximum = width * height;
-    let offset = width * i64::from(position.y) + i64::from(position.x) + 1;
-    let clamped = offset.clamp(0, maximum);
-
-    position.x = (clamped % width) as i32;
-    position.y = (clamped / width) as i32;
+    let _ = Viewport::new(size).increment_in_exclusive_bounds(position);
 }
 
 #[cfg(test)]

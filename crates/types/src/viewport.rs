@@ -49,6 +49,109 @@ impl Viewport {
         self.size.height()
     }
 
+    /// Returns the leftmost column.
+    pub const fn left(&self) -> i32 {
+        self.origin.x
+    }
+
+    /// Returns the rightmost column, inclusive.
+    pub fn right_inclusive(&self) -> i32 {
+        self.origin.x() + self.size.width() - 1
+    }
+
+    /// Returns the rightmost column, exclusive.
+    pub fn right_exclusive(&self) -> i32 {
+        self.origin.x() + self.size.width()
+    }
+
+    /// Returns the top row.
+    pub const fn top(&self) -> i32 {
+        self.origin.y
+    }
+
+    /// Returns the bottom row, inclusive.
+    pub fn bottom_inclusive(&self) -> i32 {
+        self.origin.y() + self.size.height() - 1
+    }
+
+    /// Returns the bottom row, exclusive.
+    pub fn bottom_exclusive(&self) -> i32 {
+        self.origin.y() + self.size.height()
+    }
+
+    /// Walks `position` through the viewport by `delta` cells, in reading
+    /// order, and reports whether it stayed inside.
+    ///
+    /// Ported from `Viewport::WalkInBounds`: a step past the right edge wraps
+    /// to the next row, and a step past the first cell or the last cell clamps
+    /// and fails.
+    pub fn walk_in_bounds(&self, position: &mut Point, delta: i32) -> bool {
+        let left = i64::from(self.left());
+        let top = i64::from(self.top());
+        let width = i64::from(self.size.width().max(0));
+        let height = i64::from(self.size.height().max(0));
+        if width == 0 || height == 0 {
+            return false;
+        }
+
+        let maximum = width * height - 1;
+        let offset = width * (i64::from(position.y) - top) + (i64::from(position.x) - left) + i64::from(delta);
+        let clamped = offset.clamp(0, maximum);
+        *position = Point::new((clamped % width + left) as i32, (clamped / width + top) as i32);
+        offset == clamped
+    }
+
+    /// Advances `position` by one cell inside the viewport.
+    pub fn increment_in_bounds(&self, position: &mut Point) -> bool {
+        self.walk_in_bounds(position, 1)
+    }
+
+    /// Moves `position` back by one cell inside the viewport.
+    pub fn decrement_in_bounds(&self, position: &mut Point) -> bool {
+        self.walk_in_bounds(position, -1)
+    }
+
+    /// Walks `position` through a viewport that has one extra column past its
+    /// inclusive right, upstream's exclusive bounds.
+    ///
+    /// A point at `right_exclusive()` is a valid position, so a selection's
+    /// exclusive end can be represented.
+    pub fn walk_in_exclusive_bounds(&self, position: &mut Point, delta: i32) -> bool {
+        let left = i64::from(self.left());
+        let top = i64::from(self.top());
+        let width = i64::from(self.size.width().max(0) + 1);
+        let height = i64::from(self.size.height().max(0));
+        if height == 0 {
+            return false;
+        }
+
+        let maximum = width * height;
+        let offset = width * (i64::from(position.y) - top) + (i64::from(position.x) - left) + i64::from(delta);
+        let clamped = offset.clamp(0, maximum);
+        *position = Point::new((clamped % width + left) as i32, (clamped / width + top) as i32);
+        offset == clamped
+    }
+
+    /// Advances `position` by one cell in exclusive bounds.
+    pub fn increment_in_exclusive_bounds(&self, position: &mut Point) -> bool {
+        self.walk_in_exclusive_bounds(position, 1)
+    }
+
+    /// Moves `position` back by one cell in exclusive bounds.
+    pub fn decrement_in_exclusive_bounds(&self, position: &mut Point) -> bool {
+        self.walk_in_exclusive_bounds(position, -1)
+    }
+
+    /// Compares two positions in reading order.
+    ///
+    /// Ported from `Viewport::CompareInBounds`: negative when `first` comes
+    /// before `second`, zero when they are the same cell, positive when it
+    /// comes after. The magnitude is the distance in cells.
+    pub fn compare_in_bounds(&self, first: Point, second: Point) -> i32 {
+        let distance = i64::from(first.y - second.y) * i64::from(self.width()) + i64::from(first.x - second.x);
+        distance.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    }
+
     /// Returns the bottom-right corner.
     pub fn bottom_right(&self) -> Point {
         Point::new(
@@ -179,5 +282,89 @@ mod tests {
         let union = vp1.union(&vp2);
         assert_eq!(union.origin(), Point::new(0, 0));
         assert_eq!(union.size(), Size::new(80, 24));
+    }
+
+    fn edges() -> Viewport {
+        Viewport::from_origin_size(Point::new(10, 20), Size::new(10, 10))
+    }
+
+    #[test]
+    fn increment_in_bounds_walks_rows_and_stops_at_the_last_cell() {
+        let view = edges();
+
+        let mut point = Point::new(15, 25);
+        assert!(view.increment_in_bounds(&mut point));
+        assert_eq!(point, Point::new(16, 25));
+
+        let mut point = Point::new(19, 25);
+        assert!(view.increment_in_bounds(&mut point));
+        assert_eq!(point, Point::new(10, 26));
+
+        let mut point = Point::new(19, 29);
+        assert!(!view.increment_in_bounds(&mut point));
+        assert_eq!(point, Point::new(19, 29));
+    }
+
+    #[test]
+    fn decrement_in_bounds_walks_rows_and_stops_at_the_first_cell() {
+        let view = edges();
+
+        let mut point = Point::new(15, 25);
+        assert!(view.decrement_in_bounds(&mut point));
+        assert_eq!(point, Point::new(14, 25));
+
+        let mut point = Point::new(10, 25);
+        assert!(view.decrement_in_bounds(&mut point));
+        assert_eq!(point, Point::new(19, 24));
+
+        let mut point = Point::new(10, 20);
+        assert!(!view.decrement_in_bounds(&mut point));
+        assert_eq!(point, Point::new(10, 20));
+    }
+
+    #[test]
+    fn walking_by_more_than_one_cell_crosses_rows() {
+        let view = Viewport::new(Size::new(10, 5));
+        let mut point = Point::new(7, 0);
+
+        assert!(view.walk_in_bounds(&mut point, 5));
+        assert_eq!(point, Point::new(2, 1));
+
+        assert!(!view.walk_in_bounds(&mut point, 100));
+        assert_eq!(point, Point::new(9, 4));
+    }
+
+    #[test]
+    fn exclusive_bounds_allow_the_cell_past_the_right_edge() {
+        let view = Viewport::new(Size::new(10, 5));
+
+        // Each row has one extra, exclusive column, so the step after the last
+        // inclusive cell lands on that column before wrapping.
+        let mut point = Point::new(9, 0);
+        assert!(view.increment_in_exclusive_bounds(&mut point));
+        assert_eq!(point, Point::new(10, 0));
+
+        assert!(view.increment_in_exclusive_bounds(&mut point));
+        assert_eq!(point, Point::new(0, 1));
+
+        let mut point = Point::new(0, 0);
+        assert!(!view.decrement_in_exclusive_bounds(&mut point));
+        assert_eq!(point, Point::new(0, 0));
+
+        let mut point = Point::new(10, 4);
+        assert!(view.increment_in_exclusive_bounds(&mut point));
+        assert_eq!(point, Point::new(0, 5));
+    }
+
+    #[test]
+    fn compare_in_bounds_measures_distance_in_cells() {
+        let view = Viewport::new(Size::new(10, 5));
+
+        assert_eq!(view.compare_in_bounds(Point::new(3, 2), Point::new(3, 2)), 0);
+        assert_eq!(view.compare_in_bounds(Point::new(0, 0), Point::new(1, 1)), -11);
+        assert_eq!(view.compare_in_bounds(Point::new(1, 1), Point::new(0, 0)), 11);
+
+        // The last cell of one row is one before the first cell of the next.
+        assert_eq!(view.compare_in_bounds(Point::new(9, 0), Point::new(0, 1)), -1);
     }
 }

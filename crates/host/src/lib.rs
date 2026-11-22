@@ -25,8 +25,11 @@
 //! - [`scrolling`] — `Scrolling`, the wheel and scroll-key handling
 //! - [`selection_state`] — `SelectionState`, the console's selection state
 //! - [`selection`] — the selection operations that move that state
+//! - [`selection_input`] — the selection's key handling and word navigation
+//! - [`cmdline`] — `IsWordDelim` and `DelimiterClass`, the word delimiter rules
 
 pub mod alias;
+pub mod cmdline;
 pub mod console_information;
 pub mod history;
 pub mod input_buffer;
@@ -36,5 +39,6 @@ pub mod read_data_cooked;
 pub mod screen_info;
 pub mod scrolling;
 pub mod selection;
+pub mod selection_input;
 pub mod selection_state;
 pub mod settings;
