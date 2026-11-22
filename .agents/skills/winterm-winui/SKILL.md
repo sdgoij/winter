@@ -107,8 +107,14 @@ not paint them in the shell.
 
 The `▾` after the tab strip's `+` toggles a list built by `menu::entries`: every
 profile in file order, then `Settings` and `About winterm`. The binding has no
-flyout, so the list is an overlay in the pane's `Grid`, anchored top-left — not
-tracked to the button, whose position the binding does not report (ADR 052).
+flyout, so the list is an overlay in the pane's `Grid` that hangs under the
+button (ADR 052).
+
+- The button is 32x24 and carries a 13-DIP top offset, matching the tab strip's
+  own add button; if you change one, measure the other from UI Automation.
+- The list's left edge comes from the width of the `Grid` that wraps the strip
+  and the button (`observe_composition_host`), not from a constant. The pane is
+  a different ancestor, so no layout relationship exists without it.
 
 - A profile row opens a tab through `TerminalSettings::for_profile` and the
   shell's `add_tab`; `open_tab` is the same path with the default template.

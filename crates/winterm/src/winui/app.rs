@@ -42,6 +42,10 @@ use super::wheel::{self, Wheel};
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
 const INITIAL_ROWS: i32 = 30;
+/// The drop-down's width in DIPs, so its overlay can hang under it.
+const MENU_WIDTH: f64 = 240.0;
+/// The drop-down button's width in DIPs.
+const DROP_DOWN_WIDTH: f64 = 32.0;
 /// Far beyond any display, and it keeps a bad metric from asking the terminal
 /// for an allocation it can never fill.
 const MAX_CELLS: i32 = 1024;
@@ -79,6 +83,12 @@ struct Shell {
     menu_open: bool,
     /// Whether the About dialog is showing.
     about_open: bool,
+    /// The title bar header's measured width in DIPs, so the menu hangs under
+    /// the drop-down button rather than at the pane's left edge.
+    header_width: f64,
+    /// The header element, wrapped in a Grid only so it can be measured.
+    header: ElementRef<Grid>,
+    _header_observation: ElementObservation,
     /// The file the settings were read from, polled for a save (ADR 025).
     settings_path: Option<PathBuf>,
     /// The file's stamp at the last read, so a save is noticed.
@@ -171,6 +181,8 @@ pub(super) enum Message {
     MenuAbout,
     /// The About dialog closed.
     AboutClose,
+    /// The title bar header's width in DIPs changed.
+    HeaderWidth(f64),
 }
 
 impl Component for Shell {
@@ -254,6 +266,20 @@ impl Component for Shell {
         let timer = Some(context.set_timeout(Duration::from_millis(16), Message::Tick));
         let _ = context.run_window(|handle| Message::Window(handle.as_raw() as isize));
 
+        // The header's width decides where the drop-down's menu hangs. The
+        // binding reports no control position, but a Grid reports its own
+        // size, which is the header's left offset in this layout.
+        let header = ElementRef::<Grid>::new();
+        let header_observation = {
+            let sender = context.sender();
+            header.observe_composition_host(move |event| {
+                let width = match event {
+                    CompositionHostEvent::Ready { width, .. } | CompositionHostEvent::Metrics { width, .. } => width,
+                };
+                let _ = sender.send(Message::HeaderWidth(width));
+            })
+        };
+
         let initial_client = (
             f64::from(cell.0) * f64::from(INITIAL_COLUMNS as u16),
             f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
@@ -268,6 +294,9 @@ impl Component for Shell {
             settings_window,
             menu_open: false,
             about_open: false,
+            header_width: 0.0,
+            header,
+            _header_observation: header_observation,
             settings_path,
             settings_stamp,
             settings_at: Instant::now(),
@@ -356,7 +385,7 @@ impl Component for Shell {
             pane_children.push(find_bar(tab, &dialog, &self.find_field));
         }
         if menu_open {
-            pane_children.push(profile_menu(&self.settings, &dialog));
+            pane_children.push(profile_menu(&self.settings, &dialog, menu_left(self)));
         }
         let pane_content = Grid::new().children(pane_children);
 
@@ -451,18 +480,31 @@ impl Component for Shell {
         );
 
         // The drop-down sits immediately after the strip's `+`, as in Windows
-        // Terminal, so the two travel together in one header.
+        // Terminal: the two are the same height and share one header. The Grid
+        // wraps them only so its width can be measured, which is how the menu
+        // finds the button's left edge (ADR 052).
         let drop_down = Button::new()
             .content("\u{25be}")
             .style(ButtonStyle::Subtle)
-            .width(36.0)
+            .width(DROP_DOWN_WIDTH)
+            .height(24.0)
+            // A Button's stock style has a 32-DIP minimum; the tab strip's own
+            // button is 24, so the default would make the two uneven.
+            .min_height(0.0)
+            // The tab strip's own button sits 13 DIP below the header's top (a
+            // 32-DIP tab item with a 24-DIP button, and the header's slot starts
+            // 4 DIP above the title bar's content); match it, or the two buttons
+            // are visibly uneven.
+            .vertical_alignment(VerticalAlignment::Top)
+            .margin(Thickness::new(0.0, 13.0, 0.0, 0.0))
             .on_click(move || {
                 let _ = menu_sender.send(Message::MenuToggle);
             });
-        let header = StackPanel::new()
+        let header_panel: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
-            .spacing(4.0)
-            .children((strip, drop_down));
+            .children((strip, drop_down))
+            .into();
+        let header = Grid::new().element_ref(&self.header).children(vec![header_panel]);
 
         // The tab strip is the title bar, as in Windows Terminal: the TitleBar
         // control extends the client area and hands the system the drag region,
@@ -558,6 +600,7 @@ impl Component for Shell {
                 self.about_open = false;
                 let _ = self.focus.request_focus();
             }
+            Message::HeaderWidth(width) => self.header_width = width,
         }
     }
 }
@@ -1623,7 +1666,7 @@ fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox
 ///
 /// The pinned binding has no flyout, so this is an overlay anchored to the
 /// pane's top-left, under the title bar (ADR 052).
-fn profile_menu(settings: &settings::Settings, sender: &LocalSender<Message>) -> View {
+fn profile_menu(settings: &settings::Settings, sender: &LocalSender<Message>, left: f64) -> View {
     let rows: Vec<View> = menu::entries(settings)
         .into_iter()
         .map(|entry| menu_row(entry, sender))
@@ -1635,12 +1678,21 @@ fn profile_menu(settings: &settings::Settings, sender: &LocalSender<Message>) ->
         .border_thickness(Thickness::uniform(1.0))
         .corner_radius(CornerRadius::uniform(6.0))
         .padding(Thickness::uniform(4.0))
-        .width(240.0)
+        .width(MENU_WIDTH)
         .horizontal_alignment(HorizontalAlignment::Left)
         .vertical_alignment(VerticalAlignment::Top)
-        .margin(Thickness::new(8.0, 8.0, 0.0, 0.0))
+        .margin(Thickness::new(left, 4.0, 0.0, 0.0))
         .content(StackPanel::new().spacing(1.0).children(rows))
         .into()
+}
+
+/// The drop-down's menu hangs under the button, kept inside the pane.
+///
+/// The header's measured width ends at the button's right edge, so its left
+/// edge is the menu's anchor. A window too narrow for the menu pins it right.
+fn menu_left(shell: &Shell) -> f64 {
+    let rightmost = (shell.panel_size.0 - MENU_WIDTH - 8.0).max(8.0);
+    (shell.header_width - DROP_DOWN_WIDTH).clamp(8.0, rightmost)
 }
 
 /// One clickable row of the drop-down.
