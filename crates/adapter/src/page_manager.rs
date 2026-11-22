@@ -55,6 +55,11 @@ impl Page {
         self.viewport
     }
 
+    /// Sets the viewport, which must follow the buffer when it is resized.
+    pub fn set_viewport(&mut self, viewport: InclusiveRect) {
+        self.viewport = viewport;
+    }
+
     /// Returns the page number.
     pub fn number(&self) -> i32 {
         self.number

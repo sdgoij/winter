@@ -64,6 +64,27 @@ impl Row {
         }
     }
 
+    /// Builds a `width`-wide row from cell data, padding with empty cells.
+    ///
+    /// Reflow has already sliced a logical line into row-sized pieces, so this
+    /// avoids `write_cell`'s per-cell `contains_text` scan on the hot path.
+    pub fn from_cells(width: i32, cells: Vec<OutputCell>, wrap: bool) -> Self {
+        let mut row_cells = vec![OutputCell::new(); width.max(0) as usize];
+        let count = cells.len().min(row_cells.len());
+        row_cells[..count].clone_from_slice(&cells[..count]);
+        let contains_text = row_cells.iter().any(|cell| !cell.is_whitespace());
+
+        Self {
+            cells: row_cells,
+            width,
+            contains_text,
+            wrap,
+            trailing_width: 0,
+            scrollbar_data: ScrollbarData::default(),
+            has_line_rendition: false,
+        }
+    }
+
     /// Returns the width of this row (number of columns).
     pub const fn width(&self) -> i32 {
         self.width

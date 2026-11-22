@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use crate::TextAttribute;
 use crate::cursor::Cursor;
 use crate::hyperlinks::HyperlinkMap;
 use crate::marks::Marks;
@@ -31,6 +32,38 @@ struct BufferedRow {
 impl BufferedRow {
     fn new(row: Row, screen_line: i32) -> Self {
         Self { row, screen_line }
+    }
+}
+
+/// One logical line of the buffer: rows joined where the wrap flag is set.
+///
+/// Upstream has no public equivalent; `TextBuffer::Reflow` joins rows as it
+/// copies them. Keeping the join in one place lets it be tested directly and
+/// stops `resize` from re-deriving the trailing-whitespace rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicalLine {
+    /// The cells of the line, left to right.
+    cells: Vec<OutputCell>,
+    /// The index into `cells` the cursor sits on, if this is the cursor's line.
+    cursor_offset: Option<usize>,
+}
+
+impl LogicalLine {
+    /// Returns the cells of the line, left to right.
+    pub fn cells(&self) -> &[OutputCell] {
+        &self.cells
+    }
+
+    /// Returns the cell offset of the cursor, when the cursor is on this line.
+    pub fn cursor_offset(&self) -> Option<usize> {
+        self.cursor_offset
+    }
+
+    /// Returns whether the line holds nothing but blanks with default attributes.
+    pub fn is_blank(&self) -> bool {
+        self.cells
+            .iter()
+            .all(|cell| cell.is_whitespace() && *cell.get_attributes() == TextAttribute::new())
     }
 }
 
@@ -201,30 +234,13 @@ impl TextBuffer {
 
     /// Creates a new text buffer with the given dimensions.
     pub fn with_dimensions(width: i32, height: i32, scrollback_height: i32) -> Self {
-        let buffer_height = height + scrollback_height;
-
-        // Allocate scrollback rows as well as the visible ones: the screen
-        // index is offset by the scrollback height, so a buffer that only
-        // allocated its visible rows could not look any of them up.
-        let mut rows = VecDequeCompat::new(buffer_height as usize);
-        let mut screen_line_index = HashMap::new();
-
-        for i in 0..buffer_height {
-            let row = Row::new(width);
-            rows.push_back(BufferedRow::new(row, i - scrollback_height));
-        }
-        for i in 0..height {
-            let buffer_idx = i + scrollback_height;
-            screen_line_index.insert(i, (buffer_idx as usize) % buffer_height as usize);
-        }
-
-        Self {
+        let mut buffer = Self {
             screen_width: width,
             screen_height: height,
             scrollback_height,
-            buffer_height,
-            rows,
-            screen_line_index,
+            buffer_height: height + scrollback_height,
+            rows: VecDequeCompat::new(0),
+            screen_line_index: HashMap::new(),
             is_alternate: false,
             cursor: Cursor::new(),
             marks: Marks::new(),
@@ -232,6 +248,31 @@ impl TextBuffer {
             selection: None,
             mutation_id: 0,
             scrollback: std::collections::VecDeque::new(),
+        };
+        buffer.allocate_rows();
+        buffer
+    }
+
+    /// Allocates blank rows for the current dimensions and rebuilds the screen
+    /// index.
+    ///
+    /// The scrollback slots are allocated as well as the visible rows: the
+    /// screen index is offset by the scrollback height, so a buffer that only
+    /// allocated its visible rows could not look any of them up.
+    fn allocate_rows(&mut self) {
+        self.rows = VecDequeCompat::new(self.buffer_height as usize);
+        for index in 0..self.buffer_height {
+            self.rows.push_back(BufferedRow::new(
+                Row::new(self.screen_width),
+                index - self.scrollback_height,
+            ));
+        }
+
+        self.screen_line_index.clear();
+        for line in 0..self.screen_height {
+            let buffer_index = line + self.scrollback_height;
+            self.screen_line_index
+                .insert(line, (buffer_index as usize) % self.buffer_height as usize);
         }
     }
 
@@ -342,6 +383,62 @@ impl TextBuffer {
         Some(cell.chars())
     }
 
+    /// Joins the buffer's rows into logical lines using the wrap flags.
+    ///
+    /// A row whose `is_wrap` is set continues the line above: `do_line_feed`
+    /// records the flag when autowrap breaks a line. The last row of each line
+    /// contributes up to its last non-space column, matching upstream
+    /// `ROW::MeasureRight`; a wrapped row contributes its full width, because
+    /// the whitespace before a wrap is content, not padding. Scrollback rows
+    /// come first, so a logical line may span the scrollback/screen boundary.
+    pub fn logical_lines(&self) -> Vec<LogicalLine> {
+        let (cursor_row, cursor_column) = self.cursor.position();
+        let cursor_row = cursor_row + self.scrollback.len() as i32;
+
+        let mut lines = Vec::new();
+        let mut cells: Vec<OutputCell> = Vec::new();
+        let mut cursor_offset: Option<usize> = None;
+
+        for (index, row) in self.document_rows().enumerate() {
+            let is_cursor_row = index as i32 == cursor_row;
+            let mut limit = row_content_limit(row);
+            if is_cursor_row {
+                // REFLOW_JANK_CURSOR_WRAP: treat the cell under the cursor as
+                // content so the cursor keeps its distance from the text before
+                // it, even when it sits in trailing whitespace.
+                limit = limit.max(cursor_column + 1).min(row.width());
+            }
+
+            let start = cells.len();
+            for column in 0..limit {
+                cells.push(row.get_cell(column).clone());
+            }
+            if is_cursor_row {
+                cursor_offset = Some(start + cursor_column.clamp(0, (limit - 1).max(0)) as usize);
+            }
+
+            if !row.is_wrap() {
+                lines.push(LogicalLine {
+                    cells: std::mem::take(&mut cells),
+                    cursor_offset: cursor_offset.take(),
+                });
+            }
+        }
+
+        if !cells.is_empty() || cursor_offset.is_some() {
+            lines.push(LogicalLine { cells, cursor_offset });
+        }
+
+        lines
+    }
+
+    /// Iterates the rows in document order: scrollback first, then the screen.
+    fn document_rows(&self) -> impl Iterator<Item = &Row> + '_ {
+        self.scrollback
+            .iter()
+            .chain((0..self.screen_height).filter_map(|line| self.get_row_at_screen_line(line)))
+    }
+
     /// Writes a character at the current cursor position.
     pub fn write(&mut self, c: char) {
         let row = self.cursor.row();
@@ -431,6 +528,60 @@ impl TextBuffer {
     /// Discards the scrollback, which is what `ED 3` asks for.
     pub fn clear_scrollback(&mut self) {
         self.scrollback.clear();
+        self.mutation_id += 1;
+    }
+
+    /// Resizes the buffer, rewrapping the text into the new width.
+    ///
+    /// Ported from `TextBuffer::Reflow`: logical lines are rewrapped at the new
+    /// width, the wrap flags are re-derived, and the cursor is remapped by its
+    /// position within its line rather than by its column. The bottom of the
+    /// document stays at the bottom of the page, so rows that no longer fit move
+    /// into the scrollback and become visible again when the buffer grows. A
+    /// cursor whose line is pushed entirely into the scrollback is clamped to
+    /// the top visible row.
+    pub fn resize(&mut self, new_width: i32, new_height: i32) {
+        if new_width <= 0 || new_height <= 0 {
+            return;
+        }
+        if new_width == self.screen_width && new_height == self.screen_height {
+            return;
+        }
+
+        let lines = self.logical_lines();
+        // Rows after the last content row are re-derived blank rows, so there is
+        // nothing to rewrap there; the cursor's line is kept even when blank.
+        let used_lines = lines
+            .iter()
+            .rposition(|line| !line.is_blank() || line.cursor_offset().is_some())
+            .map_or(0, |index| index + 1);
+        let (mut new_rows, cursor) = rewrap_lines(&lines[..used_lines], new_width);
+
+        while new_rows.len() < new_height as usize {
+            new_rows.push(Row::new(new_width));
+        }
+
+        let visible_start = new_rows.len() - new_height as usize;
+        let mut scrollback: std::collections::VecDeque<Row> = new_rows.drain(..visible_start).collect();
+        while scrollback.len() > self.scrollback_height.max(0) as usize {
+            scrollback.pop_front();
+        }
+
+        self.screen_width = new_width;
+        self.screen_height = new_height;
+        self.buffer_height = new_height + self.scrollback_height;
+        self.allocate_rows();
+        for (offset, row) in new_rows.into_iter().enumerate() {
+            if let Some(buffered) = self.rows.get_mut(self.scrollback_height as usize + offset) {
+                buffered.row = row;
+            }
+        }
+        self.scrollback = scrollback;
+
+        let (row, column) = cursor.unwrap_or((0, 0));
+        let row = (row - visible_start as i32).clamp(0, new_height - 1);
+        let column = column.clamp(0, new_width - 1);
+        self.cursor.set_position(row, column);
         self.mutation_id += 1;
     }
 
@@ -661,6 +812,51 @@ impl TextBuffer {
     }
 }
 
+/// The number of columns a row contributes to its logical line.
+///
+/// One past the last non-space column for an explicit line and the full width
+/// for a wrapped one. `Row::measure_right` returns the column itself (unlike
+/// upstream's exclusive `ROW::MeasureRight`), hence the `+ 1`.
+fn row_content_limit(row: &Row) -> i32 {
+    if row.is_wrap() {
+        row.width()
+    } else if row.is_all_spaces() {
+        0
+    } else {
+        row.measure_right() + 1
+    }
+}
+
+/// Rewraps logical lines at `width`.
+///
+/// Returns the new rows and the cursor's `(row, column)` within them. A row is
+/// marked wrapped only when the next cell starts a new row; the last row of a
+/// logical line is an explicit line ending and is left unwrapped.
+fn rewrap_lines(lines: &[LogicalLine], width: i32) -> (Vec<Row>, Option<(i32, i32)>) {
+    let width_usize = width as usize;
+    let mut rows = Vec::new();
+    let mut cursor = None;
+
+    for line in lines {
+        let mut cells: Vec<OutputCell> = Vec::with_capacity(width_usize);
+        for (offset, cell) in line.cells.iter().enumerate() {
+            if cells.len() == width_usize {
+                rows.push(Row::from_cells(width, std::mem::take(&mut cells), true));
+            }
+            if line.cursor_offset == Some(offset) {
+                cursor = Some((rows.len() as i32, cells.len() as i32));
+            }
+            cells.push(cell.clone());
+        }
+        if line.cursor_offset == Some(line.cells.len()) {
+            cursor = Some((rows.len() as i32, cells.len() as i32));
+        }
+        rows.push(Row::from_cells(width, cells, false));
+    }
+
+    (rows, cursor)
+}
+
 impl Default for TextBuffer {
     fn default() -> Self {
         Self::new()
@@ -852,6 +1048,298 @@ mod tests {
         let screen_row = buf.buffer_to_screen_row(DEFAULT_SCROLLBACK_HEIGHT);
         assert_eq!(screen_row, 0);
     }
+
+    fn buffer_with_rows(width: i32, height: i32, rows: &[(&str, bool)], cursor: (i32, i32)) -> TextBuffer {
+        let mut buffer = TextBuffer::with_dimensions(width, height, 0);
+        for (index, (text, wrap)) in rows.iter().enumerate() {
+            let row = buffer
+                .get_row_at_screen_line_mut(index as i32)
+                .expect("row is within the page");
+            row.set_wrap(*wrap);
+            for (column, ch) in text.chars().enumerate() {
+                row.write_char(column as i32, ch, false);
+            }
+        }
+        buffer.cursor_mut().set_position(cursor.0, cursor.1);
+        buffer
+    }
+
+    fn assert_rows(buffer: &TextBuffer, expected: &[(&str, bool)]) {
+        for (index, (expected_text, wrap)) in expected.iter().enumerate() {
+            let row = buffer
+                .get_row_at_screen_line(index as i32)
+                .expect("row is within the page");
+            // Untouched cells hold no character, so pad the row out to its width.
+            let actual = format!("{:<width$}", row.get_text(), width = row.width() as usize);
+            assert_eq!(actual, *expected_text, "row {index} text");
+            assert_eq!(row.is_wrap(), *wrap, "row {index} wrap");
+        }
+    }
+
+    #[test]
+    fn logical_lines_join_wrapped_rows_and_report_the_cursor() {
+        let buffer = buffer_with_rows(
+            4,
+            5,
+            &[("ab  ", true), ("cdef", true), ("g   ", false), ("h   ", false)],
+            (2, 0),
+        );
+
+        let lines = buffer.logical_lines();
+        assert_eq!(lines.len(), 3);
+
+        let first: String = lines[0].cells().iter().map(OutputCell::chars).collect();
+        assert_eq!(first, "ab  cdefg");
+        assert_eq!(lines[0].cursor_offset(), Some(8));
+
+        let second: String = lines[1].cells().iter().map(OutputCell::chars).collect();
+        assert_eq!(second, "h");
+        assert_eq!(lines[1].cursor_offset(), None);
+
+        assert!(lines[2].is_blank());
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "No reflow required".
+    #[test]
+    fn reflow_keeps_explicit_lines_when_the_width_changes() {
+        let mut buffer = buffer_with_rows(
+            6,
+            5,
+            &[
+                ("AB    ", false),
+                ("$     ", false),
+                ("CD    ", false),
+                ("EFG   ", false),
+            ],
+            (1, 0),
+        );
+
+        buffer.resize(5, 5);
+        assert_eq!(buffer.cursor().position(), (1, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("AB   ", false),
+                ("$    ", false),
+                ("CD   ", false),
+                ("EFG  ", false),
+                ("     ", false),
+            ],
+        );
+
+        buffer.resize(4, 5);
+        assert_eq!(buffer.cursor().position(), (1, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("AB  ", false),
+                ("$   ", false),
+                ("CD  ", false),
+                ("EFG ", false),
+                ("    ", false),
+            ],
+        );
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "SBCS, cursor remains in
+    // buffer, no circling, no original wrap".
+    #[test]
+    fn reflow_wraps_a_long_row_and_restores_it_when_widened() {
+        let mut buffer = buffer_with_rows(6, 5, &[("ABCDEF", false), ("$     ", false)], (1, 0));
+
+        buffer.resize(5, 5);
+        assert_eq!(buffer.cursor().position(), (2, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDE", true),
+                ("F    ", false),
+                ("$    ", false),
+                ("     ", false),
+                ("     ", false),
+            ],
+        );
+
+        buffer.resize(6, 5);
+        assert_eq!(buffer.cursor().position(), (1, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDEF", false),
+                ("$     ", false),
+                ("      ", false),
+                ("      ", false),
+                ("      ", false),
+            ],
+        );
+
+        buffer.resize(7, 5);
+        assert_eq!(buffer.cursor().position(), (1, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDEF ", false),
+                ("$      ", false),
+                ("       ", false),
+                ("       ", false),
+                ("       ", false),
+            ],
+        );
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "SBCS, cursor remains in
+    // buffer, no circling, with original wrap".
+    #[test]
+    fn reflow_maps_the_cursor_by_its_place_in_the_logical_line() {
+        let mut buffer = buffer_with_rows(6, 5, &[("ABCDEF", true), ("G$    ", false)], (1, 1));
+
+        buffer.resize(5, 5);
+        assert_eq!(buffer.cursor().position(), (1, 2));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDE", true),
+                ("FG$  ", false),
+                ("     ", false),
+                ("     ", false),
+                ("     ", false),
+            ],
+        );
+
+        buffer.resize(6, 5);
+        assert_eq!(buffer.cursor().position(), (1, 1));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDEF", true),
+                ("G$    ", false),
+                ("      ", false),
+                ("      ", false),
+                ("      ", false),
+            ],
+        );
+
+        buffer.resize(7, 5);
+        assert_eq!(buffer.cursor().position(), (1, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDEFG", true),
+                ("$      ", false),
+                ("       ", false),
+                ("       ", false),
+                ("       ", false),
+            ],
+        );
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "SBCS line padded with
+    // spaces (to wrap)": whitespace inside a wrapped line is content.
+    #[test]
+    fn reflow_keeps_whitespace_inside_a_wrapped_line() {
+        let mut buffer = buffer_with_rows(
+            6,
+            5,
+            &[("AB    ", true), ("$     ", true), ("CD    ", false), ("EFG   ", false)],
+            (1, 0),
+        );
+
+        buffer.resize(7, 5);
+        assert_eq!(buffer.cursor().position(), (0, 6));
+        assert_rows(
+            &buffer,
+            &[
+                ("AB    $", true),
+                ("     CD", false),
+                ("EFG    ", false),
+                ("       ", false),
+                ("       ", false),
+            ],
+        );
+
+        buffer.resize(8, 5);
+        assert_eq!(buffer.cursor().position(), (0, 6));
+        assert_rows(
+            &buffer,
+            &[
+                ("AB    $ ", true),
+                ("    CD  ", false),
+                ("EFG     ", false),
+                ("        ", false),
+                ("        ", false),
+            ],
+        );
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "SBCS, cursor off rightmost
+    // char in non-wrapped line".
+    #[test]
+    fn reflow_carries_a_cursor_that_sits_past_the_text() {
+        let mut buffer = buffer_with_rows(6, 5, &[("ABCDEF", false), ("$     ", false)], (1, 1));
+
+        buffer.resize(5, 5);
+        assert_eq!(buffer.cursor().position(), (2, 1));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDE", true),
+                ("F    ", false),
+                ("$    ", false),
+                ("     ", false),
+                ("     ", false),
+            ],
+        );
+    }
+
+    // Ported from `ut_textbuffer/ReflowTests.cpp`: "SBCS, cursor off in space to
+    // far right of text (end of buffer content)".
+    #[test]
+    fn reflow_pads_the_cursor_row_so_widening_restores_the_cursor() {
+        let mut buffer = buffer_with_rows(6, 5, &[("ABCDEF", false), ("$     ", false)], (1, 5));
+
+        buffer.resize(5, 5);
+        assert_eq!(buffer.cursor().position(), (3, 0));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDE", true),
+                ("F    ", false),
+                ("$    ", true),
+                ("     ", false),
+                ("     ", false),
+            ],
+        );
+
+        buffer.resize(6, 5);
+        assert_eq!(buffer.cursor().position(), (1, 5));
+        assert_rows(
+            &buffer,
+            &[
+                ("ABCDEF", false),
+                ("$     ", false),
+                ("      ", false),
+                ("      ", false),
+                ("      ", false),
+            ],
+        );
+    }
+
+    #[test]
+    fn reflow_rewraps_across_the_scrollback_boundary() {
+        let mut buffer = TextBuffer::with_dimensions(4, 2, 2);
+        write_text_at(&mut buffer, 0, 0, "abcd");
+        write_text_at(&mut buffer, 1, 0, "efgh");
+        buffer.scroll_region_up(0, 1);
+        assert_eq!(buffer.scrollback_row_text(0).unwrap(), "abcd");
+
+        buffer.resize(2, 2);
+
+        assert_eq!(buffer.scrollback_len(), 2);
+        assert_eq!(buffer.scrollback_row_text(0).unwrap(), "ab");
+        assert_eq!(buffer.scrollback_row_text(1).unwrap(), "cd");
+        assert_rows(&buffer, &[("ef", true), ("gh", false)]);
+        assert_eq!(buffer.cursor().position(), (0, 0));
+    }
 }
 
 #[cfg(test)]
@@ -909,6 +1397,29 @@ mod proptests {
                 let buffer_row = buf.screen_to_buffer_row(screen_row);
                 let back = buf.buffer_to_screen_row(buffer_row);
                 prop_assert_eq!(back, screen_row);
+            }
+        }
+
+        #[test]
+        fn test_resize_keeps_the_cursor_and_rows_in_bounds(
+            width in 2i32..120i32,
+            height in 1i32..60i32,
+            scrollback in 0i32..50i32,
+            new_width in 1i32..120i32,
+            new_height in 1i32..60i32,
+        ) {
+            let mut buf = TextBuffer::with_dimensions(width, height, scrollback);
+            buf.write_string("hi");
+            buf.resize(new_width, new_height);
+
+            prop_assert_eq!(buf.screen_width(), new_width);
+            prop_assert_eq!(buf.screen_height(), new_height);
+            let (row, column) = buf.cursor().position();
+            prop_assert!((0..new_height).contains(&row));
+            prop_assert!((0..new_width).contains(&column));
+            for line in 0..new_height {
+                let row = buf.get_row_at_screen_line(line).expect("screen row");
+                prop_assert_eq!(row.width(), new_width);
             }
         }
     }

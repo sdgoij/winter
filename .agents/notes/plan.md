@@ -11,12 +11,12 @@ Verified by running the gate, not by reading the previous status:
 |---|---|---|---|
 | `utils` | ~4.5k | 203 + 1 ignored | Complete for Phase 1 |
 | `types` | ~2.0k | 79 | Complete for Phase 1; owns `TextAttribute`, the VT vocabulary, the charset tables and `SgrStack` |
-| `buffer` | ~5.0k | 181 | Phase 2 partial — scrollback stored, no `resize`/`reflow` |
+| `buffer` | ~5.5k | 190 | Phase 2 — scrollback stored, `logical_lines` and `resize` (reflow) landed |
 | `vt` | ~2.3k | 57 | Phase 3 partial — no conformance corpus, no fuzz target |
-| `adapter` | ~7.4k | 101 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, mode, report, save-restore and tab handlers ported |
+| `adapter` | ~7.5k | 102 | Phase 4 state and interfaces; print, SGR, cursor, margin, line, erase, mode (incl. DECCOLM), report, save-restore and tab handlers ported |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-621 tests, doc tests. Phases 5–14 are not started.
+631 tests, doc tests. Phases 5–14 are not started.
 
 A status that the code has outgrown is a bug in this document. When a milestone
 changes, change its row in the same commit.
@@ -29,7 +29,7 @@ settled.
 
 **Open.**
 
-1. **Most `ITermDispatch` families have no handler.** Ported so far: printing
+1. **Several `ITermDispatch` families have no handler.** Ported so far: printing
    (`print`, `print_string`, via `_WriteToBuffer` with delayed EOL wrap, insert
    mode and margin-clipped wrapping), graphics rendition (`set_graphics_rendition`
    from `adaptDispatchGraphics.cpp`: 16/256/RGB colours, extended underline
@@ -38,26 +38,32 @@ settled.
    positioning (CUU, CUD, CUF, CUB, CNL, CPL, CHA, VPA, HPR, VPR, CUP/HVP) and
    the scrolling margins (DECSTBM, DECSLRM behind DECLRMM), the line controls
    (CR, LF/IND/NEL with LNM, RI, DECBI, DECFI), and erase (ED, EL, ECH, DECSED,
-   DECSEL, with `_GetEraseAttributes` and DECECM), and modes (DECSET, DECRST,
-   DECRQM through a decoded ModeParams table). Everything else falls through
-   to the trait default, which `AdaptDispatch::unhandled` records; the ratchet
-   test in `adapt_dispatch.rs` names the ported set and must grow with each
-   family. Next in dependency order: modes, then device reports.
+   DECSEL, with `_GetEraseAttributes` and DECECM), modes (DECSET, DECRST,
+   DECRQM through a decoded ModeParams table, with DECCOLM resizing the page),
+   device reports (DSR/CPR/DECXCPR/DA1/DA2/DA3/VT52/DECREQTPARM), cursor
+   save/restore (DECSC/DECRC), tab stops, and charset designation and shifts.
+   Still ported nowhere: rectangular operations, hyperlinks and OSC strings,
+   sixel/DCS, DRCS, macros, presentation state, and window manipulation.
+   Everything else falls through to the trait default, which
+   `AdaptDispatch::unhandled` records; the ratchet test in `adapt_dispatch.rs`
+   names the ported set and must grow with each family.
 
-2. **`buffer` has no `resize`/`reflow`.** The plan calls reflow a Phase 2
-   deliverable and `TextBuffer` has no method for it. This is the most expensive
-   item to defer: once the renderer and the host both believe the buffer is
-   fixed-width, a reflow rewrite touches all three.
-
-   ```sh
-   grep -rn 'fn resize\|fn reflow' crates/buffer/src/   # must not be empty
-   ```
-
-3. **`adapter/src/main.rs` is `println!("Hello, world!")`.** It makes `adapter`
+2. **`adapter/src/main.rs` is `println!("Hello, world!")`.** It makes `adapter`
    a binary as well as a library for no reason. Delete it, or replace it with a
    real conformance runner.
 
 **Settled.**
+
+- **`buffer` has `resize`/`reflow`.** `TextBuffer::logical_lines` joins rows the
+  wrap flag says belong together (across the scrollback boundary) and
+  `TextBuffer::resize` rewraps them, re-derives the wrap flags, moves overflow
+  into the scrollback, and remaps the cursor by its offset in the line.
+  `DECCOLM` now calls it behind the `ALLOW_DECCOLM` (XTERM mode 40) gate. The
+  upstream `ut_textbuffer` reflow cases for SBCS text are ported; the DBCS and
+  line-rendition cases are not, because this buffer stores one cell per column
+  and never sets a line rendition. A cursor whose line is pushed entirely into
+  the scrollback is clamped to the top visible row rather than stopping the
+  copy early as upstream's circular buffer does.
 
 - The upstream source was not present when the cleanup started; it now is, at
   `.design/refs/terminal`, and the handler port is running against it (ADR 004).

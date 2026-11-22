@@ -4,14 +4,16 @@
 //!
 //! The struct holds the state the dispatch handlers share: modes, margins, the
 //! page manager, the terminal output, the sixel parser, and the SGR stack. The
-//! `ITermDispatch` handlers that mutate a buffer through this state are not
-//! ported yet; see `plan.md` §"Pre-Phase-5 cleanup" item 2.
+//! ported `ITermDispatch` families are listed in `plan.md` §"Pre-Phase-5
+//! cleanup"; everything else falls through to the trait default, which
+//! `AdaptDispatch::unhandled` records.
 
 use crate::dispatch_types::*;
 use crate::sixel_parser::SIXEL_DEFAULT_CONFORMANCE;
 use crate::term_dispatch::{ITermDispatch, OptionalFeature};
 use crate::{FontBuffer, MacroBuffer, PageManager, SixelParser, TerminalOutput};
 use types::TextAttribute;
+use utils::inclusive_rect::InclusiveRect;
 
 /// Cursor state for save/restore operations.
 #[derive(Debug, Clone)]
@@ -380,6 +382,50 @@ impl AdaptDispatch {
         self.modes.contains(flag)
     }
 
+    /// Ported from `_SetColumnMode` (DECCOLM).
+    ///
+    /// The mode is inert until XTERM mode 40 (`ALLOW_DECCOLM`) allows it. A
+    /// permitted change resizes the visible page to 132 or 80 columns, clears
+    /// the screen, homes the cursor, and resets origin mode and both margin
+    /// pairs.
+    fn set_column_mode(&mut self, enable: bool) {
+        if !self.modes.contains(ModeFlags::ALLOW_DECCOLM) {
+            return;
+        }
+
+        const DECCOLM_SET_COLUMNS: VTInt = 132;
+        const DECCOLM_RESET_COLUMNS: VTInt = 80;
+
+        let width = if enable {
+            DECCOLM_SET_COLUMNS
+        } else {
+            DECCOLM_RESET_COLUMNS
+        };
+
+        let page = self.page_manager.visible_page();
+        let buffer = page.buffer();
+        let height = {
+            let buffer = buffer.read().unwrap_or_else(|e| e.into_inner());
+            buffer.screen_height()
+        };
+        {
+            let mut buffer = buffer.write().unwrap_or_else(|e| e.into_inner());
+            buffer.resize(width, height);
+        }
+        page.set_viewport(InclusiveRect::new(0, 0, width - 1, height - 1));
+
+        self.set_mode_flag(ModeFlags::DECCOLM, enable);
+        self.set_mode_flag(ModeFlags::DECOM, false);
+        self.set_mode_flag(ModeFlags::DECLRMM, false);
+        self.scroll_left_margin = 0;
+        self.scroll_right_margin = 0;
+
+        ITermDispatch::cursor_position(self, 1, 1);
+        ITermDispatch::erase_in_display(self, EraseType::All);
+        self.set_vertical_scrolling_margins(0, 0, false);
+        self.set_horizontal_scrolling_margins(0, 0, false);
+    }
+
     /// Ported from `_ModeParamsHelper`: applies a mode parameter.
     ///
     /// Input-layer modes (keypad, mouse, focus) are recorded here and consumed by
@@ -409,7 +455,7 @@ impl AdaptDispatch {
             DecSdm => self.set_mode_flag(ModeFlags::SIXEL_DISPLAY, enable),
             DecEcm => self.set_mode_flag(ModeFlags::DECECM, enable),
             BracketedPasteMode => self.set_mode_flag(ModeFlags::BRACKETED_PASTE, enable),
-            DecColm => self.set_mode_flag(ModeFlags::DECCOLM, enable),
+            DecColm => self.set_column_mode(enable),
             DecOm => {
                 self.set_mode_flag(ModeFlags::DECOM, enable);
                 // Setting or resetting origin mode homes the cursor.
@@ -1912,6 +1958,35 @@ mod tests {
         assert_eq!(dispatch.page_manager_mut().active_page().number(), 1);
     }
 
+    // Ported from `_SetColumnMode` (DECCOLM): the mode is inert until XTERM
+    // mode 40 allows it; a permitted change resizes the page, clears it, homes
+    // the cursor and resets origin mode and the margins.
+    #[test]
+    fn decolm_only_resizes_once_it_is_allowed() {
+        let mut dispatch = AdaptDispatch::new();
+        dispatch.print_string("keep");
+        dispatch.cursor_position(5, 5);
+        dispatch.set_top_bottom_scrolling_margins(2, 20);
+
+        dispatch.set_mode(&ModeParams::DecColm);
+        assert_eq!(page_size(&mut dispatch), (80, 24));
+        assert!(!dispatch.mode_is_set(ModeFlags::DECCOLM));
+
+        dispatch.set_mode(&ModeParams::EnableDecColmSupport);
+        dispatch.set_mode(&ModeParams::DecColm);
+
+        assert_eq!(page_size(&mut dispatch), (132, 24));
+        assert_eq!(dispatch.page_manager_mut().visible_page().width(), 132);
+        assert!(dispatch.mode_is_set(ModeFlags::DECCOLM));
+        assert_eq!(dispatch.active_cursor_position(), (0, 0));
+        assert_eq!(dispatch.vertical_margins(), (0, 0));
+        assert_eq!(cell_text(&mut dispatch, 0, 0), " ");
+
+        dispatch.reset_mode(&ModeParams::DecColm);
+        assert_eq!(page_size(&mut dispatch), (80, 24));
+        assert!(!dispatch.mode_is_set(ModeFlags::DECCOLM));
+    }
+
     #[test]
     fn decrqm_reports_unsupported_for_unmodelled_modes() {
         let mut dispatch = AdaptDispatch::new();
@@ -2016,6 +2091,12 @@ mod tests {
         let buffer = dispatch.page_manager_mut().active_page().buffer();
         let buffer = buffer.read().unwrap();
         buffer.get_text_data_at(row, column).unwrap_or_default().to_string()
+    }
+
+    fn page_size(dispatch: &mut AdaptDispatch) -> (i32, i32) {
+        let buffer = dispatch.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap();
+        (buffer.screen_width(), buffer.screen_height())
     }
 
     #[test]
