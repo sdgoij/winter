@@ -5,9 +5,11 @@
 //! cancellation to the caller.
 //!
 //! The frame follows upstream's order: start, default brushes, scroll, frame
-//! info, background, buffer text, selection, cursor, title, end. Composition
-//! previews, search-hover dashes and the soft-font range are the pieces still
-//! to be wired in the paint path.
+//! info, background, buffer text, selection, cursor, title, end, present.
+//! Composition previews, search-hover dashes and the soft-font range are the
+//! pieces still to be wired in the paint path.
+
+use std::sync::atomic::AtomicBool;
 
 use buffer::{OutputCell, TextBufferCellIterator};
 use types::color_table::SELECTION_BACKGROUND;
@@ -170,9 +172,10 @@ fn paint_frame_for_engine(
 
     let result = paint_commands(engine, data, settings, hovered_hyperlink_id);
 
-    // Upstream's scope guard always calls EndPaint, even after a failure.
+    // Upstream's scope guard always calls EndPaint, even after a failure; the
+    // frame is handed to the backend only when painting succeeded.
     let end = engine.end_paint();
-    result.and(end)
+    result.and(end).and_then(|()| engine.present(&AtomicBool::new(false)))
 }
 
 fn paint_commands(

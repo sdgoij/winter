@@ -41,6 +41,7 @@ pub mod term_connection;
 pub mod term_control;
 pub mod term_events;
 pub mod term_settings;
+pub mod terminal_render;
 pub mod terminal_widget;
 pub mod view;
 pub mod visual_bell;

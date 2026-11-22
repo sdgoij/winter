@@ -227,6 +227,31 @@ impl Control {
         }
     }
 
+    /// Copies the visible rows, history included, into `target`.
+    ///
+    /// The renderer needs a `TextBuffer`, but the terminal's lives behind a
+    /// lock. Copying the screen-sized view into the shell's own buffer lets a
+    /// frame borrow it without holding the lock (ADR 040).
+    pub fn copy_visible_into(&mut self, target: &mut buffer::TextBuffer, scroll: i32) {
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        let Ok(buffer) = buffer.read() else {
+            return;
+        };
+
+        let total = buffer.document_height();
+        let height = buffer.screen_height();
+        let scroll = scroll.clamp(0, (total - height).max(0));
+        let first = (total - height - scroll).max(0);
+
+        for row in 0..height {
+            let source = buffer.get_row_by_document_line(first + row);
+            let destination = target.get_row_at_screen_line_mut(row);
+            if let (Some(source), Some(destination)) = (source, destination) {
+                destination.copy_from(source);
+            }
+        }
+    }
+
     /// The selected cells, using the buffer's copy path.
     pub fn selection_text(&mut self, selection: &Selection) -> Option<String> {
         let buffer = self.terminal.page_manager_mut().active_page().buffer();

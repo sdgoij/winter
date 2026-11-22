@@ -152,6 +152,14 @@ impl RenderSettings {
         self.color_table.set_alias_index(alias, index);
     }
 
+    /// Replaces the colours attributes resolve against.
+    ///
+    /// The shell owns the table (a scheme is applied to the adapter's copy), so
+    /// it hands the renderer the same colours each frame.
+    pub fn set_color_table(&mut self, table: ColorTable) {
+        self.color_table = table;
+    }
+
     /// Returns the foreground and background `COLORREF`s for an attribute.
     pub fn get_attribute_colors(&self, attr: &TextAttribute) -> (u32, u32) {
         let foreground_text = attr.get_foreground();
