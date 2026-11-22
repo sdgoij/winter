@@ -6,7 +6,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use server::pty::{PtyCommand, PtySize};
@@ -23,7 +23,8 @@ use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGRO
 use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
-use crate::{blink::Blink, grid, notifications, scrollbar, session::Session, tabs::Tabs, view::View};
+use crate::visual_bell::VisualBell;
+use crate::{blink::Blink, grid, notifications, scrollbar, session::Session, sound::Sound, tabs::Tabs, view::View};
 
 /// The colour used when the palette has no default background.
 const FALLBACK_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(12, 12, 12);
@@ -247,6 +248,18 @@ impl FindBar {
     }
 }
 
+/// What every pane paints with: the cell, the faces, and the moment.
+///
+/// Bundled rather than passed one by one, because a pane, its tab and the
+/// window all need the same four and the compiler stops counting at seven.
+#[derive(Debug, Clone, Copy)]
+struct GridPaint {
+    cell: egui::Vec2,
+    font_size: f32,
+    faces: Faces,
+    now: Instant,
+}
+
 /// One pane: a shell, its parser and its viewport.
 struct Pane {
     id: PaneId,
@@ -257,6 +270,8 @@ struct Pane {
     find: FindBar,
     /// The scrollbar's drag state.
     scrollbar: scrollbar::Scrollbar,
+    /// The flash a bell started, until it fades.
+    bell: VisualBell,
     /// Desktop notifications the program asked for, until the window shows them.
     notifications: Vec<(String, String)>,
     /// The title the shell set with OSC 0/2.
@@ -294,6 +309,7 @@ impl Pane {
             view: View::new(),
             find: FindBar::default(),
             scrollbar: scrollbar::Scrollbar::default(),
+            bell: VisualBell::default(),
             notifications: Vec::new(),
             osc_title: None,
             size: (i32::from(size.cols), i32::from(size.rows)),
@@ -321,9 +337,28 @@ impl Pane {
         }
     }
 
-    /// Takes the bell count so the window can ask for attention once.
-    fn take_bells(&mut self) -> usize {
-        self.terminal.take_bell_requests()
+    /// Drains the terminal's bells, starting the pane's flash.
+    ///
+    /// The count feeds the window's attention request. `true` means this call
+    /// started the flash — and so the tone — because a flashing pane ignores
+    /// further bells until it ends.
+    fn take_bells(&mut self, now: Instant) -> (usize, bool) {
+        let bells = self.terminal.take_bell_requests();
+        let started = bells > 0 && self.bell.flash(now);
+        (bells, started)
+    }
+
+    /// Takes the DECPS notes the program asked for.
+    fn take_sounds(&mut self) -> Vec<audio::Note> {
+        self.terminal
+            .take_sound_requests()
+            .into_iter()
+            .map(|note| audio::Note {
+                number: note.note,
+                velocity: note.velocity,
+                duration: Duration::from_micros(u64::from(note.duration_micros)),
+            })
+            .collect()
     }
 
     /// Takes the desktop notifications the program asked for.
@@ -875,15 +910,13 @@ impl Pane {
         }
     }
 
-    fn paint(
-        &mut self,
-        ui: &egui::Ui,
-        area: egui::Rect,
-        cell: egui::Vec2,
-        cursor_on: bool,
-        font_size: f32,
-        faces: Faces,
-    ) {
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cursor_on: bool, paint: GridPaint) {
+        let GridPaint {
+            cell,
+            font_size,
+            faces,
+            now,
+        } = paint;
         let screen = self.snapshot();
         let painter = ui.painter().with_clip_rect(area);
 
@@ -1045,6 +1078,13 @@ impl Pane {
         if screen.document_height > screen.height {
             self.paint_scrollbar(&painter, area, &screen);
         }
+
+        // The bell's flash covers the pane, text and all, and is drawn last so
+        // nothing paints over it.
+        if let Some(alpha) = self.bell.alpha(now) {
+            let value = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+            painter.rect_filled(area, 0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, value));
+        }
     }
 }
 
@@ -1163,8 +1203,23 @@ impl Tab {
         }
     }
 
-    fn take_bells(&mut self) -> usize {
-        self.panes.iter_mut().map(Pane::take_bells).sum()
+    fn take_bells(&mut self, now: Instant) -> (usize, bool) {
+        self.panes
+            .iter_mut()
+            .map(|pane| pane.take_bells(now))
+            .fold((0, false), |(count, started), (bells, flash)| {
+                (count + bells, started || flash)
+            })
+    }
+
+    /// Takes the DECPS notes every pane was asked to play.
+    fn take_sounds(&mut self) -> Vec<audio::Note> {
+        self.panes.iter_mut().flat_map(|pane| pane.take_sounds()).collect()
+    }
+
+    /// When a pane's bell flash needs its next frame.
+    fn bell_repaint(&self, now: Instant) -> Option<Duration> {
+        self.panes.iter().filter_map(|pane| pane.bell.next_repaint(now)).min()
     }
 
     /// Takes the desktop notifications every pane received.
@@ -1267,22 +1322,14 @@ impl Tab {
         self.focused_pane_mut().map(Pane::snapshot).unwrap_or_default()
     }
 
-    fn paint(
-        &mut self,
-        ui: &egui::Ui,
-        area: egui::Rect,
-        cell: egui::Vec2,
-        cursor_on: bool,
-        font_size: f32,
-        faces: Faces,
-    ) {
+    fn paint(&mut self, ui: &egui::Ui, area: egui::Rect, cursor_on: bool, paint: GridPaint) {
         let focused = self.focused;
         let multiple = self.panes.len() > 1;
 
         for (id, fraction) in self.layout.rects() {
             let rect = fraction_rect(fraction, area);
             if let Some(pane) = self.panes.iter_mut().find(|pane| pane.id == id) {
-                pane.paint(ui, rect, cell, cursor_on && id == focused, font_size, faces);
+                pane.paint(ui, rect, cursor_on && id == focused, paint);
             }
 
             // With more than one pane the borders double as the focus cue.
@@ -1652,6 +1699,8 @@ struct App {
     cursor_on: bool,
     /// The command palette's state.
     palette: Palette,
+    /// The tones the emulation asked to play, and the thread playing them.
+    sound: Sound,
     /// The title last sent to the window.
     window_title: Option<String>,
 }
@@ -1741,6 +1790,7 @@ impl App {
             blink: Blink::new(Instant::now()),
             cursor_on: true,
             palette: Palette::default(),
+            sound: Sound::new(),
             window_title: None,
         })
     }
@@ -2119,16 +2169,35 @@ impl eframe::App for App {
             }
         }
 
+        let now = Instant::now();
         let mut bells = 0;
+        let mut beep = false;
         for index in 0..self.tabs.len() {
             if let Some(tab) = self.tabs.get_mut(index) {
-                bells += tab.take_bells();
+                let (count, started) = tab.take_bells(now);
+                bells += count;
+                beep |= started;
             }
         }
         if bells > 0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
             ));
+        }
+        // One tone per flash rather than per bell: a program that repeats BEL
+        // gets the console host's single beep, not a burst.
+        if beep {
+            self.sound.play(vec![audio::beep::tone()]);
+        }
+
+        let mut sounds = Vec::new();
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                sounds.extend(tab.take_sounds());
+            }
+        }
+        if !sounds.is_empty() {
+            self.sound.play(audio::midi::tones(&sounds));
         }
 
         let mut messages = Vec::new();
@@ -2219,7 +2288,20 @@ impl eframe::App for App {
         if let Some(delay) = self.blink.next_toggle(screen.cursor_blinking, focused, now) {
             ctx.request_repaint_after(delay);
         }
-        tab.paint(ui, area, cell, self.cursor_on, self.font_size, self.faces);
+        tab.paint(
+            ui,
+            area,
+            self.cursor_on,
+            GridPaint {
+                cell,
+                font_size: self.font_size,
+                faces: self.faces,
+                now,
+            },
+        );
+        if let Some(delay) = tab.bell_repaint(now) {
+            ctx.request_repaint_after(delay);
+        }
         tab.find_bar(&ctx);
 
         if self.settings_open {

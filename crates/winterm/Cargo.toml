@@ -8,6 +8,7 @@ publish.workspace = true
 description = "The winterm terminal application"
 
 [dependencies]
+audio.workspace = true
 buffer.workspace = true
 eframe.workspace = true
 host.workspace = true
@@ -19,6 +20,9 @@ types.workspace = true
 utils.workspace = true
 arboard.workspace = true
 notify-rust.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [lints]
 workspace = true

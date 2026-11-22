@@ -157,12 +157,14 @@ tests pass.
   `utils → types → {buffer, vt} → adapter → term`. An edge that points left is a
   design error, not a `Cargo.toml` edit. `renderer` sits on `utils`, `types` and
   `buffer`; `host` sits on `types`, `vt` and `adapter`, because it consumes the
-  parser and the console interfaces; `server` sits on `host`.
+  parser and the console interfaces; `server` sits on `host`; `audio` sits on no
+  workspace crate at all, because it is sound without a device (ADR 033).
 - **One home per type** (ADR 002). A type defined twice is a bug even when both
   copies compile.
 - **`unsafe` is denied workspace-wide.** `utils` opts out at its root because it
-  owns the lock-free primitives, and `server`'s two pty backends carry a
-  module-level `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016).
+  owns the lock-free primitives, `server`'s two pty backends carry a
+  module-level `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016),
+  and `winterm`'s sound sink does the same for `Beep` (ADR 033).
   The two self-referential buffer iterators carry an item-level
   `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe` anywhere is a
   review event.
@@ -239,7 +241,10 @@ colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
 what normalization adjusted (ADR 027), edits everything the file holds —
 font size, defaults, profiles, keybindings and schemes (ADRs 028, 030–032) — and
 previews the document a save would write, with a poll that reloads the file when
-it is saved (ADR 025). The native window backends follow.
+it is saved (ADR 025). Phase 11 has the bell and DECPS: `crates/audio` turns a
+note into a tone with upstream's arithmetic, a bell flashes the pane and rings
+the console host's 800 Hz tone, and a thread plays a DECPS sequence with the
+Windows `Beep` API (ADR 033). The native window backends follow.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and
