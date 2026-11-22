@@ -702,21 +702,19 @@ impl TextBuffer {
         self.scrollback.len() as i32 + self.screen_height
     }
 
-    /// Finds every occurrence of `pattern`, in document order.
+    /// Finds every occurrence of `needle`, in document order.
     ///
-    /// The search is per row: a row ends where [`Row::measure_right`] says, so
-    /// padding does not match, and a phrase split by an autowrap is two rows.
-    /// ASCII letters match ignoring case; other scripts compare exactly.
-    pub fn find_text(&self, pattern: &str) -> Vec<TextMatch> {
-        let needle: Vec<char> = pattern.chars().collect();
-        if needle.is_empty() {
-            return Vec::new();
-        }
-
-        self.document_rows()
+    /// Rows are joined the way they are read: a row that was not wrapped ends
+    /// with a line break, so a match can run through an autowrap but not through
+    /// a real line break. A whitespace-only needle finds nothing, because it
+    /// would match the buffer's unwritten cells; matching ignores case.
+    pub fn find_text(&self, needle: &str) -> Vec<TextMatch> {
+        let rows: Vec<(i32, &Row)> = self
+            .document_rows()
             .enumerate()
-            .flat_map(|(index, row)| crate::search::find_in_row(row, &needle, index as i32))
-            .collect()
+            .map(|(index, row)| (index as i32, row))
+            .collect();
+        crate::search::find_in_rows(&rows, needle)
     }
 
     /// Returns the row at `line` in document order: history first, then the
@@ -1650,6 +1648,17 @@ mod tests {
         }
     }
 
+    /// Lays `text` out at the columns its characters occupy, wide ones included.
+    fn write_columns_at(buffer: &mut TextBuffer, row: i32, text: &str) {
+        let mut column = 0;
+        for character in text.chars() {
+            if let Some(buffer_row) = buffer.get_row_at_screen_line_mut(row) {
+                buffer_row.write_char(column, character, false);
+            }
+            column += i32::from(types::codepoint_width(character as u32));
+        }
+    }
+
     fn text_at(buffer: &TextBuffer, row: i32, column: i32) -> String {
         buffer.get_text_data_at(row, column).unwrap_or_default().to_string()
     }
@@ -1868,19 +1877,21 @@ mod tests {
             buffer.find_text("one"),
             vec![
                 TextMatch {
-                    row: 0,
-                    column: 0,
-                    cells: 3
+                    start_row: 0,
+                    start_column: 0,
+                    end_row: 0,
+                    end_column: 3,
                 },
                 TextMatch {
-                    row: 1,
-                    column: 4,
-                    cells: 3
+                    start_row: 1,
+                    start_column: 4,
+                    end_row: 1,
+                    end_column: 7,
                 },
             ]
         );
 
-        // The padding past a row's text is not content.
+        // A whitespace-only needle would match unwritten cells.
         assert!(buffer.find_text("   ").is_empty());
     }
 
@@ -1896,17 +1907,90 @@ mod tests {
         assert_eq!(
             buffer.find_text("old"),
             vec![TextMatch {
-                row: 0,
-                column: 0,
-                cells: 3
+                start_row: 0,
+                start_column: 0,
+                end_row: 0,
+                end_column: 3,
             }]
         );
         assert_eq!(
             buffer.find_text("new"),
             vec![TextMatch {
-                row: 2,
-                column: 0,
-                cells: 3
+                start_row: 2,
+                start_column: 0,
+                end_row: 2,
+                end_column: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn find_text_matches_through_an_autowrap() {
+        let mut buffer = TextBuffer::with_dimensions(5, 2, 0);
+        write_text_at(&mut buffer, 0, 0, "abcde");
+        buffer.get_row_at_screen_line_mut(0).expect("a row").force_wrap(1);
+        write_text_at(&mut buffer, 1, 0, "fgh");
+
+        assert_eq!(
+            buffer.find_text("def"),
+            vec![TextMatch {
+                start_row: 0,
+                start_column: 3,
+                end_row: 1,
+                end_column: 1,
+            }]
+        );
+
+        // The same text without the wrap flag has a line break in the middle.
+        let mut split = TextBuffer::with_dimensions(5, 2, 0);
+        write_text_at(&mut split, 0, 0, "abcde");
+        write_text_at(&mut split, 1, 0, "fgh");
+        assert!(split.find_text("def").is_empty());
+    }
+
+    #[test]
+    fn find_text_matches_the_upstream_unicode_sample() {
+        // Ported from `UTextAdapterTests::Unicode`.
+        let mut buffer = TextBuffer::with_dimensions(24, 1, 0);
+        write_columns_at(
+            &mut buffer,
+            0,
+            "abc \u{1d4b6}\u{1d4b7}\u{1d4b8} abc \u{30cd}\u{30b3}\u{3061}\u{3083}\u{3093}",
+        );
+
+        assert_eq!(
+            buffer.find_text("abc"),
+            vec![
+                TextMatch {
+                    start_row: 0,
+                    start_column: 0,
+                    end_row: 0,
+                    end_column: 3,
+                },
+                TextMatch {
+                    start_row: 0,
+                    start_column: 8,
+                    end_row: 0,
+                    end_column: 11,
+                },
+            ]
+        );
+        assert_eq!(
+            buffer.find_text("\u{1d4b7}"),
+            vec![TextMatch {
+                start_row: 0,
+                start_column: 5,
+                end_row: 0,
+                end_column: 6,
+            }]
+        );
+        assert_eq!(
+            buffer.find_text("\u{30cd}\u{30b3}"),
+            vec![TextMatch {
+                start_row: 0,
+                start_column: 12,
+                end_row: 0,
+                end_column: 16,
             }]
         );
     }

@@ -671,7 +671,7 @@ impl Pane {
         let Some(found) = self.find.current.and_then(|index| self.find.matches.get(index)) else {
             return;
         };
-        let (row, height, total) = (found.row, self.size.1, self.find.document_height);
+        let (row, height, total) = (found.start_row, self.size.1, self.find.document_height);
         self.view.scroll_to_row(row, height, total);
     }
 
@@ -828,19 +828,26 @@ impl Pane {
                 .unwrap_or(FALLBACK_SELECTION);
             let dim = egui::Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), 90);
             for (index, found) in self.find.matches.iter().enumerate() {
-                // Matches are in document coordinates, like the selection.
-                let row = found.row - screen.top;
-                if row < 0 || row >= screen.height {
-                    continue;
+                // Matches are in document coordinates, like the selection; one
+                // that runs through an autowrap covers more than one row.
+                let first = (found.start_row - screen.top).max(0);
+                let last = (found.end_row - screen.top).min(screen.height - 1);
+                for screen_row in first..=last {
+                    let Some((column, cells)) = found.row_span(screen.top + screen_row, screen.width) else {
+                        continue;
+                    };
+                    let column = column.clamp(0, (screen.width - 1).max(0));
+                    let cells = cells.min(screen.width - column).max(1);
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(
+                            area.min.x + column as f32 * cell.x,
+                            area.min.y + screen_row as f32 * cell.y,
+                        ),
+                        egui::vec2(cells as f32 * cell.x, cell.y),
+                    );
+                    let color = if self.find.current == Some(index) { fill } else { dim };
+                    painter.rect_filled(rect, 0, color);
                 }
-                let column = found.column.clamp(0, (screen.width - 1).max(0));
-                let cells = found.cells.min(screen.width - column).max(1);
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(area.min.x + column as f32 * cell.x, area.min.y + row as f32 * cell.y),
-                    egui::vec2(cells as f32 * cell.x, cell.y),
-                );
-                let color = if self.find.current == Some(index) { fill } else { dim };
-                painter.rect_filled(rect, 0, color);
             }
         }
 
