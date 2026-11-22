@@ -206,13 +206,15 @@ Phases 1–5 are complete. Phase 6 (the console host) is under way:
 `InputStateMachineEngine.cpp`, the portable halves of `consoleInformation.cpp`
 and `screenInfo.cpp`, `settings.cpp`, `alias.cpp` (with its expansion wired into
 the cooked read), `inputKeyInfo.cpp`, `scrolling.cpp`, `selection.cpp` and
-`selectionInput.cpp` are ported, so the input records have a console, a screen,
-its settings, working aliases, a key description, scroll handling, and a
-selection moved by keys and the mouse. `directio.cpp` is next. The read-data
-family's `IWaitRoutine` completion path, the cooked read's pager, the render
-settings and the window metrics wait for the server, renderer and window
-layers; `outputStream.cpp` has no counterpart (ADR 013). Phases 7–14 are not
-started.
+`selectionInput.cpp` and `utils.cpp` are ported, so the input records have a
+console, a screen, its settings, working aliases, a key description, scroll
+handling, a selection moved by keys and the mouse, and the shared console
+helpers. `directio.cpp` is the `ApiRoutines` surface and waits for the server
+layer with the read-data wait path; `registry.cpp`, `handle.cpp` and
+`tracing.cpp` follow. The read-data family's `IWaitRoutine` completion path,
+the cooked read's pager, the render settings and the window metrics wait for
+the server, renderer and window layers; `outputStream.cpp` has no counterpart
+(ADR 013). Phases 7–14 are not started.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
 settled, not a to-do list. The status table in `plan.md` is the live answer, and

@@ -27,6 +27,7 @@
 //! - [`selection`] — the selection operations that move that state
 //! - [`selection_input`] — the selection's key handling and word navigation
 //! - [`cmdline`] — `IsWordDelim` and `DelimiterClass`, the word delimiter rules
+//! - [`utils`] — window arithmetic, decimal parsing and coordinate helpers
 
 pub mod alias;
 pub mod cmdline;
@@ -42,3 +43,4 @@ pub mod selection;
 pub mod selection_input;
 pub mod selection_state;
 pub mod settings;
+pub mod utils;

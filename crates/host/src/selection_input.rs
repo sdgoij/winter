@@ -131,18 +131,7 @@ impl SelectionState {
         let rectangle = self.selection_rectangle();
 
         // The selection point is the corner opposite the anchor.
-        let mut selection_point = Point::new(
-            if anchor.x == rectangle.left() {
-                rectangle.right()
-            } else {
-                rectangle.left()
-            },
-            if anchor.y == rectangle.top() {
-                rectangle.bottom()
-            } else {
-                rectangle.top()
-            },
-        );
+        let mut selection_point = crate::utils::get_opposite_corner(rectangle, anchor);
 
         let buffer_size = screen.buffer_size();
         let window_height = screen.viewport().height();

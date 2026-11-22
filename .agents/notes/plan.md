@@ -826,9 +826,12 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 Order: `history`, `input_buffer`, `read_data_cooked` (alias expansion now wired
 through `alias`), `input_state_machine_engine`, `console_information`,
-`screen_info`, `settings`, `alias`, `input_key_info`, `scrolling`, `selection`
-and `selection_input` are done. `directio` is next. Each module lands with its
-tests and its declaration in `lib.rs`, as the porting skill requires.
+`screen_info`, `settings`, `alias`, `input_key_info`, `scrolling`, `selection`,
+`selection_input` and `utils` are done. `directio` is the `ApiRoutines` surface
+that needs the server and its codepage/`CHAR_INFO` translation, so it waits for
+Phase 7 with the read-data wait path; `registry`, `handle` and `tracing` follow.
+Each module lands with its tests and its declaration in `lib.rs`, as the
+porting skill requires.
 
 ### Core Console State
 
@@ -958,8 +961,20 @@ tests and its declaration in `lib.rs`, as the porting skill requires.
     menu/focus/ctrl handlers, which need window state. `IsSystemKey` is here as
     a free predicate because selection asks it.
 - [ ] `winterm/crates/host/src/directio.rs` — Direct I/O
+  - Deferred: `directio.cpp` implements the `ApiRoutines` entry points, which
+    need the server, the codepage/`CHAR_INFO` translation and the VT writer —
+    the seam ADR 013 declined to invent. It lands with Phase 7.
 - [ ] `winterm/crates/host/src/registry.rs` — Registry access
-- [ ] `winterm/crates/host/src/utils.rs` — Console utilities
+- [x] `winterm/crates/host/src/utils.rs` — Console utilities
+  - [x] Ported from `utils.cpp`: `CalcWindowSizeX`/`CalcWindowSizeY`,
+    `CalcCursorYOffsetInPixels`, `ConvertStringToDec`, `s_CompareCoords` and
+    `s_GetOppositeCorner`. Selection's inline corner and comparison code now
+    calls these.
+  - [x] **Tests:** inclusive window sizes, the cursor offset, decimal parsing
+    (including the `WORD` wrap), all eight relative positions of the
+    comparison, and every rectangle corner
+  - Not ported: `_LoadString` and `s_LoadStringEx`, which read Win32 string
+    resources through the window layer.
 - [ ] `winterm/crates/host/src/tracing.rs` — Event tracing
 - [x] `winterm/crates/host/src/alias.rs` — Command aliases
   - [x] Ported from `alias.cpp` and `alias.h`: the per-application table with

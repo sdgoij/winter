@@ -198,18 +198,7 @@ impl SelectionState {
         }
 
         let mut start = self.anchor;
-        let mut end = Point {
-            x: if self.anchor.x == self.rectangle.left() {
-                self.rectangle.right()
-            } else {
-                self.rectangle.left()
-            },
-            y: if self.anchor.y == self.rectangle.top() {
-                self.rectangle.bottom()
-            } else {
-                self.rectangle.top()
-            },
-        };
+        let mut end = crate::utils::get_opposite_corner(self.rectangle, self.anchor);
 
         // The bottom-right corner becomes the exclusive end. Line selection
         // compares whole points; block selection compares only columns.
