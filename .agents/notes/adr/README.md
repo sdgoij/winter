@@ -34,3 +34,4 @@ Rules:
 | [003](003-porting-method.md) | Port method: upstream as oracle, one module per C++ file, no stubs | Accepted |
 | [004](004-incremental-dispatch.md) | Port the dispatcher family by family, with explicit `unhandled` defaults | Accepted |
 | [005](005-images-in-the-buffer.md) | Images are buffer content: per-row bands, carried by cell operations | Accepted |
+| [006](006-render-loop-model.md) | The renderer is host-driven; no thread, timers are data | Accepted |
