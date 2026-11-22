@@ -29,9 +29,9 @@ final GUI: native backends come after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer | Complete for Phase 7 (ADRs 015, 016) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winterm`](crates/winterm) | The application: tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022) |
+| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, tabs of splittable panes, pty sessions with their pumps, document snapshots, scroll/selection views, egui shell | Phase 9 in progress (ADRs 018–022, 036) |
 
-1542 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1555 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
@@ -100,7 +100,8 @@ highlighted, Enter and Shift+Enter step through them, and Escape closes it. A
 scrollbar on the right edge shows where the view sits in the history; its thumb
 drags, the track jumps, and the prompts a shell reports with OSC 133 are ticks,
 red when the command failed, that jump to the prompt when clicked. A program's
-OSC 777 becomes a desktop toast.
+OSC 777 becomes a desktop toast. A shell that exits closes its tab, and the
+last tab closes the window (ADR 036).
 
 The bell rings the console host's tone — 800 Hz for 200 ms — and flashes the
 pane. A second BEL while the flash runs is ignored, so a program that repeats it

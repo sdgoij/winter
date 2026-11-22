@@ -146,6 +146,15 @@ impl Pty {
         Ok(())
     }
 
+    /// Returns the client's exit status once it has exited, without blocking.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.reaped = true;
+        }
+        Ok(status)
+    }
+
     /// Returns the client's process id.
     pub fn process_id(&self) -> u32 {
         self.child.id()

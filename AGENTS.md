@@ -224,7 +224,10 @@ layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules). Phase 8 has
 the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
 It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
-paints the buffer through egui on winit and wgpu (ADR 018), with wheel
+paints the buffer through egui on winit and wgpu (ADR 018), as a `Control` over
+a `Connection` trait with the viewport and selection in the widget and an event
+queue for the bell, a notification and an exit — a shell that exits closes its
+tab (ADR 036) — with wheel
 scrollback, mouse selection that reaches into history and scrolls when a drag
 leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC

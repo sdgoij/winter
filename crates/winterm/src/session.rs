@@ -87,6 +87,14 @@ impl Session {
         self.pty.resize(size)
     }
 
+    /// Whether the client has exited, without blocking.
+    ///
+    /// The output stream is not enough on Windows: the pseudoconsole keeps the
+    /// pipe open after the client exits, so the process is the only witness.
+    pub fn exited(&mut self) -> bool {
+        self.pty.try_wait().ok().flatten().is_some()
+    }
+
     /// Waits for the client to exit.
     ///
     /// On Windows the pseudoconsole keeps the output pipe open after the
@@ -268,6 +276,19 @@ mod tests {
     #[cfg(unix)]
     fn shell() -> std::ffi::OsString {
         "/bin/sh".into()
+    }
+
+    #[test]
+    fn a_running_client_has_not_exited() {
+        #[cfg(windows)]
+        let command = PtyCommand::new(shell()).args(["/d", "/c", "pause"]);
+        #[cfg(unix)]
+        let command = PtyCommand::new("/bin/sh").args(["-c", "sleep 5"]);
+
+        let mut session = Session::spawn(&command, PtySize::default()).expect("spawn");
+        assert!(!session.exited(), "the client is still running");
+
+        let _ = session.kill();
     }
 
     #[test]

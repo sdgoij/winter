@@ -17,7 +17,7 @@ use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::System::Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
@@ -148,6 +148,28 @@ impl Pty {
         }
         let _ = self.wait();
         Ok(())
+    }
+
+    /// Returns the client's exit status once it has exited, without blocking.
+    ///
+    /// The pseudoconsole keeps its output pipe open after the client exits, so
+    /// this is the only way to notice that the shell is gone.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        // SAFETY: the process handle is live until the drop, and a zero
+        // timeout makes the call a poll.
+        match unsafe { WaitForSingleObject(self.process, 0) } {
+            WAIT_OBJECT_0 => {
+                let mut code: u32 = 0;
+                // SAFETY: the handle and the out-pointer are valid.
+                if unsafe { GetExitCodeProcess(self.process, &mut code) } == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                self.reaped = true;
+                Ok(Some(ExitStatus::from_raw(code)))
+            }
+            WAIT_TIMEOUT => Ok(None),
+            _ => Err(io::Error::last_os_error()),
+        }
     }
 
     /// Closes the pseudoconsole exactly once.

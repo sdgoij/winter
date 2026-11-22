@@ -64,3 +64,4 @@ Rules:
 | [033](033-audio-tone-model.md) | Audio is a portable tone model in `audio`; the Windows `Beep` sink lives in the app | Accepted |
 | [034](034-settings-file-and-migration.md) | A fresh install is given the default file; an earlier `settings.json` is migrated once and kept | Accepted |
 | [035](035-themes.md) | A theme is the four fills the tab strip paints; the rest of upstream's `Theme` is WinUI-only | Accepted |
+| [036](036-control-connection-events.md) | The connection is a trait, the control owns the terminal, the widget owns the viewport; an exit closes the tab | Accepted |

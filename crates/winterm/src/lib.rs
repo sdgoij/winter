@@ -27,6 +27,10 @@ pub mod session;
 #[allow(unsafe_code)]
 pub mod sound;
 pub mod tabs;
+pub mod term_connection;
+pub mod term_control;
+pub mod term_events;
+pub mod term_settings;
 pub mod ui;
 pub mod view;
 pub mod visual_bell;

@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use server::pty::{PtyCommand, PtySize};
+use server::pty::PtySize;
 use settings::Settings;
-use term::Terminal;
 use term::input::{
     Key, KeyEvent, Modifiers as KeyModifiers, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA,
     WheelAxis,
@@ -23,7 +22,9 @@ use types::color_table::{CURSOR_COLOR, ColorAlias, ColorTable, SELECTION_BACKGRO
 use types::text_color::{ColorType, TextColor};
 
 use crate::layout::{self, Axis, Direction, Fraction, Layout, PaneId};
-use crate::visual_bell::VisualBell;
+use crate::term_control::Control;
+use crate::term_events::TerminalEvent;
+use crate::term_settings::TerminalSettings;
 use crate::{blink::Blink, grid, notifications, scrollbar, session::Session, sound::Sound, tabs::Tabs, view::View};
 
 /// The colour used when the palette has no default background.
@@ -260,133 +261,59 @@ struct GridPaint {
     now: Instant,
 }
 
-/// One pane: a shell, its parser and its viewport.
+/// One pane: the terminal a tab shows, its viewport and its overlays.
+///
+/// The terminal, its connection and what it reports live in a [`Control`]; the
+/// viewport and the selection are this widget's, because ADR 019 keeps them in
+/// the application.
 struct Pane {
     id: PaneId,
-    terminal: Terminal,
-    session: Session,
+    control: Control,
     view: View,
     /// The find bar's query and matches.
     find: FindBar,
     /// The scrollbar's drag state.
     scrollbar: scrollbar::Scrollbar,
-    /// The flash a bell started, until it fades.
-    bell: VisualBell,
-    /// Desktop notifications the program asked for, until the window shows them.
-    notifications: Vec<(String, String)>,
-    /// The title the shell set with OSC 0/2.
-    osc_title: Option<String>,
-    /// The grid size the terminal and pty were last told about.
-    size: (i32, i32),
     /// The cell the pointer was last forwarded from, for motion deduplication.
     last_mouse_cell: Option<(i32, i32)>,
-    /// The output stream ended.
-    exited: bool,
 }
 
 impl Pane {
-    fn new(
-        ctx: &egui::Context,
-        id: PaneId,
-        command: PtyCommand,
-        scheme: Option<&settings::Scheme>,
-    ) -> io::Result<Self> {
+    fn new(ctx: &egui::Context, id: PaneId, settings: &TerminalSettings) -> io::Result<Self> {
         let size = PtySize::DEFAULT;
         let repaint = ctx.clone();
-        let session = Session::spawn_with(&command, size, move || repaint.request_repaint())?;
-        let mut terminal = Terminal::new();
-        terminal.resize(i32::from(size.cols), i32::from(size.rows));
-        // OSC 777 is ignored unless the application asks for it, which is
-        // upstream's `DesktopNotification` optional feature.
-        terminal.set_optional_features(std::collections::HashSet::from([
-            term::OptionalFeature::DesktopNotification,
-        ]));
+        let session = Session::spawn_with(&settings.command, size, move || repaint.request_repaint())?;
+        let mut control = Control::new(Box::new(session), (i32::from(size.cols), i32::from(size.rows)));
+        control.apply_scheme(settings.scheme.as_ref());
 
-        let mut pane = Self {
+        Ok(Self {
             id,
-            terminal,
-            session,
+            control,
             view: View::new(),
             find: FindBar::default(),
             scrollbar: scrollbar::Scrollbar::default(),
-            bell: VisualBell::default(),
-            notifications: Vec::new(),
-            osc_title: None,
-            size: (i32::from(size.cols), i32::from(size.rows)),
             last_mouse_cell: None,
-            exited: false,
-        };
-        pane.apply_scheme(scheme);
-
-        Ok(pane)
+        })
     }
 
     /// Makes the pane's palette the built-in table plus `scheme`.
-    ///
-    /// At creation the scheme fills the table before the shell can write to it,
-    /// so a program's OSC 10/11 arrives later and wins. On a reload the file is
-    /// the later word, so the table is rebuilt and a program's OSC colours go.
     fn apply_scheme(&mut self, scheme: Option<&settings::Scheme>) {
-        let handle = self.terminal.dispatch().color_table();
-        let Ok(mut table) = handle.lock() else {
-            return;
-        };
-        match scheme {
-            Some(scheme) => scheme.apply(&mut table),
-            None => table.reset(),
-        }
+        self.control.apply_scheme(scheme);
     }
 
-    /// Drains the terminal's bells, starting the pane's flash.
-    ///
-    /// The count feeds the window's attention request. `true` means this call
-    /// started the flash — and so the tone — because a flashing pane ignores
-    /// further bells until it ends.
-    fn take_bells(&mut self, now: Instant) -> (usize, bool) {
-        let bells = self.terminal.take_bell_requests();
-        let started = bells > 0 && self.bell.flash(now);
-        (bells, started)
+    /// Takes what the terminal did since the last frame.
+    fn take_events(&mut self, now: Instant) -> Vec<TerminalEvent> {
+        self.control.take_events(now)
     }
 
     /// Takes the DECPS notes the program asked for.
     fn take_sounds(&mut self) -> Vec<audio::Note> {
-        self.terminal
-            .take_sound_requests()
-            .into_iter()
-            .map(|note| audio::Note {
-                number: note.note,
-                velocity: note.velocity,
-                duration: Duration::from_micros(u64::from(note.duration_micros)),
-            })
-            .collect()
-    }
-
-    /// Takes the desktop notifications the program asked for.
-    fn take_notifications(&mut self) -> Vec<(String, String)> {
-        std::mem::take(&mut self.notifications)
+        self.control.take_sounds()
     }
 
     /// Moves bytes from the pty into the parser and answers from the adapter.
     fn pump_output(&mut self) {
-        let mut bytes = Vec::new();
-        if self.session.drain_into(&mut bytes) {
-            self.exited = true;
-        }
-        if bytes.is_empty() {
-            return;
-        }
-
-        self.terminal.process_bytes(&bytes);
-        for response in self.terminal.take_responses() {
-            self.write(&response);
-        }
-        self.notifications.extend(self.terminal.take_notifications());
-
-        if let Some(title) = self.terminal.window_title()
-            && self.osc_title.as_deref() != Some(title)
-        {
-            self.osc_title = Some(title.to_string());
-        }
+        self.control.pump();
     }
 
     fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
@@ -446,25 +373,11 @@ impl Pane {
     }
 
     fn send_key(&mut self, event: &KeyEvent) {
-        if let Some(bytes) = self.terminal.handle_key(event) {
-            self.write(&bytes);
-        }
-    }
-
-    fn write(&mut self, bytes: &str) {
-        if bytes.is_empty() {
-            return;
-        }
-        if self.session.write(bytes.as_bytes()).is_err() {
-            self.exited = true;
-        }
+        self.control.send_key(event);
     }
 
     fn resize(&mut self, columns: i32, rows: i32) {
-        self.size = (columns, rows);
-        self.terminal.resize(columns, rows);
-        let size = PtySize::new(to_cells(columns), to_cells(rows));
-        let _ = self.session.resize(size);
+        self.control.resize(columns, rows);
     }
 
     /// Handles the pointer: wheel, buttons, motion and selection.
@@ -515,12 +428,13 @@ impl Pane {
             0
         };
         if outside != 0 && input.primary_down && self.view.selection().is_some() {
-            let max = self.max_scroll();
+            let max = self.control.max_scroll();
             self.view.drag_scroll(outside, max, Instant::now());
 
-            let rows = self.size.1.max(1);
+            let (columns, rows) = self.control.size();
+            let rows = rows.max(1);
             let row = if outside < 0 { 0 } else { rows - 1 };
-            let column = (((position.x - area.min.x) / cell.x).floor() as i32).clamp(0, self.size.0.max(1) - 1);
+            let column = (((position.x - area.min.x) / cell.x).floor() as i32).clamp(0, columns.max(1) - 1);
             let document = screen_to_document(max, self.view.scroll(), row);
             self.view.extend((column, document));
 
@@ -539,11 +453,11 @@ impl Pane {
 
         // Selection is in document coordinates: history first, then the
         // screen. The pointer is clamped to the grid, so the row is in range.
-        let history = self.max_scroll();
+        let history = self.control.max_scroll();
         let document_row = screen_to_document(history, self.view.scroll(), cell_position.1);
         let document_position = (cell_position.0, document_row);
 
-        let forwards = forwards_to_application(self.terminal.is_tracking_mouse_input(), input.modifiers.shift);
+        let forwards = forwards_to_application(self.control.is_tracking_mouse(), input.modifiers.shift);
 
         if input.scroll != 0.0 {
             let lines = (input.scroll / cell.y).round() as i32;
@@ -556,17 +470,14 @@ impl Pane {
             // Shift keeps the wheel for the viewport; otherwise a tracking
             // application, or the alternate screen's scroll, owns it.
             let wheel = MouseEvent::wheel(cell_position, WheelAxis::Vertical, lines * WHEEL_DELTA);
-            let bytes = if input.modifiers.shift {
-                None
+            let sent = if input.modifiers.shift {
+                false
             } else {
-                self.terminal.handle_mouse(&wheel)
+                self.control.send_mouse(&wheel)
             };
-            match bytes {
-                Some(bytes) => self.write(&bytes),
-                None => {
-                    let max = self.max_scroll();
-                    self.view.scroll_by(lines, max);
-                }
+            if !sent {
+                let max = self.control.max_scroll();
+                self.view.scroll_by(lines, max);
             }
         }
 
@@ -587,9 +498,7 @@ impl Pane {
                     modifiers,
                     delta: 0,
                 };
-                if let Some(bytes) = self.terminal.handle_mouse(&event) {
-                    self.write(&bytes);
-                }
+                self.control.send_mouse(&event);
             }
         } else {
             self.last_mouse_cell = None;
@@ -598,10 +507,10 @@ impl Pane {
                 let count = self.view.click(document_position, Instant::now());
 
                 if count >= 3 {
-                    let width = self.screen_width();
+                    let width = self.control.screen_width();
                     self.view.select_line(document_row, width);
                 } else if count == 2 {
-                    let text = self.row_text(document_row);
+                    let text = self.control.row_text(document_row);
                     self.view.select_word(&text, document_position);
                 } else {
                     self.view.select(document_position, input.modifiers.alt);
@@ -640,9 +549,7 @@ impl Pane {
                 modifiers,
                 delta: 0,
             };
-            if let Some(bytes) = self.terminal.handle_mouse(&event) {
-                self.write(&bytes);
-            }
+            self.control.send_mouse(&event);
         }
     }
 
@@ -650,56 +557,26 @@ impl Pane {
     fn cell_at(&self, area: egui::Rect, cell: egui::Vec2, position: egui::Pos2) -> Option<(i32, i32)> {
         let column = ((position.x - area.min.x) / cell.x).floor() as i32;
         let row = ((position.y - area.min.y) / cell.y).floor() as i32;
-        let (columns, rows) = self.size;
+        let (columns, rows) = self.control.size();
         if column < 0 || row < 0 || column >= columns || row >= rows {
             return None;
         }
         Some((column, row))
     }
 
-    fn row_text(&mut self, document_row: i32) -> String {
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        match buffer.read() {
-            Ok(buffer) => buffer
-                .get_row_by_document_line(document_row)
-                .map(buffer::Row::get_text)
-                .unwrap_or_default(),
-            Err(_) => String::new(),
-        }
-    }
-
-    fn screen_width(&mut self) -> i32 {
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        buffer.read().map(|buffer| buffer.screen_width()).unwrap_or(0)
-    }
-
-    fn max_scroll(&mut self) -> i32 {
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        buffer.read().map(|buffer| buffer.scrollback_len() as i32).unwrap_or(0)
-    }
-
     /// Returns the selected cells, using the buffer's copy path.
     fn selection_text(&mut self) -> Option<String> {
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        let buffer = buffer.read().ok()?;
         let selection = self.view.selection()?;
-        let text = selection.text(&buffer);
-        (!text.is_empty()).then_some(text)
+        self.control.selection_text(selection)
     }
 
     /// Pastes text as the terminal would, through the bracketed-paste filter.
     fn paste_text(&mut self, text: &str) {
-        let bytes = self.terminal.paste(text);
-        self.write(&bytes);
+        self.control.paste(text);
     }
 
     fn snapshot(&mut self) -> grid::Screen {
-        let scroll = self.view.scroll();
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        match buffer.read() {
-            Ok(buffer) => grid::snapshot_at(&buffer, scroll),
-            Err(_) => grid::Screen::default(),
-        }
+        self.control.snapshot(&self.view)
     }
 
     /// Shows or hides this pane's find bar.
@@ -709,11 +586,7 @@ impl Pane {
 
     /// Recomputes the matches after the query changed and scrolls to the first.
     fn refresh_find(&mut self) {
-        let (matches, document_height) = {
-            let buffer = self.terminal.page_manager_mut().active_page().buffer();
-            let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-            (buffer.find_text(&self.find.query), buffer.document_height())
-        };
+        let (matches, document_height) = self.control.find_matches(&self.find.query);
 
         self.find.matches = matches;
         self.find.document_height = document_height;
@@ -733,7 +606,7 @@ impl Pane {
         let Some(found) = self.find.current.and_then(|index| self.find.matches.get(index)) else {
             return;
         };
-        let (row, height, total) = (found.start_row, self.size.1, self.find.document_height);
+        let (row, height, total) = (found.start_row, self.control.size().1, self.find.document_height);
         self.view.scroll_to_row(row, height, total);
     }
 
@@ -807,17 +680,10 @@ impl Pane {
         }
     }
 
-    /// The document height and its prompt ticks, read under one lock.
-    fn scroll_facts(&mut self) -> (i32, Vec<grid::MarkTick>) {
-        let buffer = self.terminal.page_manager_mut().active_page().buffer();
-        let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        (buffer.document_height(), grid::mark_ticks(&buffer))
-    }
-
     /// Handles a press or drag on the scrollbar, returning whether it took one.
     fn handle_scrollbar(&mut self, input: &PointerInput, area: egui::Rect) -> bool {
-        let (document, marks) = self.scroll_facts();
-        let visible = self.size.1;
+        let (document, marks) = self.control.scroll_facts();
+        let visible = self.control.size().1;
         if document <= visible {
             self.scrollbar.release();
             return false;
@@ -905,7 +771,7 @@ impl Pane {
     fn fit(&mut self, rect: egui::Rect, cell: egui::Vec2) {
         let columns = ((rect.width() / cell.x).floor() as i32).max(1);
         let rows = ((rect.height() / cell.y).floor() as i32).max(1);
-        if (columns, rows) != self.size {
+        if (columns, rows) != self.control.size() {
             self.resize(columns, rows);
         }
     }
@@ -917,14 +783,14 @@ impl Pane {
             faces,
             now,
         } = paint;
-        let screen = self.snapshot();
+        let screen = self.control.snapshot(&self.view);
         let painter = ui.painter().with_clip_rect(area);
 
         if cell.x <= 0.0 || cell.y <= 0.0 {
             return;
         }
 
-        let table = self.terminal.dispatch().color_table();
+        let table = self.control.color_table();
         let Ok(table) = table.lock() else {
             return;
         };
@@ -1081,7 +947,7 @@ impl Pane {
 
         // The bell's flash covers the pane, text and all, and is drawn last so
         // nothing paints over it.
-        if let Some(alpha) = self.bell.alpha(now) {
+        if let Some(alpha) = self.control.bell_alpha(now) {
             let value = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
             painter.rect_filled(area, 0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, value));
         }
@@ -1109,19 +975,14 @@ struct Tab {
 }
 
 impl Tab {
-    fn new(
-        ctx: &egui::Context,
-        command: PtyCommand,
-        fallback_title: String,
-        scheme: Option<&settings::Scheme>,
-    ) -> io::Result<Self> {
+    fn new(ctx: &egui::Context, settings: TerminalSettings) -> io::Result<Self> {
         let id = PaneId(0);
         Ok(Self {
-            panes: vec![Pane::new(ctx, id, command, scheme)?],
+            panes: vec![Pane::new(ctx, id, &settings)?],
             layout: Layout::leaf(id),
             focused: id,
             divider: None,
-            fallback_title,
+            fallback_title: settings.title,
             next_id: 1,
         })
     }
@@ -1139,20 +1000,14 @@ impl Tab {
     /// shell's name.
     fn display_title(&self) -> &str {
         self.focused_pane()
-            .and_then(|pane| pane.osc_title.as_deref())
+            .and_then(|pane| pane.control.title())
             .unwrap_or(&self.fallback_title)
     }
 
     /// Splits the focused pane, spawning a shell for the new half.
-    fn split(
-        &mut self,
-        axis: Axis,
-        ctx: &egui::Context,
-        command: PtyCommand,
-        scheme: Option<&settings::Scheme>,
-    ) -> bool {
+    fn split(&mut self, axis: Axis, ctx: &egui::Context, settings: &TerminalSettings) -> bool {
         let id = PaneId(self.next_id);
-        let Ok(pane) = Pane::new(ctx, id, command, scheme) else {
+        let Ok(pane) = Pane::new(ctx, id, settings) else {
             return false;
         };
 
@@ -1203,13 +1058,8 @@ impl Tab {
         }
     }
 
-    fn take_bells(&mut self, now: Instant) -> (usize, bool) {
-        self.panes
-            .iter_mut()
-            .map(|pane| pane.take_bells(now))
-            .fold((0, false), |(count, started), (bells, flash)| {
-                (count + bells, started || flash)
-            })
+    fn take_events(&mut self, now: Instant) -> Vec<TerminalEvent> {
+        self.panes.iter_mut().flat_map(|pane| pane.take_events(now)).collect()
     }
 
     /// Takes the DECPS notes every pane was asked to play.
@@ -1219,15 +1069,10 @@ impl Tab {
 
     /// When a pane's bell flash needs its next frame.
     fn bell_repaint(&self, now: Instant) -> Option<Duration> {
-        self.panes.iter().filter_map(|pane| pane.bell.next_repaint(now)).min()
-    }
-
-    /// Takes the desktop notifications every pane received.
-    fn take_notifications(&mut self) -> Vec<(String, String)> {
         self.panes
-            .iter_mut()
-            .flat_map(|pane| pane.take_notifications())
-            .collect()
+            .iter()
+            .filter_map(|pane| pane.control.bell_repaint(now))
+            .min()
     }
 
     fn handle_events(&mut self, events: Vec<egui::Event>, sides: &mut ModifierSides) {
@@ -1772,8 +1617,7 @@ impl App {
         let settings = loaded.settings;
         let scheme = settings.scheme().cloned();
         let font_size = settings.font.size;
-        let (command, title) = profile_command(settings.profile());
-        let tab = Tab::new(ctx, command, title, scheme.as_ref())?;
+        let tab = Tab::new(ctx, TerminalSettings::resolve(&settings))?;
 
         Ok(Self {
             tabs: Tabs::new(tab),
@@ -1801,8 +1645,8 @@ impl App {
 
     /// Opens another shell in a new tab: the default profile's.
     fn open_tab(&mut self, ctx: &egui::Context) {
-        let (command, title) = profile_command(self.settings.profile());
-        self.add_tab(ctx, command, title);
+        let settings = TerminalSettings::resolve(&self.settings);
+        self.add_tab(ctx, settings);
     }
 
     /// Opens the named profile's shell in a new tab.
@@ -1814,12 +1658,12 @@ impl App {
         let Some(profile) = self.settings.profile_named(name) else {
             return;
         };
-        let (command, title) = profile_command(Some(profile));
-        self.add_tab(ctx, command, title);
+        let settings = TerminalSettings::for_profile(&self.settings, Some(profile));
+        self.add_tab(ctx, settings);
     }
 
-    fn add_tab(&mut self, ctx: &egui::Context, command: PtyCommand, title: String) {
-        if let Ok(tab) = Tab::new(ctx, command, title, self.scheme.as_ref()) {
+    fn add_tab(&mut self, ctx: &egui::Context, settings: TerminalSettings) {
+        if let Ok(tab) = Tab::new(ctx, settings) {
             self.tabs.add(tab);
         }
     }
@@ -1844,9 +1688,9 @@ impl App {
             TabAction::Next => self.tabs.step(1),
             TabAction::Previous => self.tabs.step(-1),
             TabAction::Split(axis) => {
-                let (command, _) = profile_command(self.settings.profile());
+                let settings = TerminalSettings::resolve(&self.settings);
                 if let Some(tab) = self.tabs.active_mut() {
-                    tab.split(axis, ctx, command, self.scheme.as_ref());
+                    tab.split(axis, ctx, &settings);
                 }
             }
             TabAction::Focus(direction) => {
@@ -2203,24 +2047,41 @@ impl eframe::App for App {
         }
 
         let now = Instant::now();
-        let mut bells = 0;
-        let mut beep = false;
+        let mut events = Vec::new();
         for index in 0..self.tabs.len() {
             if let Some(tab) = self.tabs.get_mut(index) {
-                let (count, started) = tab.take_bells(now);
-                bells += count;
-                beep |= started;
+                events.extend(tab.take_events(now).into_iter().map(|event| (index, event)));
             }
         }
-        if bells > 0 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                egui::UserAttentionType::Informational,
-            ));
+
+        // A shell that exited closes its tab, and the last tab closes the
+        // window: upstream's `closeOnExit`. The tabs close from the back, so an
+        // index still names the tab it was taken from.
+        let mut exited: Vec<usize> = events
+            .iter()
+            .filter(|(_, event)| *event == TerminalEvent::Exited)
+            .map(|(index, _)| *index)
+            .collect();
+        exited.sort_unstable();
+        exited.dedup();
+        for index in exited.into_iter().rev() {
+            self.close_tab(index, ctx);
         }
-        // One tone per flash rather than per bell: a program that repeats BEL
-        // gets the console host's single beep, not a burst.
-        if beep {
-            self.sound.play(vec![audio::beep::tone()]);
+
+        for (_, event) in events {
+            match event {
+                // One tone and one flash per bell event: the control already
+                // ignores a second bell while the light is fading.
+                TerminalEvent::Bell => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ));
+                    self.sound.play(vec![audio::beep::tone()]);
+                    ctx.request_repaint();
+                }
+                TerminalEvent::Notification { title, body } => notifications::show(&title, &body),
+                TerminalEvent::Exited => {}
+            }
         }
 
         let mut sounds = Vec::new();
@@ -2231,16 +2092,6 @@ impl eframe::App for App {
         }
         if !sounds.is_empty() {
             self.sound.play(audio::midi::tones(&sounds));
-        }
-
-        let mut messages = Vec::new();
-        for index in 0..self.tabs.len() {
-            if let Some(tab) = self.tabs.get_mut(index) {
-                messages.extend(tab.take_notifications());
-            }
-        }
-        for (title, body) in messages {
-            notifications::show(&title, &body);
         }
 
         // Poll the settings file: a changed stamp means a save, and the reload
@@ -2642,15 +2493,6 @@ fn chord_key(key: egui::Key) -> Option<settings::Key> {
         E::F24 => C::Function(24),
         _ => return None,
     })
-}
-
-/// The name a tab shows until its shell sets a title.
-fn command_title(command: &PtyCommand) -> String {
-    Path::new(command.program())
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("shell")
-        .to_string()
 }
 
 /// Resolves a cell's foreground and background the way the renderer does.
@@ -3122,19 +2964,6 @@ fn draft_editor(
     }
 }
 
-/// Turns a profile into the command a tab starts and the title to show.
-fn profile_command(profile: Option<&settings::Profile>) -> (PtyCommand, String) {
-    let profile = profile.cloned().unwrap_or_default();
-    let command = PtyCommand::new(&profile.command).args(profile.args.iter().cloned());
-    let title = profile.title.clone().unwrap_or_else(|| command_title(&command));
-    (command, title)
-}
-
-/// Turns a cell count into the `u16` a pty size carries.
-fn to_cells(value: i32) -> u16 {
-    value.clamp(1, i32::from(u16::MAX)) as u16
-}
-
 /// Resolves a terminal colour through the adapter's palette.
 fn resolve(color: TextColor, table: &ColorTable, alias: ColorAlias) -> Option<egui::Color32> {
     let entry = match color.get_type() {
@@ -3509,50 +3338,6 @@ mod tests {
             attribute_colors(&attribute, &table).0,
             egui::Color32::from_rgb(100, 50, 25)
         );
-    }
-
-    #[test]
-    fn a_profile_becomes_a_command_and_a_title() {
-        let profile = settings::Profile {
-            name: "x".to_string(),
-            command: "/bin/sh".to_string(),
-            args: vec!["-l".to_string()],
-            title: None,
-        };
-
-        let (command, title) = profile_command(Some(&profile));
-        assert_eq!(command.program(), std::ffi::OsStr::new("/bin/sh"));
-        assert_eq!(
-            command.arguments().collect::<Vec<_>>(),
-            vec![std::ffi::OsStr::new("-l")]
-        );
-        assert_eq!(title, "sh");
-
-        let (_, title) = profile_command(Some(&settings::Profile {
-            title: Some("Named".to_string()),
-            ..profile
-        }));
-        assert_eq!(title, "Named");
-    }
-
-    #[test]
-    fn a_named_profile_chooses_the_command_its_tab_starts() {
-        let settings = settings::parse(
-            "[[profiles]]\nname = \"one\"\ncommand = \"sh\"\n\n[[profiles]]\nname = \"two\"\ncommand = \"zsh\"\n",
-        )
-        .expect("settings");
-
-        // The tab strip's menu names a profile; its entry starts that command.
-        let (command, title) = profile_command(settings.profile_named("two"));
-        assert_eq!(command.program(), std::ffi::OsStr::new("zsh"));
-        assert_eq!(title, "zsh");
-    }
-
-    #[test]
-    fn a_command_title_is_the_program_stem() {
-        assert_eq!(command_title(&PtyCommand::new("cmd.exe")), "cmd");
-        assert_eq!(command_title(&PtyCommand::new("/bin/sh")), "sh");
-        assert_eq!(command_title(&PtyCommand::new("")), "shell");
     }
 
     #[test]
@@ -4224,13 +4009,6 @@ mod tests {
         let (path, axis, _) = divider_at(&layout, egui::pos2(101.0, 51.0), area).expect("divider");
         assert_eq!(path, vec![1]);
         assert_eq!(axis, Axis::Vertical);
-    }
-
-    #[test]
-    fn a_cell_count_is_clamped_for_the_pty() {
-        assert_eq!(to_cells(0), 1);
-        assert_eq!(to_cells(120), 120);
-        assert_eq!(to_cells(i32::MAX), u16::MAX);
     }
 
     #[test]
