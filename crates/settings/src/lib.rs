@@ -582,7 +582,7 @@ mod tests {
     fn the_default_settings_bind_the_window_chords() {
         let settings = Settings::default();
         assert_eq!(settings.keybindings, DEFAULT_KEYBINDINGS);
-        assert_eq!(settings.keybindings.len(), 19);
+        assert_eq!(settings.keybindings.len(), 27);
     }
 
     #[test]

@@ -75,3 +75,4 @@ Rules:
 | [044](0044-winui-reads-settings.md) | The WinUI shell reads the settings file at startup; the pane's palette is handed to the renderer each frame | Accepted |
 | [045](0045-winui-draws-the-active-tab.md) | The WinUI shell keeps one renderer and one swap chain and paints the active tab | Accepted |
 | [046](0046-winui-chords-and-selection.md) | The WinUI shell matches bound chords before the terminal and selects with the pointer | Accepted |
+| [047](0047-scrolling-and-the-wheel.md) | Scrolling is six actions; the WinUI wheel is read by a low-level mouse hook | Accepted |

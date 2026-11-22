@@ -169,6 +169,22 @@ impl Pane {
         self.control.resize(columns, rows);
     }
 
+    /// Scrolls the viewport by `rows`; positive is towards the history.
+    pub(crate) fn scroll_by(&mut self, rows: i32) {
+        let max = self.control.max_scroll();
+        self.view.scroll_by(rows, max);
+    }
+
+    /// Returns the viewport to the live screen, or jumps to the oldest row.
+    pub(crate) fn scroll_to(&mut self, bottom: bool) {
+        if bottom {
+            self.view.scroll_to_bottom();
+        } else {
+            let max = self.control.max_scroll();
+            self.view.set_scroll(max, max);
+        }
+    }
+
     /// Handles the pointer: wheel, buttons, motion and selection.
     ///
     /// A tracking application owns the mouse; Shift is the user's override and

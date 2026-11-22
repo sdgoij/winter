@@ -437,6 +437,28 @@ impl Tab {
         self.focused_pane_mut().and_then(Pane::selection_text)
     }
 
+    /// Scrolls the focused pane by `rows`; positive is towards the history.
+    fn scroll(&mut self, rows: i32) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.scroll_by(rows);
+        }
+    }
+
+    /// Scrolls the focused pane by `direction` pages.
+    fn scroll_page(&mut self, direction: i32) {
+        if let Some(pane) = self.focused_pane_mut() {
+            let rows = (pane.control.size().1 - 1).max(1) * direction.signum();
+            pane.scroll_by(rows);
+        }
+    }
+
+    /// Jumps the focused pane to the live screen (`true`) or the oldest row.
+    fn scroll_to(&mut self, bottom: bool) {
+        if let Some(pane) = self.focused_pane_mut() {
+            pane.scroll_to(bottom);
+        }
+    }
+
     fn paste_text(&mut self, text: &str) {
         if let Some(pane) = self.focused_pane_mut() {
             pane.paste_text(text);
@@ -583,6 +605,12 @@ enum TabAction {
     Previous,
     Copy,
     Paste,
+    /// Scroll the focused pane by rows; positive is towards the history.
+    Scroll(i32),
+    /// Scroll the focused pane by `direction` pages; positive is towards the history.
+    ScrollPage(i32),
+    /// Jump the focused pane to the oldest row (`false`) or the live screen (`true`).
+    ScrollTo(bool),
     Split(Axis),
     Focus(Direction),
     Resize(Direction),
@@ -701,6 +729,21 @@ impl App {
                     && let Some(tab) = self.tabs.active_mut()
                 {
                     tab.paste_text(&text);
+                }
+            }
+            TabAction::Scroll(rows) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.scroll(rows);
+                }
+            }
+            TabAction::ScrollPage(direction) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.scroll_page(direction);
+                }
+            }
+            TabAction::ScrollTo(bottom) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.scroll_to(bottom);
                 }
             }
             TabAction::ToggleSettings => self.toggle_settings(),
@@ -1077,6 +1120,12 @@ fn action_for(action: settings::Action) -> Option<TabAction> {
         settings::Action::ResizeDown => TabAction::Resize(Direction::Down),
         settings::Action::Copy => TabAction::Copy,
         settings::Action::Paste => TabAction::Paste,
+        settings::Action::ScrollUp => TabAction::Scroll(1),
+        settings::Action::ScrollDown => TabAction::Scroll(-1),
+        settings::Action::ScrollUpPage => TabAction::ScrollPage(1),
+        settings::Action::ScrollDownPage => TabAction::ScrollPage(-1),
+        settings::Action::ScrollToTop => TabAction::ScrollTo(false),
+        settings::Action::ScrollToBottom => TabAction::ScrollTo(true),
         settings::Action::OpenSettings => TabAction::ToggleSettings,
         settings::Action::CommandPalette => TabAction::TogglePalette,
         settings::Action::Find => TabAction::Find,
@@ -1149,6 +1198,12 @@ fn action_label(action: settings::Action) -> &'static str {
         Action::ResizeDown => "Resize pane down",
         Action::Copy => "Copy selection",
         Action::Paste => "Paste",
+        Action::ScrollUp => "Scroll up",
+        Action::ScrollDown => "Scroll down",
+        Action::ScrollUpPage => "Scroll up a page",
+        Action::ScrollDownPage => "Scroll down a page",
+        Action::ScrollToTop => "Scroll to the top",
+        Action::ScrollToBottom => "Scroll to the bottom",
         Action::OpenSettings => "Settings",
         Action::CommandPalette => "Command palette",
         Action::Find => "Find",
@@ -1647,10 +1702,24 @@ mod tests {
             command_for(bindings, &key(egui::Key::E, true, true)),
             Some(TabAction::Split(Axis::Vertical))
         );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::PageUp, false, true)),
+            Some(TabAction::ScrollPage(1))
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::PageDown, false, true)),
+            Some(TabAction::ScrollPage(-1))
+        );
+        assert_eq!(
+            command_for(bindings, &key(egui::Key::ArrowUp, true, true)),
+            Some(TabAction::Scroll(1))
+        );
 
         // Without both modifiers, the key belongs to the shell.
         assert_eq!(command_for(bindings, &key(egui::Key::T, true, false)), None);
         assert_eq!(command_for(bindings, &key(egui::Key::Tab, false, false)), None);
+        // A plain page key is the program's.
+        assert_eq!(command_for(bindings, &key(egui::Key::PageUp, false, false)), None);
         assert_eq!(command_for(bindings, &egui::Event::Text("t".into())), None);
     }
 
@@ -2050,7 +2119,7 @@ mod tests {
         assert_eq!(value("File"), "/cfg/settings.toml");
         assert_eq!(value("Status"), "loaded");
         assert_eq!(value("Profile"), "zsh (/bin/zsh)");
-        assert_eq!(value("Keybindings"), "19");
+        assert_eq!(value("Keybindings"), "27");
         assert_eq!(value("Scheme"), "muted");
         assert_eq!(value("Theme"), "night");
         assert_eq!(value("Font"), "18 pt");

@@ -209,6 +209,39 @@ pub const DEFAULT_KEYBINDINGS: &[Keybinding] = &[
         action: Action::Paste,
     },
     Keybinding {
+        keys: chord(Key::Up, true, true, false),
+        action: Action::ScrollUp,
+    },
+    Keybinding {
+        keys: chord(Key::Down, true, true, false),
+        action: Action::ScrollDown,
+    },
+    // Shift+PgUp/PgDn is what the console host has always scrolled with.
+    Keybinding {
+        keys: chord(Key::PageUp, false, true, false),
+        action: Action::ScrollUpPage,
+    },
+    Keybinding {
+        keys: chord(Key::PageDown, false, true, false),
+        action: Action::ScrollDownPage,
+    },
+    Keybinding {
+        keys: chord(Key::PageUp, true, true, false),
+        action: Action::ScrollUpPage,
+    },
+    Keybinding {
+        keys: chord(Key::PageDown, true, true, false),
+        action: Action::ScrollDownPage,
+    },
+    Keybinding {
+        keys: chord(Key::Home, true, true, false),
+        action: Action::ScrollToTop,
+    },
+    Keybinding {
+        keys: chord(Key::End, true, true, false),
+        action: Action::ScrollToBottom,
+    },
+    Keybinding {
         keys: chord(Key::Char(','), true, false, false),
         action: Action::OpenSettings,
     },

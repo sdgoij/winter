@@ -44,6 +44,18 @@ pub enum Action {
     Copy,
     /// Paste the clipboard into the focused pane.
     Paste,
+    /// Scroll the viewport one row towards the history.
+    ScrollUp,
+    /// Scroll the viewport one row towards the live screen.
+    ScrollDown,
+    /// Scroll the viewport one page towards the history.
+    ScrollUpPage,
+    /// Scroll the viewport one page towards the live screen.
+    ScrollDownPage,
+    /// Scroll to the oldest row still held.
+    ScrollToTop,
+    /// Return to the live screen.
+    ScrollToBottom,
     /// Show or hide the settings window.
     OpenSettings,
     /// Show or hide the command palette.
@@ -77,6 +89,12 @@ impl Action {
         Self::ResizeDown,
         Self::Copy,
         Self::Paste,
+        Self::ScrollUp,
+        Self::ScrollDown,
+        Self::ScrollUpPage,
+        Self::ScrollDownPage,
+        Self::ScrollToTop,
+        Self::ScrollToBottom,
         Self::OpenSettings,
         Self::CommandPalette,
         Self::Find,
@@ -101,6 +119,12 @@ impl Action {
             Self::ResizeDown => "resizeDown",
             Self::Copy => "copy",
             Self::Paste => "paste",
+            Self::ScrollUp => "scrollUp",
+            Self::ScrollDown => "scrollDown",
+            Self::ScrollUpPage => "scrollUpPage",
+            Self::ScrollDownPage => "scrollDownPage",
+            Self::ScrollToTop => "scrollToTop",
+            Self::ScrollToBottom => "scrollToBottom",
             Self::OpenSettings => "openSettings",
             Self::CommandPalette => "commandPalette",
             Self::Find => "find",

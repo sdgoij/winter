@@ -34,6 +34,7 @@ use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
 use super::surface::Surface;
+use super::wheel::{self, Wheel};
 
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
@@ -81,6 +82,8 @@ struct Shell {
     focus_attempted: bool,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
+    /// The message hook the wheel arrives through; kept alive for the session.
+    _wheel: Option<Wheel>,
     face: PathBuf,
     /// The face size in DIPs, from the settings file.
     font_size: f32,
@@ -120,6 +123,8 @@ enum Message {
     Pressed(PointerEventInfo),
     Moved(PointerEventInfo),
     Released(PointerEventInfo),
+    /// The shell's window, so the wheel hook can be installed.
+    Window(isize),
 }
 
 impl Component for Shell {
@@ -197,6 +202,7 @@ impl Component for Shell {
         };
 
         let timer = Some(context.set_timeout(Duration::from_millis(16), Message::Tick));
+        let _ = context.run_window(|handle| Message::Window(handle.as_raw() as isize));
 
         Self {
             tabs: Tabs::new(tab),
@@ -216,6 +222,7 @@ impl Component for Shell {
             focused: false,
             focus_attempted: false,
             last_mouse_cell: None,
+            _wheel: None,
             face,
             font_size,
             cell,
@@ -346,6 +353,7 @@ impl Component for Shell {
             Message::Pressed(info) => self.pointer_pressed(info),
             Message::Moved(info) => self.pointer_moved(info),
             Message::Released(info) => self.pointer_released(info),
+            Message::Window(handle) => self._wheel = wheel::install(handle),
         }
     }
 }
@@ -397,6 +405,12 @@ impl Shell {
         if !self.focused && !self.focus_attempted {
             self.focused = self.focus.request_focus();
             self.focus_attempted = self.focused;
+        }
+
+        // The binding has no wheel event, so the message hook collected it.
+        let notches = wheel::take();
+        if notches != 0 {
+            self.scroll_active(notches);
         }
 
         let blink_on = self.blink_on;
@@ -563,6 +577,10 @@ impl Shell {
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
+        // Typing or pressing a key returns the view to the live screen.
+        if outcome.activity {
+            tab.view.scroll_to_bottom();
+        }
         for key in outcome.keys {
             tab.control.send_key(&key);
         }
@@ -581,6 +599,9 @@ impl Shell {
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
+        if outcome.activity {
+            tab.view.scroll_to_bottom();
+        }
         for key in outcome.keys {
             tab.control.send_key(&key);
         }
@@ -607,6 +628,12 @@ impl Shell {
                 let _ = self.copy_selection();
             }
             settings::Action::Paste => self.paste_clipboard(),
+            settings::Action::ScrollUp => self.scroll_active(1),
+            settings::Action::ScrollDown => self.scroll_active(-1),
+            settings::Action::ScrollUpPage => self.scroll_page_active(1),
+            settings::Action::ScrollDownPage => self.scroll_page_active(-1),
+            settings::Action::ScrollToTop => self.scroll_to_active(false),
+            settings::Action::ScrollToBottom => self.scroll_to_active(true),
             // Panes, find, the palette and the settings window are not this
             // shell's yet, so their chords fall through.
             _ => {}
@@ -646,6 +673,38 @@ impl Shell {
     /// Whether the active terminal tracks the mouse.
     fn active_tracking(&self) -> bool {
         self.tabs.active().is_some_and(|tab| tab.control.is_tracking_mouse())
+    }
+
+    /// Scrolls the active viewport by `rows`; positive is towards the history.
+    fn scroll_active(&mut self, rows: i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let max = tab.control.max_scroll();
+        tab.view.scroll_by(rows, max);
+    }
+
+    /// Scrolls the active viewport by `direction` pages.
+    fn scroll_page_active(&mut self, direction: i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let rows = (tab.control.size().1 - 1).max(1) * direction.signum();
+        let max = tab.control.max_scroll();
+        tab.view.scroll_by(rows, max);
+    }
+
+    /// Jumps the active viewport to the live screen (`true`) or the oldest row.
+    fn scroll_to_active(&mut self, bottom: bool) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if bottom {
+            tab.view.scroll_to_bottom();
+        } else {
+            let max = tab.control.max_scroll();
+            tab.view.set_scroll(max, max);
+        }
     }
 
     /// Starts a selection, or forwards the press to a tracking application.
@@ -1237,6 +1296,23 @@ mod tests {
             chord_action(&file.keybindings, Key::Char('c'), InputModifiers::CONTROL),
             None
         );
+    }
+
+    #[test]
+    fn the_scroll_chords_are_bound_by_default() {
+        let bindings = settings::Settings::default().keybindings;
+        let shift = InputModifiers::SHIFT;
+
+        assert_eq!(
+            chord_action(&bindings, Key::PageUp, shift),
+            Some(settings::Action::ScrollUpPage)
+        );
+        assert_eq!(
+            chord_action(&bindings, Key::PageDown, shift),
+            Some(settings::Action::ScrollDownPage)
+        );
+        // A page key without Shift is the program's.
+        assert_eq!(chord_action(&bindings, Key::PageUp, InputModifiers::NONE), None);
     }
 
     #[test]

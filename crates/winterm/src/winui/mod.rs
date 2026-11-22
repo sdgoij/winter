@@ -7,6 +7,9 @@
 #[allow(unsafe_code)]
 pub mod surface;
 
+#[allow(unsafe_code)]
+mod wheel;
+
 mod app;
 
 pub use app::run;
