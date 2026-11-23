@@ -169,9 +169,12 @@ nor a cached host (ADR 055).
 `just package` builds the release binary and wraps that folder in one archive
 named after the version and the target:
 `dist/winterm-<version>-<target>.zip` on Windows, `.tar.gz` elsewhere. Pushing a
-tag named `v<version>` publishes those archives as a GitHub release: the gate
-runs on all four hosts first, then each host packages the binary it tested
-(`.github/workflows/ci.yml`).
+tag named `v<version>` — or `v<version>-<prerelease>`, which publishes a
+prerelease — runs the gate on all four hosts, then each host packages the binary
+it tested and the archives are published with a `SHA256SUMS`
+(`.github/workflows/ci.yml`). A prerelease tag labels the archives with the
+release's own version (`winterm-0.1.0-preview.1-…`), so a preview and the final
+release never share a file name.
 
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
 x86-64 and arm64 Linux, Windows, and macOS, plus `just test-long` as a `Full

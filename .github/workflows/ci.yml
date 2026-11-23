@@ -103,10 +103,16 @@ jobs:
             echo "::error::no version under [workspace.package] in Cargo.toml"
             exit 1
           fi
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not name Cargo.toml's version v$version"
-            exit 1
-          fi
+          # A prerelease tag is the version plus a suffix -- `v0.1.0-rc1` is
+          # semver's name for 0.1.0 -- so only the stem has to match. Any
+          # other tag would ship binaries labelled with another version.
+          case "$GITHUB_REF_NAME" in
+            "v$version" | "v$version"-*) ;;
+            *)
+              echo "::error::tag $GITHUB_REF_NAME does not name Cargo.toml's version v$version"
+              exit 1
+              ;;
+          esac
 
   package:
     name: Package (${{ matrix.os }})
@@ -139,6 +145,10 @@ jobs:
       # Terminal (scripts/console-host.ps1, ADR 055), which the runner image
       # carries; without it the archive would lose image support silently.
       - name: Build and package
+        env:
+          # The release's label, so a preview and the final release cannot ship
+          # assets with the same name; `scripts/package.sh` strips the `v`.
+          WINTERM_VERSION: ${{ github.ref_name }}
         run: just package
       - uses: actions/upload-artifact@v4
         with:
