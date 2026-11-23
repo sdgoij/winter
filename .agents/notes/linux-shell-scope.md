@@ -57,13 +57,13 @@ Measured on the Fedora 44 WSL distro here, not assumed:
 | Toolkits (`-devel`) | **missing** for all three; `pkg-config gtk4` and `Qt6Widgets` both say no |
 | Rust | cargo 1.98.0, matching `rust-toolchain.toml` |
 | Sudo | passwordless |
-| WSLg | present (WSLg 1.0.79) but not usable from this shell: `DISPLAY`/`WAYLAND_DISPLAY` unset, `/mnt/wslg/run/user/1000` is `root:root 0700` and empty, no X socket |
+| WSLg | 1.0.79; **off** in `%USERPROFILE%\.wslconfig` (`guiApplications=false`) at the time of these measurements, which is why `DISPLAY`/`WAYLAND_DISPLAY` were unset and `/mnt/wslg` was empty. Turned on later: `DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`, a real window on the desktop. |
 | Nested KWin | **works**: `kwin_wayland --virtual --socket wayland-wm --width 1280 --height 800` accepts Wayland clients (kcalc started cleanly) and registers `org.kde.KWin.ScreenShot2` on the session bus |
 
 So: real Wayland clients and real KDE compositing already run here; what is
 missing is (a) the `-devel` packages to build against and (b) a screenshot path,
-which *Verification* below resolves as the app's own job. The rig is headless
-weston, not WSLg.
+which *Verification* below resolves as the app's own job. The capture rig is
+headless weston; WSLg, once switched back on, is the interactive one.
 
 ## The decision: which toolkit is "native"
 
@@ -178,10 +178,22 @@ shot therefore runs from the frame clock's `after-paint` signal, when the node
 it reads is the one just drawn. A timer — milestone 3's first approach — races
 the 16 ms pty tick and loses.
 
-WSLg is present (WSLg 1.0.79) but unusable from a plain shell: no `DISPLAY`, no
-socket, and `/run/user/1000/wayland-0` is a stale symlink into
-`/mnt/wslg/runtime-dir` — which is why every compositor that tried to bind
-`wayland-0` failed until a private socket name was used.
+**WSLg is the interactive display, when it is on.** WSLg 1.0.79 provides
+`DISPLAY=:0` and `WAYLAND_DISPLAY=wayland-0` with their sockets under
+`/mnt/wslg/runtime-dir`. On this machine it was switched off in
+`%USERPROFILE%\.wslconfig` (`[wsl2]` + `guiApplications=false`), which still
+mounts `/mnt/wslg` but leaves it empty — no `wayland-0`, no `.X11-unix`, and
+`/run/user/1000/wayland-0` a dangling symlink — and `wsl.exe --system` reports
+`WSL_E_GUI_APPLICATIONS_DISABLED`. Setting the flag to `true` and restarting
+WSL (`wsl --shutdown`) brings the sockets up; from then on a window opened in
+the distro appears on the Windows desktop and needs no compositor of its own.
+The headless weston rig stays for screenshots and for a runner with no display.
+
+A shell profile must not export `DISPLAY` itself. A leftover
+`export DISPLAY=$(ip route show | grep default | awk '{print }'):0` handed Qt a
+route line as the display name (`could not connect to display default via
+172.27.160.1 dev eth0 proto kernel onlink :0`), and GTK would have failed the
+same way; WSLg sets both variables, so the profile line is deleted.
 
 To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 (Qt route: `qt6-qtbase-devel cmake gcc-c++`). `just` is not installed there;
