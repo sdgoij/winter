@@ -1590,7 +1590,6 @@ under `.design/refs/terminal/`.
 | `terminal/adapter/ut_adapter/MouseInputTest.cpp` | 621 | 7 conformance cases |
 | `terminal/adapter/ut_adapter/kittyKeyboardProtocol.cpp` | 373 | 5 conformance cases |
 | `buffer/out/ut_textbuffer/TextAttributeTests.cpp`, `TextColorTests.cpp` | 327 + 201 | 10 colour and attribute tests |
-| `buffer/out/ut_textbuffer/UTextAdapterTests.cpp` | 74 | untested; the astral-plane `Replace` path |
 
 Two surfaces are absent rather than untested:
 
@@ -1601,9 +1600,14 @@ Two surfaces are absent rather than untested:
   `renderer`, which does not read them.
 
 Take the list smallest-first: a pure function's cases cost an afternoon and find
-real bugs (`UTextAdapterTests`' astral-plane replacement is the first), while
-`adapterTest.cpp` is a family at a time, each family its own commit. When a case
-is ported, delete its row.
+real bugs, while `adapterTest.cpp` is a family at a time, each family its own
+commit. When a case is ported, delete its row.
+
+`UTextAdapterTests.cpp` is not on the list: `find_text_matches_the_upstream_unicode_sample`
+already ports its only case. The audit that wrote this table missed it because
+the Rust case is named after what it checks, not after the C++ class — and the
+pass that went looking for it found a real bug underneath, in
+`Row::replace_characters`.
 
 ### Retired rows
 

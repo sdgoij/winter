@@ -293,15 +293,24 @@ impl Row {
     }
 
     /// Replaces characters starting at the given column.
+    ///
+    /// Each glyph advances by its cell width, and a glyph that does not fit in
+    /// the remaining columns is left unwritten.
     pub fn replace_characters(&mut self, start_column: i32, replacement: &str) {
         let start = self.validate_column(start_column);
         let end = (self.width.max(0) as usize).min(self.cells.len());
-        let mut written = 0;
-        for (offset, c) in replacement.chars().take(end.saturating_sub(start)).enumerate() {
-            self.cells[start + offset] = OutputCell::from_char(c);
-            written += 1;
+        let mut column = start;
+        for c in replacement.chars() {
+            // A combining mark has no width of its own; without grapheme
+            // clustering it occupies one cell, as it does on the print path.
+            let width = usize::from(codepoint_width(c as u32)).max(1);
+            if column + width > end {
+                break;
+            }
+            self.cells[column] = OutputCell::from_char(c);
+            column += width;
         }
-        self.erase_image_cells(start_column, start_column + written);
+        self.erase_image_cells(start_column, column as i32);
         self.update_contains_text();
     }
 
@@ -310,7 +319,11 @@ impl Row {
         self.replace_characters(start_column, replacement);
         if pad_with_spaces {
             let start_col = start_column;
-            let replacement_width = replacement.chars().map(|c| codepoint_width(c as u32)).sum::<u8>() as i32;
+            let replacement_width = replacement
+                .chars()
+                .map(|c| i32::from(codepoint_width(c as u32)).max(1))
+                .sum::<i32>()
+                .min(self.width - start_col);
             let remaining = self.width - start_col - replacement_width;
             for i in 0..remaining {
                 self.clear_cell(start_col + replacement_width + i);
@@ -802,6 +815,29 @@ mod tests {
         row.replace_characters(2, "AB");
         assert_eq!(row.get_chars_at(2), "A");
         assert_eq!(row.get_chars_at(3), "B");
+    }
+
+    #[test]
+    fn replace_characters_advances_by_glyph_width() {
+        // U+30CD is two columns wide, so the next character cannot land in its
+        // second cell.
+        let mut row = Row::new(6);
+        row.replace_characters(0, "a\u{30cd}b");
+
+        assert_eq!(row.get_chars_at(0), "a");
+        assert_eq!(row.get_chars_at(1), "\u{30cd}");
+        assert_eq!(row.get_chars_at(2), "");
+        assert_eq!(row.get_chars_at(3), "b");
+    }
+
+    #[test]
+    fn replace_characters_leaves_a_glyph_that_does_not_fit() {
+        // A double-width glyph in the last column has nowhere to go; upstream
+        // leaves the cell alone rather than splitting it.
+        let mut row = Row::new(3);
+        row.replace_characters(2, "\u{30cd}");
+
+        assert_eq!(row.get_chars_at(2), "");
     }
 
     #[test]
