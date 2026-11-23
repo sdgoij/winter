@@ -152,6 +152,7 @@ fn activate(app: &Application) {
         grid: CELLS,
         pointer: (0, 0),
         wheel_pixels: 0.0,
+        hover: None,
         window_title: String::new(),
         screenshot,
     }));
@@ -174,14 +175,21 @@ fn activate(app: &Application) {
     {
         let shell = Rc::clone(&shell);
         area.set_draw_func(move |_area, context, width, height| {
-            shell.borrow_mut().paint(context, width, height);
+            // A draw can be asked for while a callback still holds the shell --
+            // a popover grab is one such moment -- and a frame that waits for
+            // the next tick is better than an abort.
+            if let Ok(mut shell) = shell.try_borrow_mut() {
+                shell.paint(context, width, height);
+            }
         });
     }
 
     {
         let shell = Rc::clone(&shell);
         strip.set_draw_func(move |_strip, context, width, height| {
-            shell.borrow_mut().paint_strip(context, width, height);
+            if let Ok(mut shell) = shell.try_borrow_mut() {
+                shell.paint_strip(context, width, height);
+            }
         });
     }
 
@@ -232,19 +240,49 @@ fn activate(app: &Application) {
         let click = GestureClick::new();
         // Every button, because the middle click is how a tab closes.
         click.set_button(0);
+        let menu = shell.borrow().menu.clone();
+        let tall = strip.clone();
         click.connect_pressed(move |gesture, _presses, x, _y| {
-            let Some(sequence) = gesture.current_sequence() else {
-                return;
-            };
-            if shell.borrow_mut().press_strip(x, gesture.current_button()) {
-                // The strip took the press, so the header bar must not also
-                // start dragging the window with it.
-                gesture.set_sequence_state(&sequence, EventSequenceState::Claimed);
+            let (claimed, popup) = shell.borrow_mut().press_strip(x, gesture.current_button());
+            // Claiming is per gesture, not per event sequence: a mouse press has
+            // no sequence, and GTK's `GtkWindowHandle` claims every primary
+            // double press to toggle maximize, so a press the strip does not
+            // claim becomes a title-bar gesture even over a button.
+            gesture.set_state(if claimed {
+                EventSequenceState::Claimed
             } else {
-                gesture.set_sequence_state(&sequence, EventSequenceState::Denied);
+                EventSequenceState::Denied
+            });
+
+            // Popping the menu up emits `leave` on the strip, which borrows the
+            // shell again: it must happen after the borrow above has ended.
+            if let Some(slots) = popup {
+                let below = gdk::Rectangle::new(slots.left, tall.height(), slots.width(), 1);
+                menu.set_pointing_to(Some(&below));
+                menu.popup();
             }
         });
         strip.add_controller(click);
+    }
+
+    {
+        // The strip shows what is under the pointer, so a tab or a button that
+        // is about to be pressed looks alive. A hover change the shell cannot
+        // take right now is a repaint that waits for the next motion.
+        let motion = EventControllerMotion::new();
+        let over = Rc::clone(&shell);
+        motion.connect_motion(move |_controller, x, _y| {
+            if let Ok(mut shell) = over.try_borrow_mut() {
+                shell.hover(Some(x));
+            }
+        });
+        let leave = Rc::clone(&shell);
+        motion.connect_leave(move |_controller| {
+            if let Ok(mut shell) = leave.try_borrow_mut() {
+                shell.hover(None);
+            }
+        });
+        strip.add_controller(motion);
     }
 
     {
@@ -348,6 +386,9 @@ struct Shell {
     /// Wheel pixels that have not yet made a row: a touchpad reports pixels
     /// where a wheel reports whole detents.
     wheel_pixels: f64,
+    /// Where the pointer is over the strip, so the element under it can show
+    /// that it is pressable.
+    hover: Option<i32>,
     /// The title the window last showed, so it is not rewritten every tick.
     window_title: String,
     /// Where `WINTER_SCREENSHOT` asked for a picture, if it did.
@@ -515,28 +556,21 @@ impl Shell {
         self.open_tab(profile.as_ref());
     }
 
-    /// Pops the profile menu up under its button.
-    fn open_profile_menu(&self, slots: TabBox) {
-        let below = gdk::Rectangle::new(slots.left, self.strip.height(), slots.width(), 1);
-        self.menu.set_pointing_to(Some(&below));
-        self.menu.popup();
-    }
-
-    /// Handles a press on the strip; returns whether the strip took it.
+    /// Remembers the pointer's cell for the wheel a tracking program receives.
+    /// Handles a press on the strip.
     ///
-    /// A press the strip declines belongs to the header bar, which drags the
-    /// window with it.
-    fn press_strip(&mut self, x: f64, button: u32) -> bool {
+    /// Returns whether the strip took it, and the box to pop the profile menu
+    /// under when that was the press. A press the strip declines belongs to the
+    /// title bar, which drags the window with it and offers the window menu on
+    /// the right button.
+    fn press_strip(&mut self, x: f64, button: u32) -> (bool, Option<TabBox>) {
         let (layout, menu) = strip_and_menu(self.strip.width(), self.tabs.len());
         if menu.contains(x as i32) {
-            if button == 1 {
-                self.open_profile_menu(menu);
-            }
-            return true;
+            return (button == 1, (button == 1).then_some(menu));
         }
 
         let Some(hit) = tabs::strip_hit(&layout, x as i32) else {
-            return false;
+            return (false, None);
         };
 
         match hit {
@@ -548,10 +582,10 @@ impl Shell {
             // Middle-click closes a tab, the way upstream's tabs do.
             StripHit::Tab(index) | StripHit::Close(index) if button == 2 => self.close_tab(index),
             StripHit::Close(index) if button == 1 => self.close_tab(index),
-            StripHit::Tab(_) | StripHit::Close(_) | StripHit::New => {}
+            StripHit::Tab(_) | StripHit::Close(_) | StripHit::New => return (false, None),
         }
 
-        true
+        (true, None)
     }
 
     /// Remembers the pointer's cell for the wheel a tracking program receives.
@@ -658,11 +692,14 @@ impl Shell {
             let Some(tab) = self.tabs.get(index) else {
                 continue;
             };
-            let (fill, text) = if index == active {
+            let (mut fill, text) = if index == active {
                 (colors.active, colors.active_text)
             } else {
                 (colors.inactive, colors.inactive_text)
             };
+            if self.pointer_is_over(*slots) && index != active {
+                fill = hovered(fill);
+            }
 
             rounded_top(context, *slots, height, fill);
 
@@ -683,14 +720,44 @@ impl Shell {
             glyph_cross(context, close, f64::from(height) / 2.0, text);
         }
 
-        // The buttons are painted last, so where they overlap an overflowing
-        // strip they are what the user sees -- and what a press names.
-        let button_fill = colors.row.unwrap_or(colors.active);
-        let text = colors.row_text();
-        rounded_top(context, layout.new_tab, height, button_fill);
-        rounded_top(context, menu, height, button_fill);
+        // The two buttons are one group, painted last so an overflowing strip
+        // cannot cover them; a hairline splits them so they read as one block.
+        let group = TabBox {
+            left: layout.new_tab.left,
+            right: menu.right,
+        };
+        let base = colors.row.unwrap_or(colors.active);
+        let fill = if self.pointer_is_over(group) {
+            hovered(base)
+        } else {
+            base
+        };
+        rounded_top(context, group, height, fill);
+
+        set_rgb(context, blend(fill, contrasting(fill), 0.3));
+        context.set_line_width(1.0);
+        let split = f64::from(layout.new_tab.right) + 0.5;
+        context.move_to(split, f64::from(height) * 0.3);
+        context.line_to(split, f64::from(height) * 0.7);
+        context.stroke().ok();
+
+        let text = contrasting(fill);
         glyph_plus(context, centre(layout.new_tab), f64::from(height) / 2.0, text);
         glyph_chevron(context, centre(menu), f64::from(height) / 2.0, text);
+    }
+
+    /// Whether the pointer sits inside `slots`.
+    fn pointer_is_over(&self, slots: TabBox) -> bool {
+        self.hover.is_some_and(|x| slots.contains(x))
+    }
+
+    /// Remembers where the pointer is over the strip, or that it left.
+    fn hover(&mut self, x: Option<f64>) {
+        let x = x.map(|x| x as i32);
+        if self.hover != x {
+            self.hover = x;
+            self.strip.queue_draw();
+        }
     }
 
     /// The colours the strip paints with.
@@ -836,11 +903,9 @@ struct StripColors {
     inactive_text: (f64, f64, f64),
 }
 
-impl StripColors {
-    /// The colour the new-tab glyph reads in.
-    fn row_text(&self) -> (f64, f64, f64) {
-        contrasting(self.row.unwrap_or(self.active))
-    }
+/// A fill lifted towards its own text colour, for the element under the pointer.
+fn hovered(fill: (f64, f64, f64)) -> (f64, f64, f64) {
+    blend(fill, contrasting(fill), 0.15)
 }
 
 /// Fills a tab's box with rounded top corners.

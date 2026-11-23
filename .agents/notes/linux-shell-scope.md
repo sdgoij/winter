@@ -133,6 +133,18 @@ optimisation if a 1080p frame at 8 MB per paint proves too costly.
 - **Cairo wants an A8 stride that is a multiple of four.** A glyph mask whose
   stride is the plain pixel width creates an error surface, and
   `cairo_mask_surface` then draws nothing without reporting one.
+- **A GTK call can emit a signal before it returns.** `popup()` on the
+  strip's menu emits `leave` on the motion controller, so a handler that
+  borrows the shell while the menu is being popped aborts the process with
+  `RefCell already borrowed`. Widget work happens after the borrow ends, and
+  the cosmetic handlers (hover, the two draws) use `try_borrow_mut`, so a
+  re-entrant signal costs one repaint instead of the window.
+- **Claim presses in the strip, or GTK takes them as title-bar gestures.**
+  `GtkWindowHandle` claims every primary double press to toggle maximise and
+  a drag past the threshold to move the window; a press the strip leaves
+  unclaimed becomes one of those. `GtkGesture::set_state` is the call —
+  `set_sequence_state` needs an event sequence a mouse press does not have,
+  which is how the buttons first came out dead.
 - **IME is asynchronous.** `preedit-changed` must drive the renderer's existing
   `Composition` preview; committing text goes through the same `input` path as
   typed keys.

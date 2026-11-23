@@ -199,6 +199,13 @@ cargo run -p winter --features gtk
 `WINTER_SCREENSHOT=<path>` makes that shell write its toplevel to a PNG and
 quit, which is how it is photographed on a machine with no display server.
 
+`just linux` runs the same build. On Windows the GTK headers live in WSL, so
+the first argument names the distro — `just linux FedoraLinux-44`, and
+anything after it goes to cargo. There is no default, because a distro's name
+is a fact about a machine; `WSL_DISTRO` sets the same thing from the
+environment. The guest keeps its artefacts in its own home rather than in the
+repository's `target/`.
+
 ## Layout
 
 ```

@@ -58,6 +58,10 @@ gate: fmt clippy deny test doc
 # The inner loop. Not the gate.
 fast: fmt clippy test
 
+# Run the GTK 4 shell (ADR 061); on Windows name the distro: `just linux <distro>`.
+linux *args:
+    sh scripts/linux.sh {{args}}
+
 # Build the workspace without optimisation.
 build:
     cargo build --workspace
