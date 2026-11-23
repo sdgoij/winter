@@ -218,6 +218,52 @@ pub const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> Mous
     }
 }
 
+/// The settings key a terminal key names, for matching a chord.
+///
+/// Only the keys a window chord can name are mapped; a key with no name here
+/// cannot be bound and always reaches the terminal.
+pub fn settings_key(key: Key) -> Option<settings::Key> {
+    Some(match key {
+        Key::Char(character) => settings::Key::Char(character.to_ascii_lowercase()),
+        Key::Tab => settings::Key::Tab,
+        Key::Enter => settings::Key::Enter,
+        Key::Escape => settings::Key::Escape,
+        Key::Space => settings::Key::Space,
+        Key::Backspace => settings::Key::Backspace,
+        Key::Insert => settings::Key::Insert,
+        Key::Delete => settings::Key::Delete,
+        Key::Home => settings::Key::Home,
+        Key::End => settings::Key::End,
+        Key::PageUp => settings::Key::PageUp,
+        Key::PageDown => settings::Key::PageDown,
+        Key::Left => settings::Key::Left,
+        Key::Right => settings::Key::Right,
+        Key::Up => settings::Key::Up,
+        Key::Down => settings::Key::Down,
+        Key::Function(number) => settings::Key::Function(number),
+        _ => return None,
+    })
+}
+
+/// The window action `key` and `modifiers` name, if the settings file binds it.
+///
+/// A chord must match exactly, so `Ctrl+Shift+T` does not answer to `ctrl+t`.
+/// A shell that cannot perform the action declines it and lets the key reach
+/// the terminal, which is how a copy with nothing selected still interrupts.
+pub fn chord_action(bindings: &[settings::Keybinding], key: Key, modifiers: Modifiers) -> Option<settings::Action> {
+    let key = settings_key(key)?;
+    let chord = settings::Modifiers {
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+    };
+
+    bindings
+        .iter()
+        .find(|binding| binding.keys.matches(key, chord))
+        .map(|binding| binding.action)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +504,55 @@ mod tests {
                 middle: false,
                 right: true,
             }
+        );
+    }
+
+    fn chord_modifiers(ctrl: bool, shift: bool) -> Modifiers {
+        Modifiers {
+            shift,
+            ctrl,
+            alt: false,
+            command: false,
+        }
+    }
+
+    #[test]
+    fn a_bound_chord_names_its_action() {
+        let bindings = settings::DEFAULT_KEYBINDINGS;
+
+        assert_eq!(
+            chord_action(bindings, Key::Char('t'), chord_modifiers(true, true)),
+            Some(settings::Action::NewTab)
+        );
+        assert_eq!(
+            chord_action(bindings, Key::Tab, chord_modifiers(true, false)),
+            Some(settings::Action::NextTab)
+        );
+    }
+
+    #[test]
+    fn a_chord_must_match_exactly() {
+        let bindings = settings::DEFAULT_KEYBINDINGS;
+
+        // `ctrl+t` alone is the terminal's.
+        assert_eq!(
+            chord_action(bindings, Key::Char('t'), chord_modifiers(true, false)),
+            None
+        );
+        assert_eq!(
+            chord_action(bindings, Key::Char('T'), chord_modifiers(true, true)),
+            Some(settings::Action::NewTab)
+        );
+    }
+
+    #[test]
+    fn a_key_the_file_cannot_name_is_never_a_chord() {
+        let bindings = settings::DEFAULT_KEYBINDINGS;
+
+        assert_eq!(settings_key(Key::Numpad(3)), None);
+        assert_eq!(
+            chord_action(bindings, Key::Numpad(3), chord_modifiers(true, true)),
+            None
         );
     }
 }

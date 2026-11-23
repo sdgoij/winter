@@ -454,7 +454,7 @@ impl Component for Shell {
             .on_preview_key_down(RoutedCallback::new(move |info: KeyEventInfo| {
                 let pressed = !info.status.is_released;
                 let bound = key_of(info.key)
-                    .and_then(|key| chord_action(&bindings, key, info.modifiers))
+                    .and_then(|key| input::chord_action(&bindings, key, modifiers(info.modifiers)))
                     .is_some();
 
                 if find_open {
@@ -1082,7 +1082,7 @@ impl Shell {
         // sees the event (ADR 023). Copy is the exception: with no selection
         // it declines the key so ctrl+c still interrupts a program (ADR 053).
         if pressed
-            && let Some(action) = chord_action(&self.bindings, key, info.modifiers)
+            && let Some(action) = input::chord_action(&self.bindings, key, modifiers)
             && self.perform(action, context)
         {
             return;
@@ -1637,44 +1637,6 @@ fn tab_id(key: &str) -> Option<u64> {
 }
 
 /// The settings vocabulary key for a terminal key, if it has one.
-fn settings_key(key: Key) -> Option<settings::Key> {
-    Some(match key {
-        Key::Char(character) => settings::Key::Char(character.to_ascii_lowercase()),
-        Key::Tab => settings::Key::Tab,
-        Key::Enter => settings::Key::Enter,
-        Key::Escape => settings::Key::Escape,
-        Key::Space => settings::Key::Space,
-        Key::Backspace => settings::Key::Backspace,
-        Key::Insert => settings::Key::Insert,
-        Key::Delete => settings::Key::Delete,
-        Key::Home => settings::Key::Home,
-        Key::End => settings::Key::End,
-        Key::PageUp => settings::Key::PageUp,
-        Key::PageDown => settings::Key::PageDown,
-        Key::Left => settings::Key::Left,
-        Key::Right => settings::Key::Right,
-        Key::Up => settings::Key::Up,
-        Key::Down => settings::Key::Down,
-        Key::Function(number) => settings::Key::Function(number),
-        _ => return None,
-    })
-}
-
-/// The window action a chord names, if the file binds it.
-fn chord_action(bindings: &[settings::Keybinding], key: Key, modifiers: InputModifiers) -> Option<settings::Action> {
-    let key = settings_key(key)?;
-    let chord = settings::Modifiers {
-        ctrl: modifiers.contains(InputModifiers::CONTROL),
-        shift: modifiers.contains(InputModifiers::SHIFT),
-        alt: modifiers.contains(InputModifiers::ALT),
-    };
-
-    bindings
-        .iter()
-        .find(|binding| binding.keys.matches(key, chord))
-        .map(|binding| binding.action)
-}
-
 /// The grid cell a pane-relative position names, in DIPs.
 fn pointer_cell(x: f64, y: f64, grid: (i32, i32), cell: (u16, u16), scale: f32) -> Option<(i32, i32)> {
     let scale = f64::from(finite_scale(scale));
@@ -2215,12 +2177,12 @@ mod tests {
         ctrl_shift |= InputModifiers::SHIFT;
 
         assert_eq!(
-            chord_action(&file.keybindings, Key::Char('q'), ctrl_shift),
+            input::chord_action(&file.keybindings, Key::Char('q'), modifiers(ctrl_shift)),
             Some(settings::Action::Copy)
         );
         // The same key without Shift is not this chord.
         assert_eq!(
-            chord_action(&file.keybindings, Key::Char('q'), InputModifiers::CONTROL),
+            input::chord_action(&file.keybindings, Key::Char('q'), modifiers(InputModifiers::CONTROL)),
             None
         );
     }
@@ -2230,11 +2192,11 @@ mod tests {
         let bindings = settings::Settings::default().keybindings;
 
         assert_eq!(
-            chord_action(&bindings, Key::Char('c'), InputModifiers::CONTROL),
+            input::chord_action(&bindings, Key::Char('c'), modifiers(InputModifiers::CONTROL)),
             Some(settings::Action::Copy)
         );
         assert_eq!(
-            chord_action(&bindings, Key::Char('v'), InputModifiers::CONTROL),
+            input::chord_action(&bindings, Key::Char('v'), modifiers(InputModifiers::CONTROL)),
             Some(settings::Action::Paste)
         );
     }
@@ -2245,23 +2207,26 @@ mod tests {
         let shift = InputModifiers::SHIFT;
 
         assert_eq!(
-            chord_action(&bindings, Key::PageUp, shift),
+            input::chord_action(&bindings, Key::PageUp, modifiers(shift)),
             Some(settings::Action::ScrollUpPage)
         );
         assert_eq!(
-            chord_action(&bindings, Key::PageDown, shift),
+            input::chord_action(&bindings, Key::PageDown, modifiers(shift)),
             Some(settings::Action::ScrollDownPage)
         );
         // A page key without Shift is the program's.
-        assert_eq!(chord_action(&bindings, Key::PageUp, InputModifiers::NONE), None);
+        assert_eq!(
+            input::chord_action(&bindings, Key::PageUp, modifiers(InputModifiers::NONE)),
+            None
+        );
     }
 
     #[test]
     fn a_key_without_a_settings_name_is_not_a_chord() {
-        assert_eq!(settings_key(Key::LeftShift), None);
-        assert_eq!(settings_key(Key::CapsLock), None);
-        assert_eq!(settings_key(Key::Char('A')), Some(settings::Key::Char('a')));
-        assert_eq!(settings_key(Key::Function(5)), Some(settings::Key::Function(5)));
+        assert_eq!(input::settings_key(Key::LeftShift), None);
+        assert_eq!(input::settings_key(Key::CapsLock), None);
+        assert_eq!(input::settings_key(Key::Char('A')), Some(settings::Key::Char('a')));
+        assert_eq!(input::settings_key(Key::Function(5)), Some(settings::Key::Function(5)));
     }
 
     #[test]

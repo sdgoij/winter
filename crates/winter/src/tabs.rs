@@ -1,8 +1,115 @@
-//! The tab list and its active index.
+//! The tab list and its active index, and the strip that shows it.
 //!
 //! Toolkit-free (ADR 018): the window draws the titles and turns clicks and
 //! chords into commands; this type owns the list and keeps the active index
-//! valid through adds, closes and wraps.
+//! valid through adds, closes and wraps, and [`strip_layout`] owns the rule for
+//! where a tab sits so every shell puts it in the same place.
+
+/// The narrowest a tab is drawn, so a title still reads.
+pub const TAB_MIN: i32 = 96;
+/// The widest a tab is drawn; the strip leaves the rest empty.
+pub const TAB_MAX: i32 = 220;
+/// The new-tab button's width.
+pub const NEW_TAB: i32 = 32;
+/// The close box at a tab's right end.
+pub const CLOSE: i32 = 22;
+
+/// A box in the strip, in pixels; `right` is exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabBox {
+    /// The box's left edge.
+    pub left: i32,
+    /// The box's right edge, exclusive.
+    pub right: i32,
+}
+
+impl TabBox {
+    /// Returns the box's width in pixels.
+    pub const fn width(&self) -> i32 {
+        self.right - self.left
+    }
+
+    /// Returns whether `x` falls in the box.
+    pub const fn contains(&self, x: i32) -> bool {
+        x >= self.left && x < self.right
+    }
+}
+
+/// Where the strip's tabs and its new-tab button sit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StripLayout {
+    /// One box per tab, in order.
+    pub tabs: Vec<TabBox>,
+    /// The new-tab button, after the last tab.
+    pub new_tab: TabBox,
+}
+
+/// Splits `width` into equal tab boxes and the new-tab button.
+///
+/// Tabs shrink to [`TAB_MIN`] and grow to [`TAB_MAX`]. A strip too narrow for
+/// its tabs keeps the button at its right edge, over the tab that would have
+/// covered it, so the button is reachable at any width.
+pub fn strip_layout(width: i32, count: usize) -> StripLayout {
+    let width = width.max(0);
+    let available = (width - NEW_TAB).max(0);
+    let tab_width = match i32::try_from(count) {
+        Ok(count) if count > 0 => (available / count).clamp(TAB_MIN, TAB_MAX),
+        _ => TAB_MAX,
+    };
+
+    let tabs = (0..count)
+        .map(|index| {
+            let left = i32::try_from(index).unwrap_or(i32::MAX) * tab_width;
+            TabBox {
+                left,
+                right: left.saturating_add(tab_width),
+            }
+        })
+        .collect();
+    let left = (tab_width * i32::try_from(count).unwrap_or(0)).min(available);
+
+    StripLayout {
+        tabs,
+        new_tab: TabBox {
+            left,
+            right: left + NEW_TAB,
+        },
+    }
+}
+
+/// What a press on the strip asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripHit {
+    /// Show the tab at this index.
+    Tab(usize),
+    /// Close the tab at this index.
+    Close(usize),
+    /// Start a new tab.
+    New,
+}
+
+/// Maps a press at `x` to what it asked for.
+///
+/// The new-tab button is tested first: it is drawn last, so where it overlaps
+/// a tab it is what the user sees and therefore what the press names.
+pub fn strip_hit(layout: &StripLayout, x: i32) -> Option<StripHit> {
+    if layout.new_tab.contains(x) {
+        return Some(StripHit::New);
+    }
+
+    layout.tabs.iter().enumerate().find_map(|(index, tab)| {
+        if !tab.contains(x) {
+            return None;
+        }
+        // The close box is the tab's right end, so a press on the title does
+        // not hit it.
+        if tab.right - x <= CLOSE {
+            Some(StripHit::Close(index))
+        } else {
+            Some(StripHit::Tab(index))
+        }
+    })
+}
 
 /// A list of tabs with one active index.
 #[derive(Debug, Clone)]
@@ -143,6 +250,64 @@ mod tests {
 
     fn titles<T: Copy>(tabs: &Tabs<T>) -> Vec<T> {
         (0..tabs.len()).filter_map(|index| tabs.get(index).copied()).collect()
+    }
+
+    #[test]
+    fn a_strip_puts_one_tab_after_another() {
+        let layout = strip_layout(900, 2);
+
+        assert_eq!(layout.tabs.len(), 2);
+        assert_eq!(
+            layout.tabs[0],
+            TabBox {
+                left: 0,
+                right: TAB_MAX
+            }
+        );
+        assert_eq!(layout.tabs[1].left, TAB_MAX);
+        assert_eq!(layout.new_tab.left, layout.tabs[1].right);
+        assert_eq!(layout.new_tab.width(), NEW_TAB);
+    }
+
+    #[test]
+    fn tabs_shrink_to_the_minimum_before_the_strip_overflows() {
+        let layout = strip_layout(900, 8);
+        // 868 available for eight tabs is 108 each, between the bounds.
+        assert_eq!(layout.tabs[0].width(), 108);
+        assert_eq!(layout.new_tab.left, 8 * 108);
+
+        let narrow = strip_layout(300, 8);
+        assert_eq!(narrow.tabs[0].width(), TAB_MIN);
+        // The button stays at the right edge, over the tab it covers.
+        assert_eq!(narrow.new_tab.right, 300);
+    }
+
+    #[test]
+    fn a_press_names_the_tab_its_close_box_or_the_button() {
+        let layout = strip_layout(900, 2);
+
+        assert_eq!(strip_hit(&layout, 0), Some(StripHit::Tab(0)));
+        assert_eq!(strip_hit(&layout, TAB_MAX - 1), Some(StripHit::Close(0)));
+        assert_eq!(strip_hit(&layout, TAB_MAX), Some(StripHit::Tab(1)));
+        assert_eq!(strip_hit(&layout, 2 * TAB_MAX + 4), Some(StripHit::New));
+        assert_eq!(strip_hit(&layout, 2 * TAB_MAX + NEW_TAB), None);
+    }
+
+    #[test]
+    fn the_new_tab_button_is_reachable_over_an_overflowing_strip() {
+        let layout = strip_layout(300, 8);
+
+        assert_eq!(strip_hit(&layout, 290), Some(StripHit::New));
+        // Left of the button is still the tab underneath it.
+        assert_eq!(strip_hit(&layout, 200), Some(StripHit::Tab(2)));
+    }
+
+    #[test]
+    fn an_empty_strip_still_offers_the_button() {
+        let layout = strip_layout(900, 0);
+
+        assert!(layout.tabs.is_empty());
+        assert_eq!(strip_hit(&layout, 4), Some(StripHit::New));
     }
 
     #[test]

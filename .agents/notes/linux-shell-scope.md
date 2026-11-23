@@ -25,7 +25,7 @@ primary selection and IME.
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
 | 3. Skeleton | ✅ `crates/winter/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
-| 5. Host chrome | ⏳ next |
+| 5. Host chrome | ⏳ tabs and the profile menu are in; the find bar and the settings window remain |
 | 6. Linux extras | ⏳ |
 | 7. Cut-over | ⏳ |
 
@@ -126,6 +126,13 @@ optimisation if a 1080p frame at 8 MB per paint proves too costly.
   Windows; a cached 1.0 face is the classic blurry-terminal bug.
 - **CSD is the default**, so the header bar *is* the title bar — which is what
   the WinUI shell already looks like. Do not add a server-side decoration.
+  A `GtkHeaderBar` centres its title widget, though, and a start child never
+  expands: the bar is a `GtkWindowHandle` around the strip with a
+  `GtkWindowControls` at each end, so the tabs start at the left edge and the
+  buttons still follow `gtk-decoration-layout`.
+- **Cairo wants an A8 stride that is a multiple of four.** A glyph mask whose
+  stride is the plain pixel width creates an error surface, and
+  `cairo_mask_surface` then draws nothing without reporting one.
 - **IME is asynchronous.** `preedit-changed` must drive the renderer's existing
   `Composition` preview; committing text goes through the same `input` path as
   typed keys.
@@ -192,8 +199,10 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    the widget.
 4. **Live terminal.** ✅ `Session` + `Control` wiring, key input, resize; the
    bar was `cargo run` on a real prompt in the guest, photographed by the shot.
-5. **Host chrome.** Native profile menu, find bar, settings window, native
-   dialogs where they exist.
+5. **Host chrome.** ⏳ The tab strip (tabs, close boxes, the new-tab button
+   and the profile menu's button) is painted by this shell inside a
+   `GtkWindowHandle`, with the profile list as a `GtkPopoverMenu`. The find
+   bar, the settings window and the native dialogs remain.
 6. **Linux extras.** Primary selection, IME preview, bell, notifications.
 7. **Cut-over.** `main.rs` prefers the native shell on Linux, egui stays for
    macOS until its own shell exists; `just test` must stay green on a headless
