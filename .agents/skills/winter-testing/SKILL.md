@@ -1,9 +1,9 @@
 ---
-name: winterm-testing
-description: Run and add tests in the winterm workspace. Use when running the suite or gate, adding a unit, property, conformance or ignored test, deciding where a test belongs, or reporting whether a change is green.
+name: winter-testing
+description: Run and add tests in the Winter workspace. Use when running the suite or gate, adding a unit, property, conformance or ignored test, deciding where a test belongs, or reporting whether a change is green.
 ---
 
-# Testing winterm
+# Testing Winter
 
 `AGENTS.md` states the rules; this is the procedure. The layers are in
 `AGENTS.md` §Test layers — this file is how to work in them.

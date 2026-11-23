@@ -179,8 +179,8 @@ mod tests {
     #[test]
     fn the_earlier_file_sits_beside_the_current_one() {
         assert_eq!(
-            legacy_path(Path::new("/tmp/config/winterm/settings.toml")),
-            PathBuf::from("/tmp/config/winterm/settings.json")
+            legacy_path(Path::new("/tmp/config/winter/settings.toml")),
+            PathBuf::from("/tmp/config/winter/settings.json")
         );
     }
 

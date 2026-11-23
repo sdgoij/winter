@@ -114,19 +114,19 @@ mod tests {
     #[test]
     fn a_changed_title_is_flagged_then_applied() {
         let mut base = RenderEngineBase::new();
-        base.invalidate_title("winterm");
+        base.invalidate_title("winter");
         assert!(base.title_changed());
 
         let mut applied = String::new();
         let updated = base
-            .update_title("winterm", |title| {
+            .update_title("winter", |title| {
                 applied = title.to_string();
                 Ok(())
             })
             .expect("title update");
         assert!(updated);
-        assert_eq!(applied, "winterm");
-        assert_eq!(base.last_frame_title(), "winterm");
+        assert_eq!(applied, "winter");
+        assert_eq!(base.last_frame_title(), "winter");
         assert!(!base.title_changed());
     }
 

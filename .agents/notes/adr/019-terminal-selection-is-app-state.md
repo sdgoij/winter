@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/view.rs`, `crates/winterm/src/grid.rs`;
+- Related: `crates/winter/src/view.rs`, `crates/winter/src/grid.rs`;
   ADR 014, ADR 018
 
 ## Context
@@ -23,7 +23,7 @@ cannot be reused: its mutating operations take a `ConsoleInformation` and a
 
 ## Decision
 
-`crates/winterm/src/view.rs` owns the terminal-side view state:
+`crates/winter/src/view.rs` owns the terminal-side view state:
 
 - the scroll offset into the buffer's history,
 - the selection in screen cells, with character, word, line and block modes,

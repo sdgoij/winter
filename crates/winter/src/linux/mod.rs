@@ -1,7 +1,7 @@
 //! The GTK 4 shell: a native window over the renderer's pixels (ADR 061).
 //!
 //! Milestone 3 of the Linux shell: the window, a drawing area, and one frame
-//! painted from `renderer` into it. `WINTERM_SCREENSHOT=<path>` writes the
+//! painted from `renderer` into it. `WINTER_SCREENSHOT=<path>` writes the
 //! toplevel exactly as GTK draws it — client-side decorations included — and
 //! quits, which is how a machine with no display server photographs the shell.
 //!
@@ -40,17 +40,17 @@ const FONT_SIZE: f32 = 14.0;
 
 /// Starts the GTK shell and runs it until its window closes.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let app = Application::builder().application_id("org.winterm.Winterm").build();
+    let app = Application::builder().application_id("org.winter.Winter").build();
     app.connect_activate(activate);
     app.run();
     Ok(())
 }
 
 fn activate(app: &Application) {
-    let screenshot = std::env::var_os("WINTERM_SCREENSHOT").map(PathBuf::from);
+    let screenshot = std::env::var_os("WINTER_SCREENSHOT").map(PathBuf::from);
 
     let Some(fonts) = fonts(FONT_SIZE, CELLS) else {
-        eprintln!("winterm: no monospace face found in the usual font directories");
+        eprintln!("winter: no monospace face found in the usual font directories");
         app.quit();
         return;
     };
@@ -67,7 +67,7 @@ fn activate(app: &Application) {
 
     let window = ApplicationWindow::builder()
         .application(app)
-        .title("winterm")
+        .title("Winter")
         .default_width(i32::from(fonts.cell.0) * CELLS.0)
         .default_height(i32::from(fonts.cell.1) * CELLS.1)
         .build();
@@ -117,7 +117,7 @@ struct Shell {
     cell: (u16, u16),
     /// The grid the renderer's target currently holds.
     grid: (i32, i32),
-    /// Where `WINTERM_SCREENSHOT` asked for a picture, if it did.
+    /// Where `WINTER_SCREENSHOT` asked for a picture, if it did.
     screenshot: Option<PathBuf>,
 }
 
@@ -206,27 +206,27 @@ impl Shell {
         paintable.snapshot(&snapshot, width, height);
 
         let Some(node) = snapshot.to_node() else {
-            eprintln!("winterm: the window produced no render node");
+            eprintln!("winter: the window produced no render node");
             app.quit();
             return;
         };
         let Some(native) = self.window.native() else {
-            eprintln!("winterm: the window has no native surface");
+            eprintln!("winter: the window has no native surface");
             app.quit();
             return;
         };
 
         let viewport = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
         let Some(renderer) = native.renderer() else {
-            eprintln!("winterm: the surface has no renderer");
+            eprintln!("winter: the surface has no renderer");
             app.quit();
             return;
         };
         let texture = renderer.render_texture(&node, Some(&viewport));
 
         match texture.save_to_png(path) {
-            Ok(()) => println!("winterm: wrote {}", path.display()),
-            Err(error) => eprintln!("winterm: cannot write {}: {error}", path.display()),
+            Ok(()) => println!("winter: wrote {}", path.display()),
+            Err(error) => eprintln!("winter: cannot write {}: {error}", path.display()),
         }
         app.quit();
     }
@@ -363,7 +363,7 @@ fn channels(color: u32) -> (f64, f64, f64) {
 }
 
 /// What the skeleton paints: enough to prove the render path end to end.
-const SAMPLE: &[u8] = b"\x1b[1;36mwinterm\x1b[0m \x1b[2m-\x1b[0m GTK 4 shell, milestone 3\r\n\
+const SAMPLE: &[u8] = b"\x1b[1;36mWinter\x1b[0m \x1b[2m-\x1b[0m GTK 4 shell, milestone 3\r\n\
 \r\n\
 This frame is \x1b[1mrenderer\x1b[0m pixels blitted into a GtkDrawingArea.\r\n\
 Tabs, input and a real pty are the next milestones.\r\n\

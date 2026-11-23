@@ -175,7 +175,7 @@ mod tests {
             true
         }
         fn console_title(&self) -> &str {
-            "winterm"
+            "winter"
         }
         fn hyperlink_uri(&self, _id: u16) -> String {
             String::new()

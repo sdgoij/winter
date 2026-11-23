@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/ui.rs`, `crates/renderer/src/font_cache.rs`; ADRs 008, 018
+- Related: `crates/winter/src/ui.rs`, `crates/renderer/src/font_cache.rs`; ADRs 008, 018
 
 ## Context
 
@@ -15,7 +15,7 @@ only used by the renderer's tests.
 
 - At startup the shell scans the platform's font directories, chooses a
   preferred fixed-pitch family, and registers its faces with egui under its own
-  family names (`winterm-mono`, `winterm-mono-italic`).
+  family names (`winter-mono`, `winter-mono-italic`).
 - **A family that has an italic is preferred** over the first preferred family:
   the top choice can be installed upright-only — Cascadia Mono is on the machine
   this was written on — and choosing it would leave SGR 3 upright while a later

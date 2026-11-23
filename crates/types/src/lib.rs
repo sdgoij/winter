@@ -1,4 +1,4 @@
-//! # winterm-types
+//! # winter-types
 //!
 //! Core terminal types — color, character attributes, rendering metadata, and viewport.
 //! Ported from Microsoft's Windows Terminal C++ types and buffer modules.

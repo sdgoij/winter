@@ -1,4 +1,4 @@
-//! # winterm-server
+//! # winter-server
 //!
 //! The console server: the API surface a client process talks to, and the
 //! handles and wait queues behind it. Ported from `src/server`.

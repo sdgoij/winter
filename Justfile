@@ -1,4 +1,4 @@
-# Winterm developer tasks.
+# Winter developer tasks.
 #
 # One place for the commands in AGENTS.md. `.github/workflows/ci.yml` runs the
 # same recipes on every platform it supports; if the two disagree, CI is the
@@ -69,10 +69,10 @@ console-host:
 
 # Assemble a runnable Windows release folder: binary, console host, licences (ADR 055).
 dist:
-    cargo build --release -p winterm
+    cargo build --release -p winter
     rm -rf dist
     mkdir -p dist
-    cp target/release/winterm.exe dist/winterm.exe
+    cp target/release/winter.exe dist/winter.exe
     cp LICENSE.md dist/LICENSE.md
     cp licenses/OpenConsole-MIT.txt dist/LICENSE-OpenConsole.txt
     cp README.md dist/README.md

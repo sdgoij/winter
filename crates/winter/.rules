@@ -1,6 +1,6 @@
-# winterm application crate
+# winter application crate
 
-- The Windows shell is `src/winui/`; load the `winterm-winui` skill before
+- The Windows shell is `src/winui/`; load the `winter-winui` skill before
   changing it.
 - `unsafe` is permitted only in `winui::surface`, `winui::wheel` and `sound`,
   each call with a `SAFETY:` note.

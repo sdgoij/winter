@@ -29,9 +29,9 @@ const DIVIDER_GRAB: f32 = 4.0;
 const FOCUS_BORDER: egui::Color32 = egui::Color32::from_rgb(90, 140, 200);
 
 /// The egui family the host's regular monospace face is registered under.
-const REGULAR_FAMILY: &str = "winterm-mono";
+const REGULAR_FAMILY: &str = "winter-mono";
 /// The egui family the host's italic monospace face is registered under.
-const ITALIC_FAMILY: &str = "winterm-mono-italic";
+const ITALIC_FAMILY: &str = "winter-mono-italic";
 
 /// The faces the window could register from the host's fonts.
 ///
@@ -186,13 +186,13 @@ pub fn run() -> eframe::Result {
         clipboard_shortcuts: false,
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 560.0])
-            .with_title("winterm")
+            .with_title("Winter")
             .with_icon(crate::icon::data()),
         ..Default::default()
     };
 
     eframe::run_native(
-        "winterm",
+        "Winter",
         options,
         Box::new(|cc| {
             let faces = register_fonts(&cc.egui_ctx);
@@ -855,7 +855,7 @@ impl App {
         let theme = self.settings.theme();
         let focused = ui.ctx().input(|input| input.focused);
 
-        let mut panel = egui::Panel::top("winterm-tabs");
+        let mut panel = egui::Panel::top("winter-tabs");
         if let Some(fill) = theme
             .and_then(|theme| theme.tab_row_background(focused))
             .and_then(|color| egui_color(color.text_color()))
@@ -1389,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads the host's installed fonts; run with `cargo test -p winterm -- --ignored`"]
+    #[ignore = "reads the host's installed fonts; run with `cargo test -p winter -- --ignored`"]
     fn the_host_faces_register_with_egui() {
         let ctx = egui::Context::default();
         let faces = register_fonts(&ctx);

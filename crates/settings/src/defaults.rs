@@ -40,7 +40,7 @@ pub fn ensure_file() {
 }
 
 fn ensure_file_at(path: &Path) {
-    if path.exists() || migration::legacy_path(path).exists() {
+    if path.exists() || migration::legacy_path(path).exists() || parser::has_legacy_settings(path) {
         return;
     }
     // A directory the process cannot write is not an error: the defaults are
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn a_missing_file_is_written_once_and_loads_as_the_defaults() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("winterm").join("settings.toml");
+        let path = directory.path().join("winter").join("settings.toml");
 
         ensure_file_at(&path);
         assert!(path.exists(), "a fresh installation gets a file to edit");
@@ -83,6 +83,18 @@ mod tests {
         std::fs::write(&path, "version = 1\n\n[font]\nsize = 30\n").expect("write");
         ensure_file_at(&path);
         assert_eq!(parser::load_from_path(Some(path)).settings.font.size, 30.0);
+    }
+
+    #[test]
+    fn a_file_in_the_old_directory_is_not_shadowed_by_the_defaults() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let old = directory.path().join("winterm").join("settings.toml");
+        std::fs::create_dir_all(old.parent().expect("parent")).expect("create");
+        std::fs::write(&old, "version = 1\n").expect("write");
+        let path = directory.path().join("winter").join("settings.toml");
+
+        ensure_file_at(&path);
+        assert!(!path.exists(), "the migration reads the old file instead");
     }
 
     #[test]

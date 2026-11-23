@@ -2,7 +2,7 @@
 
 - Status: Amended by 048 (the wheel reaches a tracking program)
 - Date: 2026-11-22
-- Related: `crates/winterm/src/winui/wheel.rs`, `crates/winterm/src/winui/app.rs`,
+- Related: `crates/winter/src/winui/wheel.rs`, `crates/winter/src/winui/app.rs`,
   `crates/settings/src/actions.rs`, `crates/settings/src/keybindings.rs`,
   ADR 019, ADR 023, ADR 046
 

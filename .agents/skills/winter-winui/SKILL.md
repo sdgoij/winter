@@ -1,11 +1,11 @@
 ---
-name: winterm-winui
-description: Build, run and live-check the WinUI 3 shell in crates/winterm/src/winui. Use when changing the Windows window, tabs, pointer or keyboard input, the Direct2D swap-chain surface, or the mouse-wheel hook, or when a Windows build or synthetic input behaves differently from the egui shell.
+name: winter-winui
+description: Build, run and live-check the WinUI 3 shell in crates/winter/src/winui. Use when changing the Windows window, tabs, pointer or keyboard input, the Direct2D swap-chain surface, or the mouse-wheel hook, or when a Windows build or synthetic input behaves differently from the egui shell.
 ---
 
 # The WinUI 3 shell
 
-`crates/winterm/src/winui/` is the Windows shell; `main.rs` chooses it under
+`crates/winter/src/winui/` is the Windows shell; `main.rs` chooses it under
 `cfg(windows)` and the egui shell everywhere else. The decisions are ADRs
 040–052. This is how to change it without rediscovering the traps.
 
@@ -27,17 +27,17 @@ not Windows-specific belongs there, never in `winui`.
 
 ## Before a build or a live check
 
-- Kill a running session first. `cargo build -p winterm` fails with
-  `Access is denied` while `winterm.exe` is alive:
-  `taskkill //F //IM winterm.exe`.
+- Kill a running session first. `cargo build -p winter` fails with
+  `Access is denied` while `winter.exe` is alive:
+  `taskkill //F //IM winter.exe`.
 - Image sequences (sixel, kitty) need a console host that forwards them. Put an
   `OpenConsole.exe` beside the built binary — `just console-host` copies the one
-  Windows Terminal ships — or set `WINTERM_CONSOLE_HOST`. Without one the
+  Windows Terminal ships — or set `WINTER_CONSOLE_HOST`. Without one the
   session runs on the inbox ConPTY and silently drops images (ADR 055).
   `just dist` assembles the release folder with the host, its `NOTICE.html` and
-  the Windows Terminal MIT licence beside `winterm.exe`. `just package` builds
+  the Windows Terminal MIT licence beside `winter.exe`. `just package` builds
   the same folder for any platform and wraps it in
-  `dist/winterm-<version>-<target>.zip` (Windows) or `.tar.gz`; that is what a
+  `dist/winter-<version>-<target>.zip` (Windows) or `.tar.gz`; that is what a
   `v*` tag publishes.
 - The app's `%TEMP%` is not bash's. MSYS `$TEMP` is `/tmp`; the app and
   PowerShell use `%LOCALAPPDATA%\Temp`. A probe file written by the app is not
@@ -170,8 +170,8 @@ Red ticks need an exit code, and only the shell has one. `winui` and egui both
 start a PowerShell profile through `shell_integration::attach`, which appends
 `-NoExit -File <script>` (ADR 060).
 
-- The script is `crates/winterm/shell-integration/winterm.ps1`, embedded with
-  `include_str!` and written to `%LOCALAPPDATA%\winterm\`. Edit the file in the
+- The script is `crates/winter/shell-integration/winter.ps1`, embedded with
+  `include_str!` and written to `%LOCALAPPDATA%\winter\`. Edit the file in the
   tree, never the copy in the cache: the copy is rewritten when it differs.
 - `-File` runs after the user's profile, so the hook wraps that prompt; it
   captures the original once, so sourcing it twice does not nest.
@@ -179,7 +179,7 @@ start a PowerShell profile through `shell_integration::attach`, which appends
   (`-Command`, `-File`, `-EncodedCommand`, `-NonInteractive` or a bare script
   all decline). `-File` takes the rest of the command line, so appending after
   one would steal the user's arguments.
-- `WINTERM_SHELL_INTEGRATION=0` turns it off for a shell.
+- `WINTER_SHELL_INTEGRATION=0` turns it off for a shell.
 - `start_prompt` and `start_command` make one mark per row and never merge into
   an adjacent one (ADR 060). Merged marks were a real bug: every tick reported
   the last command's status. `D` must reach exactly one command mark.
@@ -196,7 +196,7 @@ not paint them in the shell.
 ## Profile menu
 
 The `▾` after the tab strip's `+` toggles a list built by `menu::entries`: every
-profile in file order, then `Settings` and `About winterm`. The binding has no
+profile in file order, then `Settings` and `About Winter`. The binding has no
 flyout, so the list is an overlay in the pane's `Grid` that hangs under the
 button (ADR 052).
 

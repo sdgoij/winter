@@ -2,8 +2,8 @@
 
 - Status: Superseded by ADR 040
 - Date: 2026-11-22
-- Related: `crates/winterm/src/{app,terminal_widget,config,window,icon}.rs`,
-  `crates/winterm/Cargo.toml`; ADRs 007, 009, 016, 018, 038
+- Related: `crates/winter/src/{app,terminal_widget,config,window,icon}.rs`,
+  `crates/winter/Cargo.toml`; ADRs 007, 009, 016, 018, 038
 
 ## Context
 
@@ -53,7 +53,7 @@ placement of an IME candidate window. Those are `DwmSetWindowAttribute` and
    the bell is `RequestUserAttention`, the last tab is `Close`. These add no
    `unsafe` and no dependency.
 4. **What the toolkit cannot express goes in one module.**
-   `crates/winterm/src/win32.rs` is `#[cfg(windows)]`, carries a module-level
+   `crates/winter/src/win32.rs` is `#[cfg(windows)]`, carries a module-level
    `#[allow(unsafe_code)]`, and every call carries a `SAFETY:` note — the shape
    ADR 016 gave the pty backends. It holds the DWM corner and border
    attributes and the system menu. No other module gains `unsafe`.
@@ -63,7 +63,7 @@ placement of an IME candidate window. Those are `DwmSetWindowAttribute` and
 6. **Input translation gets a toolkit-free vocabulary before a second host
    exists.** ADR 009 already says input translation takes portable events and a
    mode snapshot; the key map currently takes `egui::Event`. A neutral
-   `winterm::input` vocabulary, with `terminal_widget` translating egui into
+   `winter::input` vocabulary, with `terminal_widget` translating egui into
    it, is the piece a later host reuses instead of re-deriving.
 7. **A full Win32 host and a `renderer`-driven GPU content pass are not decided
    here.** They get their own ADR when the chrome work is done, and only if the
@@ -76,7 +76,7 @@ The slices, in order:
 | 0 | Dark native frame; icon and attention already work | no | no |
 | 1 | Drawn caption: tab strip in the caption, drag and edge resize | no | no |
 | 2 | `win32.rs`: Win11 corners and border, native system menu | yes, one module | `raw-window-handle`, DWM feature |
-| 3 | `winterm::input`: neutral events, egui translates into them | no | no |
+| 3 | `winter::input`: neutral events, egui translates into them | no | no |
 
 ## Rationale
 

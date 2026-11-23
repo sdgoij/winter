@@ -1,4 +1,4 @@
-//! # winterm-buffer
+//! # winter-buffer
 //!
 //! Terminal text buffer — rows, cells, and text attributes.
 //! Ported from Microsoft's Windows Terminal C++ buffer module.

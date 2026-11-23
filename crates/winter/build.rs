@@ -27,10 +27,10 @@ fn embed() {
     }
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-    let icon = out.join("winterm.ico");
+    let icon = out.join("winter.ico");
     std::fs::write(&icon, icon_draw::ico(&[16, 32, 48, 64, 256])).expect("write the icon");
 
-    let resource = out.join("winterm.rc");
+    let resource = out.join("winter.rc");
     let icon_path = icon.display().to_string().replace('\\', "\\\\");
     std::fs::write(&resource, format!("1 ICON \"{icon_path}\"\n")).expect("write the resource script");
 

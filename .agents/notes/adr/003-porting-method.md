@@ -6,7 +6,7 @@
 
 ## Context
 
-Winterm is a port, not a reimplementation. Microsoft's Windows Terminal is the
+Winter is a port, not a reimplementation. Microsoft's Windows Terminal is the
 behavioural target, the test corpus, and the documentation. A port that invents
 its own structure diverges silently: the same escape sequence then behaves
 differently from the terminal every program in the world was written against, and

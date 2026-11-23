@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/{app,config,terminal_widget,window,icon}.rs`;
+- Related: `crates/winter/src/{app,config,terminal_widget,window,icon}.rs`;
   ADRs 018, 019, 035, 036
 
 ## Context

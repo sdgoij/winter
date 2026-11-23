@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
-- Related: `crates/winterm/src/linux/`, `crates/renderer`, `.agents/notes/linux-shell-scope.md`, ADRs 018, 038, 040, 041, 043, 051
+- Related: `crates/winter/src/linux/`, `crates/renderer`, `.agents/notes/linux-shell-scope.md`, ADRs 018, 038, 040, 041, 043, 051
 
 ## Context
 
@@ -47,7 +47,7 @@ its text input are host work that a toolkit does better than we ever will.
 - **The custom grid implements `GtkAccessibleText`** (GTK 4.14+, and the guest
   has 4.22), which exists for precisely this case: a widget that draws its own
   text still reports text, caret and selection to Orca.
-- **The shell lives in `crates/winterm/src/linux/`**, chosen in `main.rs` the
+- **The shell lives in `crates/winter/src/linux/`**, chosen in `main.rs` the
   way `winui` is (ADR 040), and it shares `input`, `view`, `tabs`,
   `term_control`, `session` and `shell_integration` unchanged.
 - **The toolkit is an optional dependency behind a `gtk` feature** while the

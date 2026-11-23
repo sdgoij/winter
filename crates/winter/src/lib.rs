@@ -1,4 +1,4 @@
-//! # winterm
+//! # winter
 //!
 //! The application: a shell on a pseudo terminal, painted in a window.
 //!

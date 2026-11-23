@@ -18,13 +18,13 @@ Verified by running the gate, not by reading the previous status:
 | `renderer` | ~6.5k | 132 + 1 ignored | Phase 5 — font, cell-metric, cluster, cursor, CSS-length, composition, frame-info and render-settings vocabulary; the `RenderData`, `RenderEngine` and `RenderEngineBase` surfaces; the `renderer.cpp` grid-line, hover and composition paint paths; a host-driven `Renderer::paint_frame` whose `resize` moves the pixel target and the cell viewport together and whose `set_default_colors` feeds the pane's scheme to the engines; the atlas model, `AtlasEngine`, `IBackend`, a software backend and a `fontdue` rasteriser, with the payload carrying the engine's own settings and every row cleared at the start of a frame (ADRs 043, 044); and the `FontCache.h` collection with its SFNT face reader (ADR 008), whose family-and-italic choice the shell now uses (ADR 029). A GPU backend is not written |
 | `host` | ~9.6k | 258 | Phase 6's portable modules are done: `CommandHistory`, `InputBuffer`, `CookedReadData` (with alias expansion wired in), `InputStateMachineEngine`, the portable `ConsoleInformation` and `ScreenInformation` (ADR 012), `Settings`, the registry schema that layers a key over them (ADR 037), `AliasTable`, `InputKeyInfo`, `Scrolling`, `SelectionState`/`Selection`/`SelectionInput` (ADR 014), `cmdline` and `utils`. `directio` waits for the server's API surface; `handle` and `tracing` have no counterpart here (a lock with no ctrl-event queue, and ETW) |
 | `server` | ~1.0k | 17 + 1 ignored | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016), with a headless `OpenConsole.exe` host that forwards image sequences (ADR 055). The driver protocol is deliberately not ported |
-| `settings` | ~3.0k | 83 | Phase 10 (ADRs 022–032, 034, 035, 047): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names (including the scrolling six), colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
+| `settings` | ~3.0k | 86 | Phase 10 (ADRs 022–032, 034, 035, 047): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names (including the scrolling six), colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
-| `winterm` | ~8.0k | 188 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs a `TabView` in the title bar whose tabs each own a terminal, matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
+| `winter` | ~8.0k | 188 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs a `TabView` in the title bar whose tabs each own a terminal, matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1678 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+1681 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018); ADR 040
@@ -247,10 +247,10 @@ to `term`, the crate that owns both.
 
 ## Monorepo Workspace Layout
 
-All library crates live under `crates/`. The main terminal application is `crates/winterm`.
+All library crates live under `crates/`. The main terminal application is `crates/winter`.
 
 ```
-winterm/
+winter/
 ├── .github/
 │   └── workflows/          (CI/CD for all test types)
 ├── benches/                (criterion benchmarks)
@@ -270,7 +270,7 @@ winterm/
 │   ├── ui/                 (window metrics, event loop, platform backends)
 │   ├── utils/              (utility types: geometry, primitives, small_vec, enumset, hash, etc.)
 │   ├── vt/                 (VT escape sequence parser, state machine)
-│   └── winterm/            (main terminal app — GUI, tabs, panes, command palette)
+│   └── winter/            (main terminal app — GUI, tabs, panes, command palette)
 ├── examples/               (demo apps)
 ├── fuzz/                   (honggfuzz / afl.rs fuzzers)
 └── tests/                  (integration, conformance, snapshot, e2e tests)
@@ -311,18 +311,18 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 | C++ Module | Rust Module | Responsibility |
 |---|---|---|
-| `src/buffer/` | `winterm/crates/buffer` | Text buffer, rows, cells, scrollback, cursors |
-| `src/terminal/parser/` | `winterm/crates/vt` | VT escape sequence state machine |
-| `src/terminal/adapter/` | `winterm/crates/adapter` | VT input/output dispatch, terminal-adapter protocol |
-| `src/terminal/input/` | `winterm/crates/input` | Mouse input, keyboard input processing |
-| `src/host/` | `winterm/crates/host` | Console host state, screen buffers, I/O |
-| `src/server/` | `winterm/crates/server` | ConDrv device communication, process list, wait queues |
-| `src/renderer/` | `winterm/crates/renderer` | Render engine abstraction, glyph atlas |
-| `src/interactivity/` | `winterm/crates/ui` | Window metrics, interactivity (platform-dependent) |
-| `src/audio/` | `winterm/crates/audio` | Beep/midi audio (optional) |
-| `src/types/` | `winterm/crates/types` | Color, viewport, accessibility types |
-| `src/cascadia/` | `winterm/crates/winterm` | High-level terminal app (platform-dependent) |
-| `src/til/` + `src/inc/til/` | `winterm/crates/utils` | Utility library (reusable in Rust) |
+| `src/buffer/` | `winter/crates/buffer` | Text buffer, rows, cells, scrollback, cursors |
+| `src/terminal/parser/` | `winter/crates/vt` | VT escape sequence state machine |
+| `src/terminal/adapter/` | `winter/crates/adapter` | VT input/output dispatch, terminal-adapter protocol |
+| `src/terminal/input/` | `winter/crates/input` | Mouse input, keyboard input processing |
+| `src/host/` | `winter/crates/host` | Console host state, screen buffers, I/O |
+| `src/server/` | `winter/crates/server` | ConDrv device communication, process list, wait queues |
+| `src/renderer/` | `winter/crates/renderer` | Render engine abstraction, glyph atlas |
+| `src/interactivity/` | `winter/crates/ui` | Window metrics, interactivity (platform-dependent) |
+| `src/audio/` | `winter/crates/audio` | Beep/midi audio (optional) |
+| `src/types/` | `winter/crates/types` | Color, viewport, accessibility types |
+| `src/cascadia/` | `winter/crates/winter` | High-level terminal app (platform-dependent) |
+| `src/til/` + `src/inc/til/` | `winter/crates/utils` | Utility library (reusable in Rust) |
 
 ---
 
@@ -340,15 +340,15 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 ### Test Infrastructure
 
-- [ ] `winterm/Cargo.toml` — workspace root with `[workspace] members = ["crates/*", "tests", "benches"]` and test dependencies (`proptest`, `criterion`, `insta`, `honggfuzz`)
-- [ ] `winterm/tests/test_helpers.rs` — shared test fixtures, mock backends, VT sequence builders
-- [ ] `winterm/tests/mock_window.rs` — Mock `WindowBackend` for renderer/UI tests
-- [ ] `winterm/tests/mock_pty.rs` — Mock PTY process for server/host tests
-- [ ] `winterm/tests/utf8_corpus.rs` — Embedded UTF-8 text corpora for reflow/iterator tests
-- [ ] `winterm/tests/vt_reference/` — Reference VT sequences from xterm, Kitty, iTerm2
-- [ ] `winterm/tests/render_snapshots/` — Baseline render output images per backend
+- [ ] `winter/Cargo.toml` — workspace root with `[workspace] members = ["crates/*", "tests", "benches"]` and test dependencies (`proptest`, `criterion`, `insta`, `honggfuzz`)
+- [ ] `winter/tests/test_helpers.rs` — shared test fixtures, mock backends, VT sequence builders
+- [ ] `winter/tests/mock_window.rs` — Mock `WindowBackend` for renderer/UI tests
+- [ ] `winter/tests/mock_pty.rs` — Mock PTY process for server/host tests
+- [ ] `winter/tests/utf8_corpus.rs` — Embedded UTF-8 text corpora for reflow/iterator tests
+- [ ] `winter/tests/vt_reference/` — Reference VT sequences from xterm, Kitty, iTerm2
+- [ ] `winter/tests/render_snapshots/` — Baseline render output images per backend
 
-> **Note:** All paths below use `winterm/` as workspace root. Library crates are at `winterm/crates/<name>/src/`, unit tests are `winterm/crates/<name>/src/unit_tests/`, shared tests at `winterm/tests/`, benchmarks at `winterm/benches/`, and fuzzers at `winterm/fuzz/`. The main app is `winterm/crates/winterm/`.
+> **Note:** All paths below use `winter/` as workspace root. Library crates are at `winter/crates/<name>/src/`, unit tests are `winter/crates/<name>/src/unit_tests/`, shared tests at `winter/tests/`, benchmarks at `winter/benches/`, and fuzzers at `winter/fuzz/`. The main app is `winter/crates/winter/`.
 
 ---
 
@@ -358,107 +358,107 @@ The Windows Terminal codebase maps to these Rust module groups:
 
 ### Geometry & Primitive Types
 
-- [x] `winterm/crates/utils/src/point.rs` — `til::point` with checked arithmetic, comparison, operators
+- [x] `winter/crates/utils/src/point.rs` — `til::point` with checked arithmetic, comparison, operators
   - [x] **Tests:** 15 unit tests — equality, comparison, addition/subtraction overflow, multiplication overflow, division by zero, `operator bool()` for negative coords, Win32/WinRT conversion roundtrips, cross-platform `RawWindowHandle` conversion
   - [x] **Property tests:** `(a + b) - b == a` when no overflow, `point + 0 == point`, `point.x > 0 && point.y > 0` iff `bool(point)`
-- [x] `winterm/crates/utils/src/size.rs` — `til::size` with checked arithmetic, scale, area
+- [x] `winter/crates/utils/src/size.rs` — `til::size` with checked arithmetic, scale, area
   - [x] **Tests:** 11 unit tests — creation with zero/negative dimensions, overflow arithmetic, `scale()` with float, `divide_ceil()` edge cases, area overflow for large sizes
   - [x] **Property tests:** `(a.scale(s)).scale(1.0/s) == a` (within tolerance, bounded input), `size.width * size.height == size.area()` (within overflow bounds)
-- [x] `winterm/crates/utils/src/rect.rs` — `til::rect` (exclusive) with union/intersection/difference iterators
+- [x] `winter/crates/utils/src/rect.rs` — `til::rect` (exclusive) with union/intersection/difference iterators
   - [x] **Tests:** 13 unit tests — creation, empty rect, contains check, union of overlapping/disjoint rects, intersection with full overlap/partial overlap/no overlap, difference producing up to 4 rects, iterator bounds correctness, `to_origin()`, `to_inclusive_rect()`, Win32 `RECT` conversion roundtrips
   - [x] **Property tests:** `rect | other` always contains both; `rect & other` is always subset of both; `rect - (rect & other)` produces rects that union back to the difference
   - [x] **Snapshot tests:** render difference region for large rect with known input (rect.rs snapshot_tests)
-- [x] `winterm/crates/utils/src/inclusive_rect.rs` — `til::inclusive_rect` (inclusive coordinates)
+- [x] `winter/crates/utils/src/inclusive_rect.rs` — `til::inclusive_rect` (inclusive coordinates)
   - [x] **Tests:** 6 unit tests — creation, overlap, contains, Win32 `SMALL_RECT` conversion
-- [x] `winterm/crates/utils/src/color.rs` — `til::color` RGBA
+- [x] `winter/crates/utils/src/color.rs` — `til::color` RGBA
   - [x] **Tests:** 10 unit tests — RGB construction, ABGR conversion, COLORREF, alpha blending, from_hex, to_css_string, equality
   - [x] **Property tests:** `color.to_hex().to_rgba() == color`, alpha blend is commutative
-- [x] `winterm/crates/utils/src/small_vec.rs` — `til::small_vector<T, N>` stack-optimized vector
+- [x] `winter/crates/utils/src/small_vec.rs` — `til::small_vector<T, N>` stack-optimized vector
   - [x] **Tests:** 10 unit tests — push/pop/insert/remove, capacity growth, iterator correctness, zero-initialize, drop order, `From<Vec<T>>` conversion
   - [x] **Property tests:** `small_vec.as_slice().to_vec() == small_vec.into_iter().collect::<Vec<_>>()`, push_pop roundtrip
-- [x] `winterm/crates/utils/src/enum_set.rs` — `til::enumset<Enum>` bitmask
+- [x] `winter/crates/utils/src/enum_set.rs` — `til::enumset<Enum>` bitmask
   - [x] **Tests:** 11 unit tests — insert/remove/contains, union/intersection/difference/symmetric difference, is_subset/is_superset, iteration order, bitflag serialization
   - [x] **Property tests:** `(a | b) & a == a`, `(a & b) == (b & a)`, `a | Empty == a`
-- [x] `winterm/crates/utils/src/hash.rs` — `til::hasher` (wyhash-based)
+- [x] `winter/crates/utils/src/hash.rs` — `til::hasher` (wyhash-based)
   - [x] **Tests:** 7 unit tests — hash consistency (same input → same hash), hash of empty input, hash of various string/byte/struct inputs, incremental write bounds check, std hash divergence
   - [x] **Property tests:** identical values produce identical hashes; `std::hash::<T>(v) != til::hash(v)` for at least some types
   - [ ] **Property tests:** `different_data → different_hash` (ignored: extremely unlikely but possible 64-bit collision)
-- [x] `winterm/crates/utils/src/mutex.rs` — Cross-platform mutex
+- [x] `winter/crates/utils/src/mutex.rs` — Cross-platform mutex
   - [x] **Tests:** 5 unit tests — lock/unlock, re-entrant, poisoned state, drop restores lock
-- [x] `winterm/crates/utils/src/atomic.rs` — Atomic wait/notify
+- [x] `winter/crates/utils/src/atomic.rs` — Atomic wait/notify
   - [x] **Tests:** 2 unit tests — wait/notify roundtrip, timeout, spurious wakeup handling
-- [x] `winterm/crates/utils/src/ticket_lock.rs` — Ticket lock + recursive ticket lock
+- [x] `winter/crates/utils/src/ticket_lock.rs` — Ticket lock + recursive ticket lock
   - [x] **Tests:** 3 unit tests — mutual exclusion, fairness (FIFO order), recursive lock same-thread, suspend/resume
   - [ ] **Property tests:** between two threads, no two threads ever hold lock simultaneously
-- [x] `winterm/crates/utils/src/throttled.rs` — Throttled/debounced function calls
+- [x] `winter/crates/utils/src/throttled.rs` — Throttled/debounced function calls
   - [x] **Tests:** 2 unit tests — single call, rapid-fire calls (only last executes), delay elapse → final call, reset
-- [x] `winterm/crates/utils/src/io.rs` — Cross-platform file I/O
+- [x] `winter/crates/utils/src/io.rs` — Cross-platform file I/O
   - [x] **Tests:** 3 unit tests — read/write file, path resolution, temp file cleanup, non-existent file handling
-- [x] `winterm/crates/utils/src/unicode.rs` — Unicode helpers
+- [x] `winter/crates/utils/src/unicode.rs` — Unicode helpers
   - [x] **Tests:** 8 unit tests — is_alphanumeric, is_whitespace, is_grapheme_boundary, is_cjk, surrogate handling
   - [ ] **Property tests:** `is_grapheme_boundary(a, b)` iff `grapheme_break(a, b)` from Unicode spec
-- [x] `winterm/crates/utils/src/string.rs` — String utilities
+- [x] `winter/crates/utils/src/string.rs` — String utilities
   - [x] **Tests:** 11 unit tests — trim, split, replace_all, truncate_ellipsis, case conversion, starts_with, ends_with, equals insensitive
-- [x] `winterm/crates/utils/src/replace.rs` — String replacement
+- [x] `winter/crates/utils/src/replace.rs` — String replacement
   - [x] **Tests:** 3 unit tests — simple replace, replace_all, replace at index, overlapping patterns
-- [x] `winterm/crates/utils/src/math.rs` — Checked arithmetic
+- [x] `winter/crates/utils/src/math.rs` — Checked arithmetic
   - [x] **Tests:** 10 unit tests — checked_add/sub/mul/div, saturating operations, rounding, clamping
   - [ ] **Property tests:** `checked_add(a, b).is_none()` iff `a + b` would overflow
-- [x] `winterm/crates/utils/src/colorbrewer.rs` — Color palettes
+- [x] `winter/crates/utils/src/colorbrewer.rs` — Color palettes
   - [x] **Tests:** 4 unit tests — palette generation (pastel1, dark2), color access, named palette availability
-- [x] `winterm/crates/utils/src/rle.rs` — Run-length encoding
+- [x] `winter/crates/utils/src/rle.rs` — Run-length encoding
   - [x] **Tests:** 5 unit tests — encode/decode roundtrip, empty input, all-same input, alternating input, `at()` bounds
   - [ ] **Property tests:** `decode(encode(data)) == data`
-- [x] `winterm/crates/utils/src/flat_set.rs` — Compact set
+- [x] `winter/crates/utils/src/flat_set.rs` — Compact set
   - [x] **Tests:** 2 unit tests — insert/remove/contains, iteration, deduplication
-- [x] `winterm/crates/utils/src/generational.rs` — Generational indices
+- [x] `winter/crates/utils/src/generational.rs` — Generational indices
   - [x] **Tests:** 5 unit tests — create/access/validate, invalidation on update, epoch overflow wrap-around
   - [ ] **Property tests:** valid index stays valid until explicitly invalidated
-- [x] `winterm/crates/utils/src/spsc.rs` — Single-producer single-consumer queue
+- [x] `winter/crates/utils/src/spsc.rs` — Single-producer single-consumer queue
   - [x] **Tests:** 2 unit tests — push/pop, full/empty states, capacity, multi-item throughput
   - [ ] **Property tests:** FIFO order preserved
-- [x] `winterm/crates/utils/src/latch.rs` — One-shot synchronization
+- [x] `winter/crates/utils/src/latch.rs` — One-shot synchronization
   - [x] **Tests:** 4 unit tests — count_down/wait, multiple waiters, double count_down, thread-safety
-- [x] `winterm/crates/utils/src/bit.rs` — Bit manipulation
+- [x] `winter/crates/utils/src/bit.rs` — Bit manipulation
   - [x] **Tests:** 9 unit tests — popcount, count_zeros, leading/trailing zeros, bit reversals, byte swaps
   - [x] **Property tests:** `popcount(x) == count_ones(x)` matches stdlib; `reverse_bits(reverse_bits(x)) == x`
-- [x] `winterm/crates/utils/src/bytes.rs` — Byte slice helpers
+- [x] `winter/crates/utils/src/bytes.rs` — Byte slice helpers
   - [x] **Tests:** 9 unit tests — read_u16/u32/u64 LE/BE, write, find_pattern, contains_sequence
   - [x] **Property tests:** `write/read` roundtrip for all valid byte sequences (bytes.rs proptests)
 
 ### Core Color & Character Types
 
-- [x] `winterm/crates/types/src/text_color.rs` — `TextColor` enum
+- [x] `winter/crates/types/src/text_color.rs` — `TextColor` enum
   - [x] **Tests:** all variants, `From<COLORREF>`, display formatting, equality
-- [x] `winterm/crates/types/src/cursor_type.rs` — `CursorType`
+- [x] `winter/crates/types/src/cursor_type.rs` — `CursorType`
   - [x] **Tests:** all variants, serialization roundtrip
-- [x] `winterm/crates/types/src/character_attrs.rs` — `CharacterAttributes` bitflags
+- [x] `winter/crates/types/src/character_attrs.rs` — `CharacterAttributes` bitflags
   - [x] **Tests:** flag manipulation, all/none, intersection, string formatting
   - [x] **Property tests:** `a | b` contains both flags; `a & a == a` (idempotent) (character_attrs.rs proptests)
-- [x] `winterm/crates/types/src/underline_style.rs` — `UnderlineStyle`
-- [x] `winterm/crates/types/src/mark_kind.rs` — `MarkKind`
-- [x] `winterm/crates/types/src/viewport.rs` — Screen dimension type
+- [x] `winter/crates/types/src/underline_style.rs` — `UnderlineStyle`
+- [x] `winter/crates/types/src/mark_kind.rs` — `MarkKind`
+- [x] `winter/crates/types/src/viewport.rs` — Screen dimension type
   - [x] **Tests:** creation, clamp, contains point, area, intersection, union,
     the inclusive/exclusive bounds, bounds walking and reading-order comparison
-- [x] `winterm/crates/types/src/line_rendition.rs` — `LineRendition` conversion functions
+- [x] `winter/crates/types/src/line_rendition.rs` — `LineRendition` conversion functions
   - [x] **Tests:** `ScreenToBufferLine`, `BufferToScreenLine` and the inclusive
     point form for single- and double-width renditions
-- [x] `winterm/crates/types/src/codepoint_width.rs` — Unicode width detection
+- [x] `winter/crates/types/src/codepoint_width.rs` — Unicode width detection
   - [x] **Tests:** ASCII, CJK, emoji, combining marks, surrogate pairs
   - [x] **Property tests:** width matches `unicode_width::UnicodeWidthChar::width()` for all test cases (codepoint_width.rs proptests)
-- [x] `winterm/crates/types/src/theme_utils.rs` — Light/dark detection
-- [x] `winterm/crates/types/src/color_table.rs` — 16-color palette
+- [x] `winter/crates/types/src/theme_utils.rs` — Light/dark detection
+- [x] `winter/crates/types/src/color_table.rs` — 16-color palette
   - [x] **Tests:** default palette, custom palette, color index lookup, reset
 
 ### Text Attribute System
 
-- [x] `winterm/crates/buffer/src/text_attribute.rs` — `TextAttribute`
+- [x] `winter/crates/buffer/src/text_attribute.rs` — `TextAttribute`
   - [x] **Tests:** default creation, legacy WORD conversion, RGB construction, attribute getters/setters, `HasIdenticalVisualRepresentationForBlankSpace` edge cases, `IsAnyGridLineEnabled`, `HasAnyVisualAttributes`
   - [x] **Property tests:** setting then unsetting an attribute returns to default; `operator==` is reflexive, symmetric, transitive; `memcmp` equality matches field-by-field equality (text_attribute.rs proptests)
-- [x] `winterm/crates/buffer/src/row_attributes.rs` — Per-row attributes
+- [x] `winter/crates/buffer/src/row_attributes.rs` — Per-row attributes
   - [x] **Tests:** dirty flag
-- [x] `winterm/crates/buffer/src/dbcs_attribute.rs` — `DbcsAttribute`
-- [x] `winterm/crates/buffer/src/text_attribute_behavior.rs` — `TextAttributeBehavior` enum
+- [x] `winter/crates/buffer/src/dbcs_attribute.rs` — `DbcsAttribute`
+- [x] `winter/crates/buffer/src/text_attribute_behavior.rs` — `TextAttributeBehavior` enum
 
 ---
 
@@ -613,25 +613,25 @@ The Windows Terminal codebase maps to these Rust module groups:
 ### VT Conformance Test Sequences (Deliverable)
 
 The corpus is implemented in `crates/term/tests/conformance/` and wired through
-`[[test]]` in `crates/term/Cargo.toml`; `AGENTS.md` and the `winterm-testing`
+`[[test]]` in `crates/term/Cargo.toml`; `AGENTS.md` and the `winter-testing`
 skill are the live description. The paths below are the original sketch of the
 sequence inventory, kept as a coverage list rather than as file locations.
 
-- [ ] `winterm/tests/vt/csi_sgr.rs` — SGR: all standard escape codes (1/2/3/4/5/7/8/22/23/24/25/27/28/29/30-37/38;2;R;G;B/38;5;n/39/40-47/48;2;R;G;B/48;5;n/90-97/100-107)
-- [ ] `winterm/tests/vt/csi_cursor.rs` — CUP, CUD, CUF, CUB, CNL, CPL, CHA, CHT, HVP, DCH, ICH
-- [ ] `winterm/tests/vt/csi_scroll.rs` — SU, SD, DL, IL
-- [ ] `winterm/tests/vt/csi_erase.rs` — ED (J), EL (K),ECH
-- [ ] `winterm/tests/vt/osc.rs` — OSC 0/1/2/4/10-17/52/8/9001 (all parameter variations)
-- [ ] `winterm/tests/vt/dcs.rs` — DCS $ q (Sixel): valid/invalid images, resize, crop
-- [ ] `winterm/tests/vt/private_modes.rs` — DECSET/DECRST: 1/6/7/20/47/1000/1002/1003/1004/1006/1047/1048/1049
-- [ ] `winterm/tests/vt/mouse.rs` — Mouse tracking modes 1000/1002/1006 with all button states
-- [ ] `winterm/tests/vt/kitty.rs` — Kitty keyboard protocol: KKP push/pop, query
-- [ ] `winterm/tests/vt/bracketed_paste.rs` — Bracketed paste mode activation/deactivation
-- [ ] `winterm/tests/vt/win32_input_mode.rs` — Win32 Input Mode (CSI <) encoding
-- [ ] `winterm/tests/vt/escape.rs` — ESC $, ESC (, ESC ), ESC B, ESC D, ESC H, ESC M, ESC Z, ESC 7, ESC 8, ESC =, ESC >, ESC #3-8, ESC c
-- [ ] `winterm/tests/vt/vt52.rs` — VT52 mode: A-J, F, Y, Z, <, =, >
-- [ ] `winterm/tests/vt/sixel.rs` — Sixel: valid/invalid images, color palette, resize, interlace
-- [ ] `winterm/tests/vt/hyperlink.rs` — OSC 8 hyperlinks: start/end/metadata/uri parsing
+- [ ] `winter/tests/vt/csi_sgr.rs` — SGR: all standard escape codes (1/2/3/4/5/7/8/22/23/24/25/27/28/29/30-37/38;2;R;G;B/38;5;n/39/40-47/48;2;R;G;B/48;5;n/90-97/100-107)
+- [ ] `winter/tests/vt/csi_cursor.rs` — CUP, CUD, CUF, CUB, CNL, CPL, CHA, CHT, HVP, DCH, ICH
+- [ ] `winter/tests/vt/csi_scroll.rs` — SU, SD, DL, IL
+- [ ] `winter/tests/vt/csi_erase.rs` — ED (J), EL (K),ECH
+- [ ] `winter/tests/vt/osc.rs` — OSC 0/1/2/4/10-17/52/8/9001 (all parameter variations)
+- [ ] `winter/tests/vt/dcs.rs` — DCS $ q (Sixel): valid/invalid images, resize, crop
+- [ ] `winter/tests/vt/private_modes.rs` — DECSET/DECRST: 1/6/7/20/47/1000/1002/1003/1004/1006/1047/1048/1049
+- [ ] `winter/tests/vt/mouse.rs` — Mouse tracking modes 1000/1002/1006 with all button states
+- [ ] `winter/tests/vt/kitty.rs` — Kitty keyboard protocol: KKP push/pop, query
+- [ ] `winter/tests/vt/bracketed_paste.rs` — Bracketed paste mode activation/deactivation
+- [ ] `winter/tests/vt/win32_input_mode.rs` — Win32 Input Mode (CSI <) encoding
+- [ ] `winter/tests/vt/escape.rs` — ESC $, ESC (, ESC ), ESC B, ESC D, ESC H, ESC M, ESC Z, ESC 7, ESC 8, ESC =, ESC >, ESC #3-8, ESC c
+- [ ] `winter/tests/vt/vt52.rs` — VT52 mode: A-J, F, Y, Z, <, =, >
+- [ ] `winter/tests/vt/sixel.rs` — Sixel: valid/invalid images, color palette, resize, interlace
+- [ ] `winter/tests/vt/hyperlink.rs` — OSC 8 hyperlinks: start/end/metadata/uri parsing
 
 ### VT I/O Layer
 
@@ -656,15 +656,15 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 ### Adapter Layer
 
-- [x] `winterm/crates/adapter/src/dispatch_types.rs` — Command types
+- [x] `winter/crates/adapter/src/dispatch_types.rs` — Command types
   - VTInt, VTParameter, VTParameters, VTSubParameters, VTID types
   - Enums: EraseType, ChangeExtent, TaskbarState, GraphicsOptions (SGR), CursorStyle, ModeParams, ModeResponses, StatusType, LineFeedType, SixelBackground, DrcsCellMatrix, DrcsFontSet, DrcsFontUsage, CharsetSize, MacroDeleteControl, MacroEncoding, ReportFormat, PresentationReportFormat, ColorItem, ColorModel
   - Constants: DECCOLM_SET_COLUMNS, DECCOLM_RESET_COLUMNS, SINGLE_UNDERLINE, UNDERLINE_NONE, OVERLINE_NONE
   - 46 unit tests passing
-- [x] `winterm/crates/adapter/src/interact_dispatch.rs` — `IInteractDispatch`
+- [x] `winter/crates/adapter/src/interact_dispatch.rs` — `IInteractDispatch`
   - Input state machine callback interface
   - InputRecord, InputEventType, ControlKeyState types
-- [x] `winterm/crates/adapter/src/term_dispatch.rs` — `ITermDispatch`
+- [x] `winter/crates/adapter/src/term_dispatch.rs` — `ITermDispatch`
   - Complete trait with 80+ methods for all VT output sequence handlers
   - Print, cursor movement (CUU/CUD/CUF/CUB/CNL/CPL/HPA/CHA/VPA/HPR/VPR/CUP), save/restore (DECSC/DECRC)
   - Insert/delete (ICH/DCH/SU/SD/NP/PP/PPA/PPR/PPB/IL/DL/IC/DC)
@@ -676,14 +676,14 @@ sequence inventory, kept as a coverage list rather than as file locations.
   - Hyperlinks, terminal-specific actions (ConEmu/iTerm2/FinalTerm/VSCode/WT)
   - Sixel, DRCS, user preference charset, macros, terminal state, presentation state, sounds
   - OptionalFeatures enum
-- [x] `winterm/crates/adapter/src/adapt_dispatch.rs` — Main adapter logic
+- [x] `winter/crates/adapter/src/adapt_dispatch.rs` — Main adapter logic
   - AdaptDispatch struct with mode flags, cursor state, margins, SGR stack
   - CursorState, ChangeOps structs for save/restore and attribute changes
   - ModeFlags bitflags (IRM, DECOM, DECAWM, LNM, BRACKETED_PASTE, DECCKM, DECCOLM, DECSCNM, DECECM)
   - Methods: is_insert_mode(), is_origin_mode(), is_auto_wrap(), is_lnm_mode(), is_bracketed_paste()
   - Margin getters/setters, cursor style management, soft/hard reset
   - 7 unit tests passing
-- [x] `winterm/crates/adapter/src/font_buffer.rs` — DECDLD soft fonts
+- [x] `winter/crates/adapter/src/font_buffer.rs` — DECDLD soft fonts
   - `SetEraseControl`, `SetAttributes`, `SetStartChar` validate the DECDLD
     parameters; the matrix-size and 80/132-column rules decide the cell
     size (VT2xx/VT320/VT420/VT340/VT382 detection)
@@ -692,32 +692,32 @@ sequence inventory, kept as a coverage list rather than as file locations.
     glyph
   - 7 unit tests, including upstream's cell-size table and a bit-pattern
     generation case
-- [x] `winterm/crates/adapter/src/macro_buffer.rs` — VT macro support
+- [x] `winter/crates/adapter/src/macro_buffer.rs` — VT macro support
   - MacroBuffer for storing/retrieving terminal macros (IDs 0-9)
   - MacroEntry with encoding support (Text/HexPair)
   - CRUD operations: define_macro(), invoke_macro(), delete_macro(), delete_all_macros()
   - defined_count() and total_size() query methods
   - 7 unit tests passing
-- [x] `winterm/crates/adapter/src/page_manager.rs` — Buffer switching
+- [x] `winter/crates/adapter/src/page_manager.rs` — Buffer switching
   - Page, TextBuffer, PageManager for main/alternate screen buffer management
   - Support for up to 6 pages with lazy initialization
   - Methods: get(), active_page(), visible_page(), move_to(), move_relative(), make_active_page_visible()
   - activate_alternate()/deactivate_alternate() for screen buffer switching
   - 7 unit tests including: main→alternate, alternate→main, relative moves, invalid page validation
-- [x] `winterm/crates/adapter/src/sixel_parser.rs` — Sixel decoding
+- [x] `winter/crates/adapter/src/sixel_parser.rs` — Sixel decoding
   - SixelParser state machine (Normal/Attributes/Color/Repeat) and command
     dispatch for `#`, `!`, `$`, `-`, `+`, `"` and ESC
   - VT340 palette, xterm cube and greys, colour mapping, VT240 fallback
   - Aspect-ratio-aware sixel columns, opaque/transparent background filling
   - DecodedImage handed to the adapter, which paints row bands
   - 9 decoder tests plus an adapter-level paint test
-- [x] `winterm/crates/adapter/src/terminal_output.rs` — Character set translation
+- [x] `winter/crates/adapter/src/terminal_output.rs` — Character set translation
   - TerminalOutput for GL/GR character set translation management
   - Methods: designate_94_charset(), designate_96_charset(), translate_key(), locking_shift()
   - User preference charset (UPSS), DRCS designation, GR translation enable
   - Soft/hard reset support, state save/restore
   - 5 unit tests passing
-- [x] `winterm/crates/adapter/src/charsets.rs` — Character sets
+- [x] `winter/crates/adapter/src/charsets.rs` — Character sets
   - Translation tables: ASCII, Latin-1/2, Greek, Hebrew, Cyrillic, Turkish
   - DEC Special Character Set and Graphics
   - 94/96 character set variants (Latin1Based94/96, Latin2Based96, etc.)
@@ -755,17 +755,17 @@ sequence inventory, kept as a coverage list rather than as file locations.
 
 ### Renderer Abstraction
 
-- [x] `winterm/crates/renderer/src/render_engine.rs` — `IRenderEngine` trait
+- [x] `winter/crates/renderer/src/render_engine.rs` — `IRenderEngine` trait
   - [x] **Tests:** all virtual methods called correctly, trait object safety
-- [x] `winterm/crates/renderer/src/render_data.rs` — `IRenderData`
-- [x] `winterm/crates/renderer/src/render_settings.rs` — `RenderSettings`
-- [x] `winterm/crates/renderer/src/render_frame_info.rs` — `RenderFrameInfo`, `GridLines`, `GridLineSet`
-- [x] `winterm/crates/renderer/src/render_engine_base.rs` — `RenderEngineBase`
-- [x] `winterm/crates/renderer/src/cluster.rs` — `Cluster` (per-glyph shaping result)
-- [x] `winterm/crates/renderer/src/font_info_base.rs` — `FontInfoBase`
-- [x] `winterm/crates/renderer/src/font_info.rs` — `FontInfo`
-- [x] `winterm/crates/renderer/src/font_info_desired.rs` — `FontInfoDesired`
-- [x] `winterm/crates/renderer/src/font_cache.rs` — the font collection from
+- [x] `winter/crates/renderer/src/render_data.rs` — `IRenderData`
+- [x] `winter/crates/renderer/src/render_settings.rs` — `RenderSettings`
+- [x] `winter/crates/renderer/src/render_frame_info.rs` — `RenderFrameInfo`, `GridLines`, `GridLineSet`
+- [x] `winter/crates/renderer/src/render_engine_base.rs` — `RenderEngineBase`
+- [x] `winter/crates/renderer/src/cluster.rs` — `Cluster` (per-glyph shaping result)
+- [x] `winter/crates/renderer/src/font_info_base.rs` — `FontInfoBase`
+- [x] `winter/crates/renderer/src/font_info.rs` — `FontInfo`
+- [x] `winter/crates/renderer/src/font_info_desired.rs` — `FontInfoDesired`
+- [x] `winter/crates/renderer/src/font_cache.rs` — the font collection from
   `FontCache.h`: an ordered directory scan, nearby `.ttf` precedence, an SFNT
   `name`/`post`/`OS/2`/`head` reader and a process-wide cache (ADR 008)
   - [x] **Tests:** family, style, weight, italic and fixed-pitch reads, `ttcf`
@@ -774,78 +774,78 @@ sequence inventory, kept as a coverage list rather than as file locations.
     never panic
   - [x] **Host check:** `a_host_monospace_face_loads_with_fontdue` is ignored by
     default and opens a real fixed-pitch face when run with `--ignored`
-- `winterm/crates/renderer/src/font_resource.rs` — **not ported**: upstream's
+- `winter/crates/renderer/src/font_resource.rs` — **not ported**: upstream's
   `FontResource.cpp` builds a GDI `.FNT` in memory for DRCS soft fonts and
   registers it with `AddFontMemResourceEx`. The DRCS glyphs are ported in
   `adapter` (DECDLD); the GDI registration has no cross-platform equivalent and
   no renderer consumer.
-- [x] `winterm/crates/renderer/src/css_length.rs` — CSS length parsing
+- [x] `winter/crates/renderer/src/css_length.rs` — CSS length parsing
   - [x] **Tests:** pixel, point, percentage, `ch` and bare-number parsing, validation
-- [x] `winterm/crates/renderer/src/cursor_options.rs` — `CursorOptions`
-- [x] `winterm/crates/renderer/src/composition.rs` — IME composition state
+- [x] `winter/crates/renderer/src/cursor_options.rs` — `CursorOptions`
+- [x] `winter/crates/renderer/src/composition.rs` — IME composition state
 
 ### Glyph Atlas Engine
 
-- [ ] `winterm/crates/renderer/src/atlas/engine.rs` — `AtlasEngine`
+- [ ] `winter/crates/renderer/src/atlas/engine.rs` — `AtlasEngine`
   - [ ] **Tests:** font update, text shaping, glyph mapping, atlas creation, dirty region computation, scroll handling
-- [ ] `winterm/crates/renderer/src/atlas/backend.rs` — `IBackend` trait
-- [ ] `winterm/crates/renderer/src/atlas/backend_wgpu.rs` — `WgpuBackend`
+- [ ] `winter/crates/renderer/src/atlas/backend.rs` — `IBackend` trait
+- [ ] `winter/crates/renderer/src/atlas/backend_wgpu.rs` — `WgpuBackend`
   - [ ] **Tests:** adapter creation, swapchain creation, texture upload, render pass, present
   - [ ] **Snapshot tests:** render known text to PNG, compare against baseline
-- [ ] `winterm/crates/renderer/src/atlas/backend_skia.rs` — `SkiaBackend`
+- [ ] `winter/crates/renderer/src/atlas/backend_skia.rs` — `SkiaBackend`
   - [ ] **Tests:** surface creation, font rendering, texture upload
   - [ ] **Snapshot tests:** render known text to PNG, compare against baseline
-- [ ] `winterm/crates/renderer/src/atlas/text_analysis.rs` — Text shaping
+- [ ] `winter/crates/renderer/src/atlas/text_analysis.rs` — Text shaping
   - [ ] **Tests:** grapheme clustering, word boundary, script detection, bidirectional text
   - [ ] **Property tests:** grapheme cluster boundaries match Unicode TR29; word boundaries match Unicode TR29
-- [ ] `winterm/crates/renderer/src/atlas/builtin_glyphs.rs` — Builtin glyphs
-- [ ] `winterm/crates/renderer/src/atlas/text_shaping.rs` — Harfbuzz shaping
+- [ ] `winter/crates/renderer/src/atlas/builtin_glyphs.rs` — Builtin glyphs
+- [ ] `winter/crates/renderer/src/atlas/text_shaping.rs` — Harfbuzz shaping
   - [ ] **Tests:** basic shaping, ligatures, mark attachment, variation fonts, directionality, script handling, feature tags
   - [ ] **Property tests:** shaping "ab" produces same glyphs as shaping "a" then "b" (no inter-glyph features); shaping RTL text mirrors glyph order
-- [ ] `winterm/crates/renderer/src/atlas/shader_common.wgsl` — WGSL shaders
+- [ ] `winter/crates/renderer/src/atlas/shader_common.wgsl` — WGSL shaders
   - [ ] **Tests:** shader compilation (per-platform)
-- [ ] `winterm/crates/renderer/src/atlas/shader_ps.wgsl` — Pixel shader
-- [ ] `winterm/crates/renderer/src/atlas/shader_vs.wgsl` — Vertex shader
-- [ ] `winterm/crates/renderer/src/atlas/rect_packer.rs` — 2D bin-packing
+- [ ] `winter/crates/renderer/src/atlas/shader_ps.wgsl` — Pixel shader
+- [ ] `winter/crates/renderer/src/atlas/shader_vs.wgsl` — Vertex shader
+- [ ] `winter/crates/renderer/src/atlas/rect_packer.rs` — 2D bin-packing
   - [ ] **Tests:** insert rects, find placement, packing efficiency, empty atlas, full atlas
   - [ ] **Property tests:** all packed rects are non-overlapping; packed area ≤ total requested area + margin
 
 ### Rendering Pipeline
 
-- [ ] `winterm/crates/renderer/src/render_loop.rs` — Frame render loop
+- [ ] `winter/crates/renderer/src/render_loop.rs` — Frame render loop
   - [ ] **Tests:** enable/disable, redraw trigger, teardown, background change detection, frame change detection
-- [ ] `winterm/crates/renderer/src/scrolling.rs` — Scroll animation
+- [ ] `winter/crates/renderer/src/scrolling.rs` — Scroll animation
   - [ ] **Tests:** scroll delta, animation frames, target reached detection
-- [ ] `winterm/crates/renderer/src/dirty_region.rs` — Dirty area tracking
+- [ ] `winter/crates/renderer/src/dirty_region.rs` — Dirty area tracking
   - [ ] **Tests:** invalidate/merge/reset, empty invalidation, full invalidation, multiple regions
   - [ ] **Property tests:** union of dirty regions is always subset of total viewport
-- [ ] `winterm/crates/renderer/src/paint_background.rs` — Background rendering
+- [ ] `winter/crates/renderer/src/paint_background.rs` — Background rendering
   - [ ] **Snapshot tests:** solid color, gradient, pattern background → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_buffer.rs` — Visible row rendering
+- [ ] `winter/crates/renderer/src/paint_buffer.rs` — Visible row rendering
   - [ ] **Snapshot tests:** render ASCII text, CJK text, emoji, mixed-width text → compare against baseline per backend
-- [ ] `winterm/crates/renderer/src/paint_selection.rs` — Selection rendering
+- [ ] `winter/crates/renderer/src/paint_selection.rs` — Selection rendering
   - [ ] **Snapshot tests:** block selection, line selection, word selection → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_cursor.rs` — Cursor rendering
+- [ ] `winter/crates/renderer/src/paint_cursor.rs` — Cursor rendering
   - [ ] **Snapshot tests:** all cursor types (bar, underscore, box, full box), all sizes, blink on/off → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_title.rs` — Title bar rendering
+- [ ] `winter/crates/renderer/src/paint_title.rs` — Title bar rendering
   - [ ] **Snapshot tests:** short title, long title (truncated), Unicode title → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_image.rs` — Sixel/image rendering
+- [ ] `winter/crates/renderer/src/paint_image.rs` — Sixel/image rendering
   - [ ] **Tests:** image upload, crop, resize, interlace
   - [ ] **Snapshot tests:** render known sixel image → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_grid_lines.rs` — Grid line rendering
+- [ ] `winter/crates/renderer/src/paint_grid_lines.rs` — Grid line rendering
   - [ ] **Snapshot tests:** all gridline combinations → compare against baseline
-- [ ] `winterm/crates/renderer/src/paint_highlight.rs` — Search highlight rendering
+- [ ] `winter/crates/renderer/src/paint_highlight.rs` — Search highlight rendering
 
 ### Font & Shaping
 
-- [ ] `winterm/crates/renderer/src/font_loading.rs` — `fontdb` integration
+- [ ] `winter/crates/renderer/src/font_loading.rs` — `fontdb` integration
   [ ] **Tests:** font enumeration, face loading, collection matching
   - [ ] **Property tests:** all system fonts can be loaded; font families match system font list
-- [ ] `winterm/crates/renderer/src/glyph_extraction.rs` — Glyph extraction
+- [ ] `winter/crates/renderer/src/glyph_extraction.rs` — Glyph extraction
   [ ] **Tests:** glyph lookup, advance width, bounding box, color bitmap glyphs
-- [ ] `winterm/crates/renderer/src/text_shaping.rs` — High-level shaping API
+- [ ] `winter/crates/renderer/src/text_shaping.rs` — High-level shaping API
   [ ] **Tests:** single char, multi-char, mixed scripts, mixed widths
-- [ ] `winterm/crates/renderer/src/font_metrics.rs` — Font metrics
+- [ ] `winter/crates/renderer/src/font_metrics.rs` — Font metrics
   [ ] **Tests:** ascent/descent/cap height/x-height/line gap, cell size calculation
 
 ---
@@ -865,7 +865,7 @@ porting skill requires.
 
 ### Core Console State
 
-- [x] `winterm/crates/host/src/console_information.rs` — `ConsoleInformation`
+- [x] `winter/crates/host/src/console_information.rs` — `ConsoleInformation`
   - [x] Ported from `consoleInformation.cpp` and the class in `server.h`: the
     recursive console lock, the input buffer, the per-application histories,
     the flags, the titles and their prefix, bracketed paste, the pending
@@ -875,7 +875,7 @@ porting skill requires.
     locking, the input buffer, keyed histories, and the flag bits
   - Not ported: the screen buffers, VT I/O, MIDI, code pages, `AllocateConsole`
     and `AsCharInfo`; they need `screenInfo.cpp`, the server layer and the UI
-- [x] `winterm/crates/host/src/settings.rs` — `Settings`
+- [x] `winter/crates/host/src/settings.rs` — `Settings`
   - [x] Ported from `settings.cpp` and `settings.hpp`: the constructor and
     desktop defaults, validation, the command-line size override, and the
     console values the host reads (insert mode, history size and duplicate
@@ -887,7 +887,7 @@ porting skill requires.
   - Not ported: `RenderSettings` and the colour table (the renderer owns them),
     `STARTUPINFO` and `CONSOLE_STATE_INFO`, the registry serialization, and the
     UIA/MSAA/glyph switches
-- [x] `winterm/crates/host/src/screen_info.rs` — `ScreenBuffer`
+- [x] `winter/crates/host/src/screen_info.rs` — `ScreenBuffer`
   - [x] Ported from `screenInfo.cpp` as the portable record (ADR 012): the
     text buffer, the viewport with clamping and origin moves, the virtual
     bottom, the virtual viewport and VT page area, the cursor (position,
@@ -902,11 +902,11 @@ porting skill requires.
   - Not ported: the object list, VT state machine, fonts, scroll bars, window
     metrics and resize, `AsCharInfo`, word boundary, and the read-side
     iterators
-- [x] `winterm/crates/host/src/input_buffer.rs` — `InputBuffer`
+- [x] `winter/crates/host/src/input_buffer.rs` — `InputBuffer`
   - [x] **Tests:** default console modes, single and batch writes, coalescing
     of a repeated key, a mouse move and a window resize, the batch boundary
     rule, text and NUL writes, prepend, peek versus read, and both flush paths
-- [x] `winterm/crates/host/src/read_data_cooked.rs` — `COOKED_READ_DATA`
+- [x] `winter/crates/host/src/read_data_cooked.rs` — `COOKED_READ_DATA`
   - [x] Ported from `readDataCooked.cpp`: the edit line (grapheme and
     overwrite-aware insert, backspace, Ctrl+Backspace, Home/End with Ctrl to
     erase, Delete, Escape, Insert), the word-wise cursor movement, history
@@ -918,14 +918,14 @@ porting skill requires.
     combining marks, word movement, erase-to-edge, history recall, prefix
     search, command completion, every popup, the wakeup mask, CR/CRLF, echo
     off, and the read loop
-- [x] `winterm/crates/host/src/history.rs` — `CommandHistory` and
+- [x] `winter/crates/host/src/history.rs` — `CommandHistory` and
   `CommandHistoryList`, ported from `history.cpp`
   - [x] **Tests:** add, empty, ring drop, duplicate suppression, retrieval both
     ways with clamping, realloc, prefix and exact search, and the
     per-application list
   - [ ] **Property tests:** cycling through history returns to the most recent
     command
-- [ ] `winterm/crates/host/src/handle.rs` — Handle management
+- [ ] `winter/crates/host/src/handle.rs` — Handle management
   - Not ported: `handle.cpp` is `LockConsole` and `UnlockConsole`, which take
     the console lock and, on the outermost unlock, drain the ctrl-event queue.
     `ConsoleInformation` owns the lock (`lock`/`unlock`/`recursion_depth`), so
@@ -933,11 +933,11 @@ porting skill requires.
     drain: the input records come from the pty. A wrapper whose extra work is a
     call to nothing would be a stub, so the file has no counterpart until a
     ctrl-event source exists.
-- [x] ~~`winterm/crates/host/src/output_stream.rs` — Output stream~~
+- [x] ~~`winter/crates/host/src/output_stream.rs` — Output stream~~
   - Not ported: `outputStream.cpp` implements `ITerminalApi`, a seam this port
     replaced with adapter-owned state and host-drained queues. ADR 013 records
     the decision and where its content lives.
-- [x] `winterm/crates/host/src/scrolling.rs` — Scroll logic
+- [x] `winter/crates/host/src/scrolling.rs` — Scroll logic
   - [x] Ported from `scrolling.cpp` and `scrolling.hpp`: scroll mode
     (`s_DoScroll`/`s_ClearScroll`), the wheel arithmetic (accumulated deltas,
     direction reset, Shift half-screen, both axes, buffer clamping), and
@@ -950,7 +950,7 @@ porting skill requires.
   - Not ported: `s_UpdateSystemMetrics` (the window supplies the metrics),
     `s_ScrollIfNecessary` and its point test (window and selection), and the
     window title/selection side effects of scroll mode
-- [x] `winterm/crates/host/src/selection.rs` — Selection state
+- [x] `winter/crates/host/src/selection.rs` — Selection state
   - [x] Ported from `selection.cpp` and `selectionState.cpp`: the flags (mouse,
     keyboard mark, line/block, the inverted bit), the anchor, the rectangle,
     the exclusive end, the saved cursor, the line-versus-block predicate, and
@@ -970,7 +970,7 @@ porting skill requires.
     forms, the formatted copy's output, and the clipboard handoff
   - Not ported: painting and the accessibility notifications (renderer and
     window), and colour selection
-- [x] `winterm/crates/host/src/selection_input.rs` — Selection input
+- [x] `winter/crates/host/src/selection_input.rs` — Selection input
   - [x] Ported from `selectionInput.cpp`: `HandleKeySelectionEvent` (Escape,
     Enter and Ctrl+C/Ctrl+Insert copy, mark-mode navigation, mouse-selection
     cancellation by a non-system key), `HandleKeyboardLineSelectionEvent` for
@@ -988,14 +988,14 @@ porting skill requires.
     default), and the paint/accessibility side effects. The edit line's screen
     bounds need the cooked read's pager, so an input-line-aware selection takes
     upstream's "no input line" path.
-- [x] `winterm/crates/host/src/cmdline.rs` — Word delimiters
+- [x] `winter/crates/host/src/cmdline.rs` — Word delimiters
   - [x] Ported from `cmdline.cpp`: `IsWordDelim` for a character and for a
     cell's text, and `DelimiterClass`. The configurable list is
     `registry::DEFAULT_WORD_DELIMITERS`, the same list the registry key
     replaces; the cooked read shares this one home.
   - [x] **Tests:** every default delimiter and space, multi-character and empty
     text, and the three classes
-- [x] `winterm/crates/host/src/input_key_info.rs` — Keyboard state
+- [x] `winter/crates/host/src/input_key_info.rs` — Keyboard state
   - [x] Ported from `inputKeyInfo.cpp` and the class in `input.h`: the virtual
     key, the control-key state, and the modifier predicates (`IsCtrlOnly`,
     `IsShiftOnly`, `IsShiftAndCtrlOnly`, `IsAltOnly`, `HasNoModifiers`).
@@ -1004,12 +1004,12 @@ porting skill requires.
   - Not ported: `input.cpp`'s `GetControlKeyState`, `ClearKeyInfo` and the
     menu/focus/ctrl handlers, which need window state. `IsSystemKey` is here as
     a free predicate because selection asks it.
-- [ ] `winterm/crates/host/src/directio.rs` — Direct I/O
+- [ ] `winter/crates/host/src/directio.rs` — Direct I/O
   - Deferred: `directio.cpp` implements the `ApiRoutines` entry points, which
     need the server, the codepage/`CHAR_INFO` translation and the VT writer —
     the seam ADR 013 declined to invent. It has no portable half to land ahead
     of them, so the module waits for the server's API surface.
-- [x] `winterm/crates/host/src/registry.rs` — Registry access
+- [x] `winter/crates/host/src/registry.rs` — Registry access
   - Ported from `registry.cpp` and `RegistrySerialization.cpp` as a schema, not
     a reader (ADR 037): the value names, the type each is coerced as (DWORD,
     WORD, boolean, byte, coordinate, string), the values handled by hand —
@@ -1027,7 +1027,7 @@ porting skill requires.
     `TextMeasurement`, `MSAADelay`, `UIADelay` and `EnableBuiltinGlyphs`, which
     have no field here; and the code page's East Asian rule, which needs the
     host's OEM code page.
-- [x] `winterm/crates/host/src/utils.rs` — Console utilities
+- [x] `winter/crates/host/src/utils.rs` — Console utilities
   - [x] Ported from `utils.cpp`: `CalcWindowSizeX`/`CalcWindowSizeY`,
     `CalcCursorYOffsetInPixels`, `ConvertStringToDec`, `s_CompareCoords` and
     `s_GetOppositeCorner`. Selection's inline corner and comparison code now
@@ -1037,13 +1037,13 @@ porting skill requires.
     comparison, and every rectangle corner
   - Not ported: `_LoadString` and `s_LoadStringEx`, which read Win32 string
     resources through the window layer.
-- [ ] `winterm/crates/host/src/tracing.rs` — Event tracing
+- [ ] `winter/crates/host/src/tracing.rs` — Event tracing
   - Not ported: `tracing.cpp` is ETW — `TraceLoggingWrite` against a provider
     manifest, plus a debug-flag word and a variadic string tracer. There is no
     ETW outside Windows, no manifest in this port, and no consumer for the
     events: what the user can act on is the settings window and the window's
     own notifications. ADR 013 records why the host has no seam for it.
-- [x] `winterm/crates/host/src/alias.rs` — Command aliases
+- [x] `winter/crates/host/src/alias.rs` — Command aliases
   - [x] Ported from `alias.cpp` and `alias.h`: the per-application table with
     case-insensitive application and alias names, add/get/remove/list, the
     cmd.exe clear, and `s_MatchAndCopyAlias`'s expansion (`$1`-`$9`, `$*`,
@@ -1055,9 +1055,9 @@ porting skill requires.
 
 ### Screen Buffer Management
 
-- [ ] `winterm/tests/host/scrollbar_state.rs` — Scrollbar computation for various buffer/window sizes
-- [ ] `winterm/tests/host/buffer_switching.rs` — Alternate/main buffer switching
-- [ ] `winterm/tests/host/font_updates.rs` — Font changes propagate correctly
+- [ ] `winter/tests/host/scrollbar_state.rs` — Scrollbar computation for various buffer/window sizes
+- [ ] `winter/tests/host/buffer_switching.rs` — Alternate/main buffer switching
+- [ ] `winter/tests/host/font_updates.rs` — Font changes propagate correctly
 
 ---
 
@@ -1076,7 +1076,7 @@ API. Non-blocking I/O and signal forwarding belong to the input layer.
 
 ### Portable Server Modules
 
-- [x] `winterm/crates/server/src/console_shim_policy.rs` — `ConsoleShimPolicy`
+- [x] `winter/crates/server/src/console_shim_policy.rs` — `ConsoleShimPolicy`
   - [x] Ported from `ConsoleShimPolicy.cpp`: `cmd.exe`, `powershell.exe` and
     `pwsh.exe`, ASCII case-insensitive, over the client's file name.
   - [x] **Tests:** every case variant, both PowerShells, unrelated names, and
@@ -1093,21 +1093,21 @@ API. Non-blocking I/O and signal forwarding belong to the input layer.
 
 ### Cross-Platform PTY Abstraction
 
-- [x] `winterm/crates/server/src/pty.rs` — the façade: `PtySize`, `PtyCommand`,
+- [x] `winter/crates/server/src/pty.rs` — the façade: `PtySize`, `PtyCommand`,
   and the platform `Pty` re-export
   - [x] **Tests:** command construction, the default size
-- [x] `winterm/crates/server/src/conpty.rs` — ConPTY
+- [x] `winter/crates/server/src/conpty.rs` — ConPTY
   - [x] Created with `CreatePseudoConsole`, `ResizePseudoConsole` and
     `ClosePseudoConsole`; the client starts with
     `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` and `STARTF_USESTDHANDLES` with null
     handles, so it inherits nothing and uses the pseudoconsole's console.
   - [x] **Tests:** command-line quoting, output, input, exit status, resize
-- [x] `winterm/crates/server/src/posix_pty.rs` — `openpty`
+- [x] `winter/crates/server/src/posix_pty.rs` — `openpty`
   - [x] `posix_openpt`/`grantpt`/`unlockpt`, the slave opened for the child's
     standard streams, `setsid` + `TIOCSCTTY` in `pre_exec`, `TIOCSWINSZ`.
   - [x] **Tests:** output, the window size as `stty` sees it, input, exit
     status, resize
-- [x] `winterm/crates/server/src/device_comm.rs` — `DeviceComm` trait
+- [x] `winter/crates/server/src/device_comm.rs` — `DeviceComm` trait
   - [x] **Tests:** `Pty` implements it; the pty tests exercise it
   - These are not upstream files; see ADR 016.
 
@@ -1125,15 +1125,15 @@ layer and the app's interactivity layer.
 
 ### Input Processing
 
-- [x] ~~`winterm/crates/input/src/keyboard.rs`~~ — `terminalInput.cpp`
+- [x] ~~`winter/crates/input/src/keyboard.rs`~~ — `terminalInput.cpp`
   - The encoder is `crates/term/src/input/terminal_input.rs`: key down/up,
     modifier and lock detection, the regular encodings, win32-input-mode and
     focus reporting, with the upstream cases ported beside it.
-- [x] ~~`winterm/crates/input/src/mouse.rs`~~ — `mouseInput.cpp`
+- [x] ~~`winter/crates/input/src/mouse.rs`~~ — `mouseInput.cpp`
   - The encoder is `crates/term/src/input/mouse_input.rs`: tracking modes,
     clicks, motion, wheel accumulation and normalization, the UTF-8 and SGR
     encodings, and alternate scroll.
-- [x] ~~`winterm/crates/input/src/kitty.rs`~~ — the kitty keyboard protocol
+- [x] ~~`winter/crates/input/src/kitty.rs`~~ — the kitty keyboard protocol
   - Part of `terminal_input.rs` (ADR 009): enabling, disabling, disambiguate,
     report-event-types, report-alternate-keys and report-all-keys.
 - [x] `Terminal.cpp`'s input surface — `crates/term/src/terminal.rs`
@@ -1146,7 +1146,7 @@ layer and the app's interactivity layer.
   Lands with the window backends below.
 - [ ] IME composition — the platform control hands composed text to
   `Terminal::handle_key` as a character event; there is no portable module.
-- [ ] ~~`winterm/crates/input/src/input_thread.rs`~~, ~~`pty_signal.rs`~~
+- [ ] ~~`winter/crates/input/src/input_thread.rs`~~, ~~`pty_signal.rs`~~
   - An input pump reads the pty and feeds `Terminal`, and resize reaches the
     child through `Pty::resize`; both are the application's composition of
     `server` and `term`, so they land with the app crate (Phase 9, ADR 017).
@@ -1160,7 +1160,7 @@ last-click position — goes with it, not into `term`.
 ### Platform Backends
 
 The first shell is egui on winit and wgpu (ADR 018), in
-`crates/winterm/src/app.rs`, `terminal_widget.rs`, `config.rs`, `window.rs`
+`crates/winter/src/app.rs`, `terminal_widget.rs`, `config.rs`, `window.rs`
 and `icon.rs` (ADR 038). The rows below are retired: they assume four
 hand-written backends, and ADR 018 defers them until the application works
 everywhere. A native backend replaces those five without touching `session.rs` or
@@ -1170,37 +1170,37 @@ renderer's pixels on a `SwapChainPanel` (ADRs 041, 042). Tabs, the palette and
 the settings editor are still to come, and egui keeps Linux and macOS until
 their native shells land.
 
-- [x] ~~`winterm/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
+- [x] ~~`winter/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
   - Retired: winit supplies the window, event loop, DPI and clipboard (ADR 018).
-- [x] ~~`winterm/crates/ui/src/platform/x11_window.rs`~~ — X11 backend
+- [x] ~~`winter/crates/ui/src/platform/x11_window.rs`~~ — X11 backend
   - Retired for the same reason.
-- [x] ~~`winterm/crates/ui/src/platform/wayland_window.rs`~~ — Wayland backend
+- [x] ~~`winter/crates/ui/src/platform/wayland_window.rs`~~ — Wayland backend
   - Retired for the same reason.
-- [x] ~~`winterm/crates/ui/src/platform/cocoa_window.rs`~~ — macOS backend
+- [x] ~~`winter/crates/ui/src/platform/cocoa_window.rs`~~ — macOS backend
   - Retired for the same reason.
 
 ### Application Shell
 
-- [x] `winterm/crates/winterm/src/session.rs` — the pty and its pump
+- [x] `winter/crates/winter/src/session.rs` — the pty and its pump
   - **Tests:** chunk order and end of stream, an error after data, the repaint
     wake for a chunk and for the end, and a real `cmd`/`sh` session through
     the pty.
-- [x] `winterm/crates/winterm/src/grid.rs` — a buffer snapshot for a painter
+- [x] `winter/crates/winter/src/grid.rs` — a buffer snapshot for a painter
   - Reads document rows (`history` first, then the screen) and reports the
     document row shown at the top, so the painter can map a selection.
   - **Tests:** row runs, the cursor, a hidden cursor, and the history revealed
     by scrolling with its top row.
-- [x] `winterm/crates/winterm/src/view.rs` — scroll and selection (ADR 019)
+- [x] `winter/crates/winter/src/view.rs` — scroll and selection (ADR 019)
   - Character, word, line and block selection in document cells; the
     multi-click counter; the scroll offset into history. A selection survives
     scrolling and can cross from history into the screen (ADR 020).
   - **Tests:** scroll clamping and selection keeping, click cycling, drag and
     backwards drag spans, block spans, word and line expansion, and the copied
     text of a line, a block and a history selection.
-- [x] `winterm/crates/winterm/src/blink.rs` — the cursor's blink state
+- [x] `winter/crates/winter/src/blink.rs` — the cursor's blink state
   - **Tests:** alternation at the period, steady when the cursor is not
     blinking or the window is unfocused, and the delay to the next toggle.
-- [x] ~~`winterm/crates/winterm/src/ui.rs`~~ — the egui shell
+- [x] ~~`winter/crates/winter/src/ui.rs`~~ — the egui shell
   - Split into `app.rs`, `terminal_widget.rs`, `config.rs`, `window.rs` and
     `icon.rs` when it reached 4,000 lines (ADR 038).
   - Mouse: a tracking application owns clicks, drags and the wheel; Shift is
@@ -1228,7 +1228,7 @@ their native shells land.
 
 **Estimated effort:** 5 weeks (1 wk for tests)
 
-Phase 9 is the shell's own modules (ADR 038): `crates/winterm/src/tabs.rs` is
+Phase 9 is the shell's own modules (ADR 038): `crates/winter/src/tabs.rs` is
 the tab list (add, close, select, wrap), `layout.rs` is the pane tree,
 `terminal_widget.rs` paints a pane and translates its input, `config.rs` edits
 the settings, and `app.rs` draws the strip, splits the panes and owns the
@@ -1240,28 +1240,28 @@ profile by name. The rest of `src/cascadia` remains.
 
 ### Application Core
 
-- [x] `winterm/crates/winterm/src/app.rs` — App lifecycle
+- [x] `winter/crates/winter/src/app.rs` — App lifecycle
   - Landed as the window itself, from `App.cpp` and `AppHost.cpp` (ADR 038):
     `App` and its tabs, the tab strip, the command palette, the chord map, the
     font registration and `run`. It drains what every terminal reports once a
     frame and turns an event into attention, a toast or a closed tab.
-- [x] `winterm/crates/winterm/src/config.rs` — Config loading/saving
+- [x] `winter/crates/winter/src/config.rs` — Config loading/saving
   - The settings window and its draft, from `TerminalSettingsEditor/` and the
     way `CascadiaSettings` is loaded and saved: the per-list drafts, the form,
     the preview, atomic save and the poll that reloads a saved file. The file
     itself is `crates/settings` (ADRs 025–032, 034).
-- [x] ~~`winterm/crates/winterm/src/settings.rs`~~ — Settings model
+- [x] ~~`winter/crates/winter/src/settings.rs`~~ — Settings model
   - Not ported: the model is `crates/settings` (the file, profiles, chords,
     schemes, themes) and the per-terminal slice is `term_settings.rs` (ADR 036).
     A second model in the shell would be a copy.
-- [x] ~~`winterm/crates/winterm/src/theme.rs`~~ — Theme system
+- [x] ~~`winter/crates/winter/src/theme.rs`~~ — Theme system
   - Not ported: themes are `crates/settings/src/themes.rs`, applied by the tab
     strip (ADR 035).
-- [x] `winterm/crates/winterm/src/window.rs` — Window management
+- [x] `winter/crates/winter/src/window.rs` — Window management
   - The three viewport commands the shell asks for — a title, an attention
     request and a close — named so the toolkit's vocabulary stays in one place
     (ADR 038).
-- [x] `winterm/crates/winterm/src/icon.rs` — Embedded resources
+- [x] `winter/crates/winter/src/icon.rs` — Embedded resources
   - The window icon is drawn rather than shipped: a dark rounded square with a
     prompt chevron and an underscore, at the 64×64 a window manager wants. There
     is no resource pipeline here and a binary asset would be unreadable
@@ -1270,31 +1270,31 @@ profile by name. The rest of `src/cascadia` remains.
 
 ### Tab & Pane Management
 
-- [x] ~~`winterm/crates/winterm/src/tab_bar.rs`~~ — Tab row
+- [x] ~~`winter/crates/winter/src/tab_bar.rs`~~ — Tab row
   - Drawn in `app.rs`: one selectable title per tab, a close button and a plus
     menu that starts any profile by name. **Tests:** the chord map
     (Ctrl+Shift+T/W, Ctrl+Tab) and the profile a name selects, not the pixels.
-- [x] ~~`winterm/crates/winterm/src/tab.rs`~~ — Tab state
+- [x] ~~`winter/crates/winter/src/tab.rs`~~ — Tab state
   - Landed as `tabs.rs` (the list) plus `Tab` in `app.rs` (one session, its
     terminal and its view). **Tests:** add, close, select and wrap, including
     the active index after a neighbour closes.
-- [x] ~~`winterm/crates/winterm/src/pane.rs`~~ — Pane management
+- [x] ~~`winter/crates/winter/src/pane.rs`~~ — Pane management
   - Landed as `layout.rs` (the binary split tree with fractional rectangles)
     plus `Pane` in `terminal_widget.rs` and `Tab` in `app.rs`. **Tests:** split, remove with collapse,
     nearest-boundary resize, ratio clamping and the focus walk in a 2x2 grid.
-- [x] `winterm/crates/winterm/src/terminal_widget.rs` — egui terminal viewport
+- [x] `winter/crates/winter/src/terminal_widget.rs` — egui terminal viewport
   - `TermControl.cpp` as `Pane`: painting a `grid` snapshot, turning egui events
     into `term` keys and mouse records, the find bar, the scrollbar and the
     bell's flash, over the `Control` that owns the terminal (ADR 036). The
     viewport and the selection stay here, as ADR 019 has them (ADR 038).
-- [x] ~~`winterm/crates/winterm/src/terminal_renderer.rs`~~ — wgpu render pass
+- [x] ~~`winter/crates/winter/src/terminal_renderer.rs`~~ — wgpu render pass
   - Not ported: egui's painter *is* the render pass, on top of wgpu through
     eframe, and `renderer`'s software backend is the path that is tested. A
     second pass would duplicate it (ADRs 007, 018, 038).
 
 ### Command Palette & Settings
 
-- [x] ~~`winterm/crates/winterm/src/command_palette.rs`~~ — Command palette
+- [x] ~~`winter/crates/winter/src/command_palette.rs`~~ — Command palette
   - Landed in `app.rs` as `Palette` and `palette_window`: Ctrl+Shift+P (the
     `commandPalette` action) opens a filter field over a list holding a tab per
     profile and then the window's actions, each with the chord the file binds to
@@ -1302,7 +1302,7 @@ profile by name. The rest of `src/cascadia` remains.
     Enter runs it and Escape closes it. **Tests:** the chord, the entries, the
     filter, the open/close reset, and that a text field or the palette keeps
     keys out of the shell, not the pixels.
-- [x] ~~`winterm/crates/winterm/src/settings_editor.rs`~~ — Settings editor
+- [x] ~~`winter/crates/winter/src/settings_editor.rs`~~ — Settings editor
   - Landed in `config.rs`: the settings window edits everything the schema
     holds — font size, the default profile and scheme, the profile list, the
     keybinding list and the color schemes (a text field and a swatch per
@@ -1319,7 +1319,7 @@ profile by name. The rest of `src/cascadia` remains.
     the save. The window itself now scrolls, because the editor had grown past
     a screen's height and put **Save** below the bottom edge. **Tests:** the
     preview is the document a save writes, and a broken colour leaves it empty.
-- [x] ~~`winterm/crates/winterm/src/search.rs`~~ — In-terminal search overlay
+- [x] ~~`winter/crates/winter/src/search.rs`~~ — In-terminal search overlay
   - Landed as the find bar in `terminal_widget.rs`, on Ctrl+Shift+F (the `find` action) over
     `TextBuffer::find_text`: every match in the document, history included, is
     highlighted and the current one more strongly; Enter and Shift+Enter wrap
@@ -1335,7 +1335,7 @@ profile by name. The rest of `src/cascadia` remains.
     `Unicode` sample, an autowrap match, a line break that stops one, wide
     characters, overlap, case, history, the scroll, the row spans, and the bar's
     state, not the pixels. The ICU regular-expression mode is not ported.
-- [x] ~~`winterm/crates/winterm/src/scrollbar.rs`~~ — Scrollbar with marks
+- [x] ~~`winter/crates/winter/src/scrollbar.rs`~~ — Scrollbar with marks
   - Landed as `scrollbar.rs` (toolkit-free geometry and drag state) and the
     pane's right-edge track in `terminal_widget.rs`: the thumb shows where the view sits, a
     press on the track centres the clicked row, a press on a prompt tick brings
@@ -1349,13 +1349,13 @@ profile by name. The rest of `src/cascadia` remains.
 
 ### Keybindings & Actions
 
-- [ ] `winterm/crates/winterm/src/keybindings.rs` — Key chord matching
+- [ ] `winter/crates/winter/src/keybindings.rs` — Key chord matching
   - [ ] **Tests:** exact match, partial match, no match, modifier variations
   - [ ] **Property tests:** matching is case-sensitive for letters; modifiers are order-independent; exact key + modifier match has higher priority than modifier-only match
-- [ ] `winterm/crates/winterm/src/actions.rs` — Action definitions
-- [ ] `winterm/crates/winterm/src/action_registry.rs` — Action registry
+- [ ] `winter/crates/winter/src/actions.rs` — Action definitions
+- [ ] `winter/crates/winter/src/action_registry.rs` — Action registry
   - [ ] **Tests:** register/unregister/lookup, dispatch, parameter passing
-- [x] ~~`winterm/crates/winterm/src/notifications.rs`~~ — Desktop notifications
+- [x] ~~`winter/crates/winter/src/notifications.rs`~~ — Desktop notifications
   - Landed as `notifications.rs` over `notify-rust`: a pane enables the
     adapter's `DesktopNotification` feature, `pump_output` drains OSC 777 into
     the window's queue, and `App::logic` shows each as a toast. A blank title
@@ -1363,11 +1363,11 @@ profile by name. The rest of `src/cascadia` remains.
     service drops the call. On Windows an unpackaged binary borrows PowerShell's
     application id, which is where the toast's attribution comes from.
     **Tests:** the message normalisation, not the OS call.
-- [ ] `winterm/crates/winterm/src/remoting.rs` — WebSocket terminal
+- [ ] `winter/crates/winter/src/remoting.rs` — WebSocket terminal
 
 ### Terminal Control
 
-- [x] `winterm/crates/winterm/src/term_control.rs` — High-level terminal control
+- [x] `winter/crates/winter/src/term_control.rs` — High-level terminal control
   - Landed as `Control`, upstream's `ControlCore`: the terminal, its connection,
     the bell, the title and the exit, with no egui type in a signature. `Pane`
     is the widget over it and keeps the viewport and the selection (ADR 019).
@@ -1377,19 +1377,19 @@ profile by name. The rest of `src/cascadia` remains.
     connection, a resize reaches both the terminal and the connection, the
     title is kept until the program sets another, a response goes back to the
     program, and the cell count is clamped (ADR 036).
-- [x] `winterm/crates/winterm/src/term_connection.rs` — Terminal-backend connection
+- [x] `winter/crates/winter/src/term_connection.rs` — Terminal-backend connection
   - Upstream's `ITerminalConnection` as a trait: drain, write, resize, `exited`
     and close. `session::Session` is the pty implementation; the control takes
     a boxed trait object, so a test drives a terminal from a byte buffer
     (ADR 036). `exited` is new because a ConPTY keeps its output pipe open
     after the client exits, which is why `server::Pty` gained `try_wait`.
-- [x] `winterm/crates/winterm/src/term_settings.rs` — Per-terminal settings
+- [x] `winter/crates/winter/src/term_settings.rs` — Per-terminal settings
   - `TerminalSettings` resolves the command, the tab's title and the scheme when
     a tab opens, as upstream's `TerminalSettings` is resolved from a profile.
     The command-and-title rules moved here from the shell (ADR 036). **Tests:**
     the default profile's command and title, a named profile, a profile title
     overriding the program name, the scheme, and a program with no stem.
-- [x] `winterm/crates/winterm/src/term_events.rs` — Event callbacks
+- [x] `winter/crates/winter/src/term_events.rs` — Event callbacks
   - `TerminalEvent::{Bell, Notification, Exited}`, drained once a frame.
     Upstream raises the title too; this shell reads it every frame instead, so
     there is no event for it (ADR 036). An exit closes the tab and the last tab
@@ -1419,44 +1419,44 @@ editor, and migration follows.
 
 ### Settings Model
 
-- [x] `winterm/crates/settings/src/schema.rs` — TOML schema
+- [x] `winter/crates/settings/src/schema.rs` — TOML schema
   - The root lives in `lib.rs`: `version`, `profiles`, `default_profile`,
     `keybindings`, `schemes`, `default_scheme` and `font`, with
     `Profile { name, command, args, title }` in `profiles.rs`. **Tests:** the
     defaults, an empty document, unknown fields and the version gate.
-- [x] `winterm/crates/settings/src/parser.rs` — TOML parser
+- [x] `winter/crates/settings/src/parser.rs` — TOML parser
   - TOML only; YAML is not read. **Tests:** a valid file, a missing file, a
     broken file, a newer version, and the platform path.
   - Also `load`, `load_with_report`, `to_toml` and `settings_path`; the
     application never writes the file.
-- [x] `winterm/crates/settings/src/profiles.rs` — Profile list
+- [x] `winter/crates/settings/src/profiles.rs` — Profile list
   - One list with a named default. **Tests:** the default profile names the
     platform shell; an unknown or absent default falls back to the first
     profile; a blank command is filled in.
-- [x] `winterm/crates/settings/src/palette.rs` — Color palettes
+- [x] `winter/crates/settings/src/palette.rs` — Color palettes
   - `Color` reads the ported xparse grammar (`#RGB` … `#RRGGBB`, `rgb:r/g/b`);
     `Scheme` names the twenty colours upstream's scheme names and `apply`
     writes them to the table, including the reserved default slots.
     **Tests:** spec grammar, canonical hex output, only-named colours written,
     alias moves, both boundary entries in ANSI order (ADR 024).
-- [x] `winterm/crates/settings/src/fonts.rs` — Font config
+- [x] `winter/crates/settings/src/fonts.rs` — Font config
   - The object holds `size`, clamped to 4–100 points; the egui shell measures
     its cell from it. **Tests:** the default, a file's size, the clamp and a
     non-numeric size rejecting the file.
   - [ ] Face, weight and feature parsing when a font loader exists; egui's
     stack is one embedded monospace family today (ADR 022's consumer rule).
-- [x] `winterm/crates/settings/src/keybindings.rs` — Keybinding definitions
+- [x] `winter/crates/settings/src/keybindings.rs` — Keybinding definitions
   - `Chord` parses `[ctrl+][alt+][shift+]<key>` as upstream's
     `KeyChordSerialization.cpp` does; `Key` is the vocabulary an egui event
     reports; `resolve` merges the user's list over `DEFAULT_KEYBINDINGS`, where
     the same chord replaces a default and `unbound` removes one. **Tests:**
     order- and case-insensitivity, a second key rejected, exact modifiers,
     round-trip of every default, replace/add/unbind/duplicate rules.
-- [x] `winterm/crates/settings/src/actions.rs` — Action definitions
+- [x] `winter/crates/settings/src/actions.rs` — Action definitions
   - Flat command names (`newTab`, `splitHorizontal`, `focusLeft`, …,
     `unbound`); the application maps them to window actions.
     **Tests:** the schema-driven cases in `lib.rs` and `app.rs`.
-- [x] `winterm/crates/settings/src/themes.rs` — Theme definitions
+- [x] `winter/crates/settings/src/themes.rs` — Theme definitions
   - Upstream's `Theme` narrowed to the four fills this shell draws — the tab
     row and a tab, focused and not — because the rest of `Theme.idl` (Mica, a
     rainbow frame, the frame and settings-page themes, the close button and the
@@ -1467,7 +1467,7 @@ editor, and migration follows.
     serving both states, the unfocused colour when named, a broken colour
     rejected, a nameless theme dropped and an unknown one warned, the draft
     round trip and its bad-colour message, and the window's rows and editor.
-- [x] `winterm/crates/settings/src/sgr_aliases.rs` — SGR alias table
+- [x] `winter/crates/settings/src/sgr_aliases.rs` — SGR alias table
   - `SchemeColor` names a scheme's twenty colours, the palette slot each fills
     and the two that move a `ColorAlias`; `Scheme`'s getter and setter, `apply`
     and the editor's field list all read it, so the four copies of the list
@@ -1475,7 +1475,7 @@ editor, and migration follows.
     the sixteen ANSI colours in slot order, the two aliased colours and no
     others, a round trip through the table, the file's own names reading back,
     and the table matching exactly what a full scheme serialises.
-- [x] `winterm/crates/settings/src/defaults.rs` — Defaults
+- [x] `winter/crates/settings/src/defaults.rs` — Defaults
   - The base layer in one place: `Settings::default` is it, and it is the
     document `settings::ensure_file` writes on a first start, so the window's
     path always exists (ADR 034). **Tests:** the written defaults read back
@@ -1485,7 +1485,7 @@ editor, and migration follows.
 
 ### Migration & Compatibility
 
-- [x] `winterm/crates/settings/src/migration.rs` — Version migration
+- [x] `winter/crates/settings/src/migration.rs` — Version migration
   - Version 0 is ADR 022's `settings.json`: a profile list and a default, nothing
     else. When `settings.toml` is absent it is read, normalized like any other
     document, written out as TOML so the migration happens once, and left in
@@ -1497,7 +1497,7 @@ editor, and migration follows.
     winning over the old one, a broken old file reported and not overwritten,
     the earlier path, and a property test that whatever the old file says, the
     migration is a fixed point.
-- [x] `winterm/crates/settings/src/validation.rs` — Settings validation
+- [x] `winter/crates/settings/src/validation.rs` — Settings validation
   - `Warning` names every guess normalization makes: a nameless profile or
     command, an unknown `default_profile` or `default_scheme`, dropped or
     repeated scheme names, repeated profile names, a clamped font size, a
@@ -1505,7 +1505,7 @@ editor, and migration follows.
     returns them, `Loaded` carries them, and the window lists them (ADR 027).
     **Tests:** a clean document warns about nothing; one odd file produces each
     warning; each rule's warning fails when it is removed.
-- [x] `winterm/crates/settings/src/watch.rs` — Settings file watching
+- [x] `winter/crates/settings/src/watch.rs` — Settings file watching
   - The watcher is a poll: `Stamp { modified, len }`, compared once a second;
     a change reloads chords, font, scheme and the next tab's profile, and a
     save that does not parse leaves the running session alone (ADR 025).
@@ -1517,24 +1517,24 @@ editor, and migration follows.
 
 **Estimated effort:** 1 week
 
-- [x] `winterm/crates/audio/src/midi.rs` — MIDI audio
+- [x] `winter/crates/audio/src/midi.rs` — MIDI audio
   - The DECPS arithmetic from `MidiAudio.cpp`: a note to its frequency, the
     rate DirectSound was asked for, the General MIDI 2 gain law, and a note to
     a tone. There is no device here; the host plays the tones (ADR 033).
     **Tests:** A4 at 440 Hz, C5, the octave, the wave rate, the gain law at
     full, half and zero velocity, a silent note that keeps its duration, and a
     sequence that keeps its order.
-- [x] `winterm/crates/audio/src/beep.rs` — Terminal beep
+- [x] `winter/crates/audio/src/beep.rs` — Terminal beep
   - BEL is the console host's `Beep(800, 200)` (`ConsoleWindow.cpp`), described
     rather than played. **Tests:** the tone's frequency and duration.
-- [x] `winterm/crates/winterm/src/visual_bell.rs` — Visual bell animation
+- [x] `winter/crates/winter/src/visual_bell.rs` — Visual bell animation
   - Landed in the app, not the crate: it is a flash, not a sound. `VisualBell`
     is the light `BellLightOn` switches on: it fades to nothing over
     `TerminalWarningBellInterval`, ignores a bell that arrives while it runs,
     and says when the next frame is due (ADR 006). The pane paints it over the
     text as the last thing it draws. **Tests:** the fade, the ignored second
     bell, the repaint schedule, and a bell after the end.
-- [x] The sink — `winterm/crates/winterm/src/sound.rs`
+- [x] The sink — `winter/crates/winter/src/sound.rs`
   - A thread plays a whole DECPS sequence with `Beep`, note after note, as
     `MidiAudio::PlayNote` blocks; a failed call still waits out the note so the
     rhythm survives. Windows only: other targets drop the tone (ADR 033). The
@@ -1552,7 +1552,7 @@ for `Point`", one test file per crate). The suite that exists is inline in the
 module that owns each rule, 1,678 tests across twelve crates, and the status
 table above is its breakdown. What a coverage review needs is not a count but an
 answer to "what failure would this layer catch that the one below cannot" — the
-question the `winterm-testing` skill asks. The audit kept the invariants the
+question the `winter-testing` skill asks. The audit kept the invariants the
 corpus could not enumerate and retired the rows that would have added no layer.
 
 ### Added: the invariants the corpus could not enumerate
@@ -1579,7 +1579,7 @@ module that owns the rule, as the porting skill requires; moving them into
 `src/unit_tests/` would restructure the suite without adding an assertion, and
 the counts in this section were targets rather than cases. Three rows name
 crates that do not exist: `crates/input` (the encoders live in `term`, ADR 017),
-`crates/audio/src/visual_bell.rs` (the flash is `winterm::visual_bell`), and
+`crates/audio/src/visual_bell.rs` (the flash is `winter::visual_bell`), and
 `server`'s `wait_queue` and `process_list` (the driver protocol is deliberately
 not ported, ADR 015).
 
@@ -1628,15 +1628,15 @@ every platform" is the gate.
 
 **Estimated effort:** 2 weeks
 
-- [ ] `winterm/crates/winterm/src/args.rs` — CLI argument parsing with `clap`
+- [ ] `winter/crates/winter/src/args.rs` — CLI argument parsing with `clap`
   - [ ] **Tests:** all arguments, help text, error messages, long/short forms, combined flags
-- [ ] `winterm/crates/winterm/src/logging.rs` — Structured logging with `tracing`
-- [ ] `winterm/crates/winterm/src/singleton.rs` — Single-instance enforcement
-- [ ] `winterm/crates/winterm/src/upgrade.rs` — Auto-update mechanism
-- [ ] `winterm/crates/winterm/src/windows` — Windows installer (MSI/NSIS)
-- [ ] `winterm/crates/winterm/src/linux` — Linux packaging (AppImage, Flatpak, deb)
-- [ ] `winterm/crates/winterm/src/macos` — macOS packaging (dmg, notarization)
-- [ ] `winterm/crates/winterm/src/docs` — Documentation and user guide
+- [ ] `winter/crates/winter/src/logging.rs` — Structured logging with `tracing`
+- [ ] `winter/crates/winter/src/singleton.rs` — Single-instance enforcement
+- [ ] `winter/crates/winter/src/upgrade.rs` — Auto-update mechanism
+- [ ] `winter/crates/winter/src/windows` — Windows installer (MSI/NSIS)
+- [ ] `winter/crates/winter/src/linux` — Linux packaging (AppImage, Flatpak, deb)
+- [ ] `winter/crates/winter/src/macos` — macOS packaging (dmg, notarization)
+- [ ] `winter/crates/winter/src/docs` — Documentation and user guide
 
 ---
 
@@ -1652,7 +1652,7 @@ every platform" is the gate.
 - [ ] `.github/workflows/fuzzing.yml` — Nightly fuzzing (honggfuzz)
 - [ ] `.github/workflows/xplat-matrix.yml` — Cross-platform matrix test
 - [ ] `.github/workflows/e2e-tests.yml` — End-to-end application tests
-- [ ] `winterm/tests/CI-README.md` — How to run each test suite locally
+- [ ] `winter/tests/CI-README.md` — How to run each test suite locally
 
 ---
 
@@ -1710,7 +1710,45 @@ state at a glance, with the owning crate's measured test count.
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
 | **14. CI/CD** | ✅ DONE | One workflow (`.github/workflows/ci.yml`): the gate and a `Full tests` job (`just test-long`, the `#[ignore]`d cases in release mode) on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`); a `v*` tag packages a versioned archive per host and publishes it (`just package`) |
-| **15. Native Linux shell** | ⏳ STARTED | Host is GTK 4 and the chrome is ours (ADR 061). Behind the `gtk` feature, `crates/winterm/src/linux/` already opens a window and paints a frame from `renderer`; tabs, input and the pty remain. The architecture, the Wayland traps and the test rig are in [`linux-shell-scope.md`](linux-shell-scope.md) |
+| **15. Native Linux shell** | ⏳ STARTED | Host is GTK 4 and the chrome is ours (ADR 061). Behind the `gtk` feature, `crates/winter/src/linux/` already opens a window and paints a frame from `renderer`; tabs, input and the pty remain. The architecture, the Wayland traps and the test rig are in [`linux-shell-scope.md`](linux-shell-scope.md) |
+| **Post-1.0 Chaos layer** | 💤 PARKED | Optional "Shitty Winter" edition: Slag-driven `bugs` instead of extensions, behind a narrow mischief surface. See below |
+
+## Post-1.0 milestone: the chaos layer
+
+**State:** parked. Nothing in this section blocks the 1.0 release.
+
+**The idea.** After Winter is a dependable terminal on Windows, Linux and macOS,
+ship an optional "Shitty Winter" edition: a complete chaos machine driven by
+[Slag](https://github.com/sdgoij/slag). Instead of extensions, a user installs
+**bugs** — small scripts that perturb input, timing, rendering, the cursor, the
+scrollback, colours or the bell in the most profound ways the hook surface
+allows. The joke is deliberate; the point is a safe sandbox for the terminal's
+own behaviour.
+
+**The boundary.** Winter's core stays deterministic, testable and free of the
+chaos layer. `winter` exposes a narrow mischief surface — hooks around input,
+timing, rendering, cursor, scrolling, colours and the bell — and a separate
+`winter-chaos` crate (or a feature-gated module) consumes it. The dependency
+ring still points one way: core never depends on chaos. An ADR records the
+surface before the first hook lands.
+
+**A bug is an artifact.** It is a Slag script plus a manifest that declares the
+target, intensity, seed and cleanup. A run is reproducible from its seed, and
+the application writes a replay log, so a chaotic session is art that can be
+inspected, not just breakage.
+
+**Install surface.** `winter bugs install <name>`, `winter bugs list`,
+`winter bugs enable|disable <name>`. Bugs live in the user's config directory,
+are enabled per profile, and none are enabled by default.
+
+**Safety rails.** Per-profile opt-in, a one-key kill switch, no access to pty
+data, credentials or the filesystem beyond the bug's own directory, panic-free
+by construction, and a replay log. A bug can make the terminal unpleasant; it
+must not make it unsafe.
+
+**Prerequisites.** Winter 1.0 has shipped on all supported hosts, the shell and
+input surfaces have settled, and the mischief ADR is accepted. Until then this
+stays a design note, not a work item.
 
 ## Test coverage
 

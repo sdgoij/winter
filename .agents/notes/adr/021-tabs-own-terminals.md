@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/tabs.rs`, `crates/winterm/src/ui.rs`;
+- Related: `crates/winter/src/tabs.rs`, `crates/winter/src/ui.rs`;
   ADR 018, ADR 019
 
 ## Context
@@ -17,7 +17,7 @@ which layer decides that a chord belongs to the window rather than the shell.
 
 ## Decision
 
-- `crates/winterm/src/tabs.rs` is a toolkit-free `Tabs<T>`: the list, the
+- `crates/winter/src/tabs.rs` is a toolkit-free `Tabs<T>`: the list, the
   active index, add, close, select and wrap. The active index is kept valid
   when a neighbour closes.
 - `Tab` in `ui.rs` owns one session, its `Terminal`, its `View`, its OSC title

@@ -26,11 +26,11 @@ function Find-Host {
         }
         return $Source
     }
-    if ($env:WINTERM_CONSOLE_HOST) {
-        if (-not (Test-Path $env:WINTERM_CONSOLE_HOST)) {
-            throw "WINTERM_CONSOLE_HOST points at $($env:WINTERM_CONSOLE_HOST), which does not exist."
+    if ($env:WINTER_CONSOLE_HOST) {
+        if (-not (Test-Path $env:WINTER_CONSOLE_HOST)) {
+            throw "WINTER_CONSOLE_HOST points at $($env:WINTER_CONSOLE_HOST), which does not exist."
         }
-        return $env:WINTERM_CONSOLE_HOST
+        return $env:WINTER_CONSOLE_HOST
     }
 
     $base = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages'
@@ -39,7 +39,7 @@ function Find-Host {
         Select-Object -First 1
 
     if (-not $package) {
-        throw "Windows Terminal is not installed, so there is no OpenConsole.exe to copy. Pass -Source or set WINTERM_CONSOLE_HOST."
+        throw "Windows Terminal is not installed, so there is no OpenConsole.exe to copy. Pass -Source or set WINTER_CONSOLE_HOST."
     }
 
     $hostPath = Join-Path (Get-ItemProperty $package.PSPath).PackageRootFolder 'OpenConsole.exe'

@@ -1,6 +1,6 @@
-# Working in winterm
+# Working in Winter
 
-Winterm is a cross-platform terminal emulator in Rust, ported module by module
+Winter is a cross-platform terminal emulator in Rust, ported module by module
 from Microsoft's Windows Terminal C++. The porting plan is
 [`.agents/notes/plan.md`](.agents/notes/plan.md); accepted decisions are in
 [`.agents/notes/adr/`](.agents/notes/adr/README.md). This file is the working
@@ -71,7 +71,7 @@ just hooks
 ```
 
 It runs formatting, lints, and `cargo-deny` when installed. Set
-`WINTERM_PRECOMMIT_TESTS=1` to add the suite.
+`WINTER_PRECOMMIT_TESTS=1` to add the suite.
 
 ## Test layers
 
@@ -104,7 +104,7 @@ not a test; it is a regression lock on a possible bug.
   upstream, a specification, or a hand-computed example.
 
 The procedure, the corpus layout, and the Windows memory trap are in the
-`winterm-testing` skill.
+`winter-testing` skill.
 
 ## Commit rules
 
@@ -132,7 +132,7 @@ tests pass.
   it.
 - **One Rust module per C++ file, same name**, with the upstream file named in
   the module doc comment. The method is in
-  `.agents/skills/winterm-porting`.
+  `.agents/skills/winter-porting`.
 - **A module lands working or not at all.** No `todo!()`, `unimplemented!()`,
   placeholder success, or module written but undeclared in `lib.rs`. A module
   that cannot be finished is deleted.
@@ -167,7 +167,7 @@ tests pass.
   incidental: `utils` opts out at its root because it owns the lock-free
   primitives; `server`'s two pty backends carry a module-level
   `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
-  `winterm`'s `sound` sink does the same for `Beep` (ADR 033), and its
+  `winter`'s `sound` sink does the same for `Beep` (ADR 033), and its
   `winui::surface`, `winui::wheel` and `winui::icon` modules do for Direct2D, the
   wheel hook and the window icon (ADRs 041, 047, 058). The two self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
@@ -232,7 +232,7 @@ headless `OpenConsole.exe` host it starts when one is installed, so sixel and
 kitty graphics reach the buffer (ADRs 054, 055). Phase 8 has
 the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
 AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
-It also has a first runnable shell: `crates/winterm` runs a shell on the pty and
+It also has a first runnable shell: `crates/winter` runs a shell on the pty and
 paints the buffer through egui on winit and wgpu (ADR 018), as a `Control` over
 a `Connection` trait with the viewport and selection in the widget and an event
 queue for the bell, a notification and an exit — a shell that exits closes its
@@ -265,7 +265,7 @@ resize, or drag a divider), a shell chosen by the profile (or from the plus
 menu), a command palette (Ctrl+Shift+P) over the profiles and the window's
 actions, an in-terminal find bar (Ctrl+Shift+F), a scrollbar with prompt marks,
 desktop notifications for a program's OSC 777, the window chords, a
-colour scheme and the font size read from `%APPDATA%\winterm\settings.toml`
+colour scheme and the font size read from `%APPDATA%\winter\settings.toml`
 (ADRs 022–024, 034), a theme the tab strip paints (ADR 035), a settings window
 (Ctrl+,) that reports the file it loaded, lists what normalization adjusted
 (ADR 027), edits everything the file holds — font size, defaults, profiles,

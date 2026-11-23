@@ -1,4 +1,4 @@
-//! # winterm-host
+//! # winter-host
 //!
 //! The console host: the side of the terminal that owns what a client writes
 //! and what it reads back. Ported from `src/host`.

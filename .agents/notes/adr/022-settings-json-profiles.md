@@ -18,9 +18,9 @@ yet, and a field no code reads is a field that drifts.
 
 `crates/settings` owns the schema, the parser and the path.
 
-- The file is JSON at `%APPDATA%\winterm\settings.json`, else
-  `$XDG_CONFIG_HOME/winterm/settings.json`, else
-  `$HOME/.config/winterm/settings.json`.
+- The file is JSON at `%APPDATA%\winter\settings.json`, else
+  `$XDG_CONFIG_HOME/winter/settings.json`, else
+  `$HOME/.config/winter/settings.json`.
 - The first schema is the profile:
   ```json
   {
@@ -75,5 +75,5 @@ Negative:
 |---|---|
 | Adopt Windows Terminal's `settings.json` wholesale | Its profiles, schemes and actions target a host model with no counterpart here |
 | YAML as well as JSON | The plan names both, but one reader means one set of tests and no ambiguity |
-| Put settings in the `winterm` crate | Parsing and defaults would be untestable without a window, and the plan already names the crate |
+| Put settings in the `winter` crate | Parsing and defaults would be untestable without a window, and the plan already names the crate |
 | Keep the shell hard-coded | The first user-facing setting is exactly this one |

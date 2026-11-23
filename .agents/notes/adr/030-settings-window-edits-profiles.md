@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/ui.rs`; ADRs 027, 028
+- Related: `crates/winter/src/ui.rs`; ADRs 027, 028
 
 ## Context
 

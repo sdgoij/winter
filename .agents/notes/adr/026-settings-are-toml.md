@@ -18,8 +18,8 @@ changes meaning", and that there is no version field.
 ## Decision
 
 - The file is `settings.toml`, in the same directories
-  (`%APPDATA%\winterm\...`, `$XDG_CONFIG_HOME/winterm/...`, else
-  `$HOME/.config/winterm/...`). This supersedes ADR 022's format and file name;
+  (`%APPDATA%\winter\...`, `$XDG_CONFIG_HOME/winter/...`, else
+  `$HOME/.config/winter/...`). This supersedes ADR 022's format and file name;
   every other decision in ADR 022 stands.
 - The root carries `version`, the schema version this build writes. A missing
   version is 1, and a version below 1 is read as 1. A version **above**

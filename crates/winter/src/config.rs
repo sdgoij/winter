@@ -315,8 +315,8 @@ impl App {
                 // keybindings, schemes and the preview were all here, and a
                 // window does not scroll itself: the Save button was below the
                 // bottom edge.
-                egui::ScrollArea::vertical().id_salt("winterm-settings").show(ui, |ui| {
-                    egui::Grid::new("winterm-settings-rows")
+                egui::ScrollArea::vertical().id_salt("winter-settings").show(ui, |ui| {
+                    egui::Grid::new("winter-settings-rows")
                         .num_columns(2)
                         .spacing([16.0, 4.0])
                         .show(ui, |ui| {
@@ -509,7 +509,7 @@ pub(crate) fn draft_editor(
     save: &mut bool,
     revert: &mut bool,
 ) {
-    egui::Grid::new("winterm-settings-editor")
+    egui::Grid::new("winter-settings-editor")
         .num_columns(2)
         .spacing([16.0, 4.0])
         .show(ui, |ui| {
@@ -525,7 +525,7 @@ pub(crate) fn draft_editor(
             } else {
                 selected
             };
-            egui::ComboBox::from_id_salt("winterm-settings-profile")
+            egui::ComboBox::from_id_salt("winter-settings-profile")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     for name in names {
@@ -537,7 +537,7 @@ pub(crate) fn draft_editor(
             ui.strong("Scheme");
             let names: Vec<String> = draft.schemes.iter().map(|scheme| scheme.name.clone()).collect();
             let selected = draft.default_scheme.clone().unwrap_or_else(|| "built-in".to_string());
-            egui::ComboBox::from_id_salt("winterm-settings-scheme")
+            egui::ComboBox::from_id_salt("winter-settings-scheme")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut draft.default_scheme, None, "built-in");
@@ -550,7 +550,7 @@ pub(crate) fn draft_editor(
             ui.strong("Theme");
             let names: Vec<String> = draft.themes.iter().map(|theme| theme.name.clone()).collect();
             let selected = draft.theme.clone().unwrap_or_else(|| "shell".to_string());
-            egui::ComboBox::from_id_salt("winterm-settings-theme")
+            egui::ComboBox::from_id_salt("winter-settings-theme")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut draft.theme, None, "shell");
@@ -567,11 +567,11 @@ pub(crate) fn draft_editor(
 
     let mut remove = None;
     egui::ScrollArea::vertical()
-        .id_salt("winterm-profiles")
+        .id_salt("winter-profiles")
         .max_height(220.0)
         .show(ui, |ui| {
             for (index, profile) in draft.profiles.iter_mut().enumerate() {
-                egui::Grid::new(("winterm-profile", index))
+                egui::Grid::new(("winter-profile", index))
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
@@ -614,13 +614,13 @@ pub(crate) fn draft_editor(
 
     let mut remove = None;
     egui::ScrollArea::vertical()
-        .id_salt("winterm-bindings")
+        .id_salt("winter-bindings")
         .max_height(200.0)
         .show(ui, |ui| {
             for (index, binding) in draft.keybindings.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut binding.keys).desired_width(150.0));
-                    egui::ComboBox::from_id_salt(("winterm-binding-action", index))
+                    egui::ComboBox::from_id_salt(("winter-binding-action", index))
                         .selected_text(binding.action.name())
                         .show_ui(ui, |ui| {
                             for action in settings::Action::ALL {
@@ -659,11 +659,11 @@ pub(crate) fn draft_editor(
 
     let mut remove = None;
     egui::ScrollArea::vertical()
-        .id_salt("winterm-schemes")
+        .id_salt("winter-schemes")
         .max_height(280.0)
         .show(ui, |ui| {
             for (index, scheme) in draft.schemes.iter_mut().enumerate() {
-                egui::Grid::new(("winterm-scheme", index))
+                egui::Grid::new(("winter-scheme", index))
                     .num_columns(3)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
@@ -704,11 +704,11 @@ pub(crate) fn draft_editor(
 
     let mut remove_theme = None;
     egui::ScrollArea::vertical()
-        .id_salt("winterm-themes")
+        .id_salt("winter-themes")
         .max_height(220.0)
         .show(ui, |ui| {
             for (index, theme) in draft.themes.iter_mut().enumerate() {
-                egui::Grid::new(("winterm-theme", index))
+                egui::Grid::new(("winter-theme", index))
                     .num_columns(3)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
@@ -753,7 +753,7 @@ pub(crate) fn draft_editor(
     egui::CollapsingHeader::new("Preview").show(ui, |ui| match draft.preview(settings) {
         Some(text) => {
             egui::ScrollArea::vertical()
-                .id_salt("winterm-preview")
+                .id_salt("winter-preview")
                 .max_height(220.0)
                 .show(ui, |ui| {
                     ui.monospace(text);

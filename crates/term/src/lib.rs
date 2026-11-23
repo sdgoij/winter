@@ -1,4 +1,4 @@
-//! # winterm-term
+//! # winter-term
 //!
 //! The glue between the VT parser and the terminal adapter.
 //!

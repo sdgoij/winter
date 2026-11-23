@@ -148,11 +148,11 @@ jobs:
         env:
           # The release's label, so a preview and the final release cannot ship
           # assets with the same name; `scripts/package.sh` strips the `v`.
-          WINTERM_VERSION: ${{ github.ref_name }}
+          WINTER_VERSION: ${{ github.ref_name }}
         run: just package
       - uses: actions/upload-artifact@v7
         with:
-          name: winterm-${{ matrix.os }}
+          name: winter-${{ matrix.os }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -182,7 +182,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -eu
-          (cd assets && sha256sum winterm-* > SHA256SUMS)
+          (cd assets && sha256sum winter-* > SHA256SUMS)
           prerelease=""
           case "$GITHUB_REF_NAME" in
             *-*) prerelease="--prerelease" ;;
@@ -194,6 +194,6 @@ jobs:
           else
             # shellcheck disable=SC2086 # the flag is deliberately word-split
             gh release create "$GITHUB_REF_NAME" assets/* \
-              --title "winterm ${GITHUB_REF_NAME#v}" \
+              --title "Winter ${GITHUB_REF_NAME#v}" \
               --generate-notes $prerelease
           fi

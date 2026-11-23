@@ -1,4 +1,4 @@
-//! # winterm-adapter
+//! # winter-adapter
 //!
 //! Terminal adapter layer — VT dispatch, page management, and protocol handling.
 //! Ported from Microsoft's Windows Terminal C++ `terminal/adapter` module.

@@ -840,7 +840,7 @@ mod tests {
                 cursor: CursorOptions::default(),
                 selection: Vec::new(),
                 highlights: Vec::new(),
-                title: "winterm".to_string(),
+                title: "winter".to_string(),
                 tsf: Composition::default(),
                 snippet: Composition::default(),
                 composition_origin: None,
@@ -1032,7 +1032,7 @@ mod tests {
 
         renderer.paint_frame().expect("frame");
 
-        assert_eq!(log.borrow().titles, vec!["winterm".to_string()]);
+        assert_eq!(log.borrow().titles, vec!["winter".to_string()]);
     }
 
     #[test]

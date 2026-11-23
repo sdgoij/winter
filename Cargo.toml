@@ -12,7 +12,7 @@ members = [
     "crates/server",
     "crates/settings",
     "crates/audio",
-    "crates/winterm",
+    "crates/winter",
 ]
 
 [workspace.package]
@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
-authors = ["winterm contributors"]
+authors = ["Winter contributors"]
 publish = false
 
 # The dependency ring, in the order it is allowed to point.
@@ -31,7 +31,7 @@ publish = false
 # and `adapter`: it consumes the parser and the console interfaces. `server`
 # sits on `host` and exposes the console's API surface. `settings` is the
 # user's TOML settings file and needs no workspace crate. `audio` is sound without a
-# device and sees no workspace crate either (ADR 033). `winterm` is the
+# device and sees no workspace crate either (ADR 033). `winter` is the
 # application: it sees everything and is the only crate allowed to (ADR 018).
 # A crate that needs something from a crate to its right is a design error, not
 # a manifest to edit; see .agents/notes/adr/001-workspace-layering.md.
@@ -47,7 +47,7 @@ host = { path = "crates/host" }
 server = { path = "crates/server" }
 settings = { path = "crates/settings" }
 audio = { path = "crates/audio" }
-winterm = { path = "crates/winterm" }
+winter = { path = "crates/winter" }
 
 arboard = "3"
 bitflags = "2"

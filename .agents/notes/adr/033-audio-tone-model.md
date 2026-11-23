@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/audio/`, `crates/winterm/src/sound.rs`,
-  `crates/winterm/src/visual_bell.rs`, `crates/adapter/src/adapt_dispatch.rs`;
+- Related: `crates/audio/`, `crates/winter/src/sound.rs`,
+  `crates/winter/src/visual_bell.rs`, `crates/adapter/src/adapt_dispatch.rs`;
   ADRs 001, 006, 016
 
 ## Context
@@ -29,15 +29,15 @@ packages.
   General MIDI 2 gain law), a `Note`/`Tone` pair, and the bell's tone. Its tests
   run everywhere.
 - **The parser keeps its own record.** `adapter`'s `MidiNote` is what `PlaySounds`
-  queues; `winterm` converts it to `audio::Note` at the seam. `adapter` never
+  queues; `winter` converts it to `audio::Note` at the seam. `adapter` never
   names `audio`, and `audio` never names `adapter`.
-- **`winterm::sound` is the sink.** It is the one module besides `utils` and the
+- **`winter::sound` is the sink.** It is the one module besides `utils` and the
   pty backends allowed `unsafe`. On Windows it plays tones with `Beep` on a
   thread of its own, one sequence at a time: the same blocking order as
   `MidiAudio::PlayNote`. A `Beep` that fails still sleeps out the note, so the
   sequence keeps the rhythm the program asked for.
 - **The bell is a tone and a flash.** The tone is 800 Hz for 200 ms. The flash
-  lives in `winterm::visual_bell` as data (ADR 006): one second, fading, and a
+  lives in `winter::visual_bell` as data (ADR 006): one second, fading, and a
   second bell while one runs is ignored, which is what `BellLightOn` does.
 - **Every other target is silent for now.** `sound::play` drops the tone; the
   bell still flashes the pane and asks for attention.
@@ -65,7 +65,7 @@ packages.
   code pretends otherwise.
 - A DECPS note is at most 255/32 seconds, and the sound thread blocks for it.
   The thread is never joined, so closing the window does not wait for a song.
-- Replacing the sink later is a change to `winterm::sound::play` only; the crate
+- Replacing the sink later is a change to `winter::sound::play` only; the crate
   and its tests stay.
 
 ## Alternatives considered

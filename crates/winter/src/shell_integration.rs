@@ -13,10 +13,10 @@ use std::sync::OnceLock;
 use server::pty::PtyCommand;
 
 /// The script, embedded so the hook never depends on the install layout.
-const SCRIPT: &str = include_str!("../shell-integration/winterm.ps1");
+const SCRIPT: &str = include_str!("../shell-integration/winter.ps1");
 
 /// The variable that keeps the hook off a shell; `0` turns it off.
-pub const OPT_OUT: &str = "WINTERM_SHELL_INTEGRATION";
+pub const OPT_OUT: &str = "WINTER_SHELL_INTEGRATION";
 
 /// The switches that already decide what PowerShell runs. `-File` and
 /// `-Command` take everything after them, so a hook appended there would
@@ -44,7 +44,7 @@ pub fn installed() -> Option<PathBuf> {
                 return None;
             }
             let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
-            write_script(&base.join("winterm")).ok()
+            write_script(&base.join("winter")).ok()
         })
         .clone()
 }
@@ -140,7 +140,7 @@ mod tests {
     use super::*;
 
     fn script() -> PathBuf {
-        PathBuf::from(r"C:\cache\winterm\shell-integration.ps1")
+        PathBuf::from(r"C:\cache\winter\shell-integration.ps1")
     }
 
     fn arguments(command: PtyCommand) -> Vec<String> {
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn the_script_lands_in_its_directory_and_is_refreshed() {
         let directory =
-            std::env::temp_dir().join(format!("winterm-shell-integration-{}-{}", std::process::id(), line!()));
+            std::env::temp_dir().join(format!("winter-shell-integration-{}-{}", std::process::id(), line!()));
         let _ = std::fs::remove_dir_all(&directory);
 
         let path = write_script(&directory).expect("write");

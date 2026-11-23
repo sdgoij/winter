@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/server/src/conpty.rs`, `crates/winterm/src/term_control.rs`, ADR 005, ADR 016, ADR 054
+- Related: `crates/server/src/conpty.rs`, `crates/winter/src/term_control.rs`, ADR 005, ADR 016, ADR 054
 
 ## Context
 
@@ -34,10 +34,10 @@ band, so even a sequence that reached the parser painted nothing.
   - `Packed(Packed)` — a headless `OpenConsole.exe` this process starts.
 - A console host is looked for in this order, and `Packed` is used when one is
   found:
-  1. `WINTERM_CONSOLE_HOST`;
-  2. `OpenConsole.exe` beside `winterm.exe`;
+  1. `WINTER_CONSOLE_HOST`;
+  2. `OpenConsole.exe` beside `winter.exe`;
   3. `x64\OpenConsole.exe` beside it;
-  4. `%LOCALAPPDATA%\winterm\OpenConsole.exe`.
+  4. `%LOCALAPPDATA%\winter\OpenConsole.exe`.
 - Starting the packed host opens the ConDrv server and its `\Reference` client,
   creates an inheritable signal pipe, duplicates the client's pipe ends as
   inheritable, and launches the host with
@@ -67,7 +67,7 @@ band, so even a sequence that reached the parser painted nothing.
   did before this ADR.
 - The host is Windows Terminal's binary, not ours. It is discovered, never
   downloaded, and copying it is an explicit developer step; a release folder
-  carries it beside `winterm.exe` together with its notices. Building our own
+  carries it beside `winter.exe` together with its notices. Building our own
   conhost remains the long-term answer, which is why the lookup checks beside
   our own executable first.
 - `Packed` is an ABI, not a convenience struct: `signal` must stay at offset 0

@@ -1,4 +1,4 @@
-//! # winterm-renderer
+//! # winter-renderer
 //!
 //! Renderer foundation ported from Microsoft's Windows Terminal C++ renderer.
 //!

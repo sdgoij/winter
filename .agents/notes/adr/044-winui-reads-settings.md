@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/winui/app.rs`, `crates/winterm/src/term_settings.rs`,
+- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/term_settings.rs`,
   `crates/renderer/src/render_settings.rs`, `crates/renderer/src/atlas/engine.rs`,
   ADR 025, ADR 026, ADR 034, ADR 043
 

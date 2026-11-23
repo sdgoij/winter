@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/buffer/src/text_buffer.rs`, `crates/winterm/src/view.rs`,
-  `crates/winterm/src/grid.rs`; ADR 019
+- Related: `crates/buffer/src/text_buffer.rs`, `crates/winter/src/view.rs`,
+  `crates/winter/src/grid.rs`; ADR 019
 
 ## Context
 

@@ -1,4 +1,4 @@
-//! # winterm-utils
+//! # winter-utils
 //!
 //! Terminal Implementation Library — geometry, types, and utilities.
 //! Ported from Microsoft's Windows Terminal C++ `til` namespace.

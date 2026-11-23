@@ -534,8 +534,7 @@ mod tests {
         fn new(label: &str) -> Self {
             static COUNTER: AtomicU32 = AtomicU32::new(0);
             let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("winterm-font-cache-{}-{label}-{counter}", std::process::id()));
+            let path = std::env::temp_dir().join(format!("winter-font-cache-{}-{label}-{counter}", std::process::id()));
             match std::fs::remove_dir_all(&path) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

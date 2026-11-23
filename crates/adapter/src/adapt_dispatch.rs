@@ -4068,7 +4068,7 @@ mod tests {
         dispatch.vt52_device_attributes();
         dispatch.request_terminal_parameters(ReportingPermission::Solicited);
         dispatch.set_optional_features(std::collections::HashSet::new());
-        dispatch.set_window_title("winterm");
+        dispatch.set_window_title("winter");
         dispatch.set_current_working_directory("file:///tmp");
         dispatch.set_clipboard("copied");
         dispatch.add_hyperlink("https://example.com", "");
@@ -5016,12 +5016,12 @@ mod tests {
     #[test]
     fn window_title_is_recorded_and_capped() {
         let mut dispatch = AdaptDispatch::new();
-        dispatch.set_window_title("winterm");
-        assert_eq!(dispatch.window_title(), Some("winterm"));
+        dispatch.set_window_title("winter");
+        assert_eq!(dispatch.window_title(), Some("winter"));
 
         let too_long = "x".repeat(1001);
         dispatch.set_window_title(&too_long);
-        assert_eq!(dispatch.window_title(), Some("winterm"));
+        assert_eq!(dispatch.window_title(), Some("winter"));
     }
 
     #[test]

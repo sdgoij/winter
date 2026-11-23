@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
-- Related: `crates/winterm/src/shell_integration.rs`, `crates/winterm/shell-integration/winterm.ps1`, `crates/winterm/src/term_settings.rs`, `crates/buffer/src/marks.rs`, `crates/winterm/src/grid.rs`, ADR 059
+- Related: `crates/winter/src/shell_integration.rs`, `crates/winter/shell-integration/winter.ps1`, `crates/winter/src/term_settings.rs`, `crates/buffer/src/marks.rs`, `crates/winter/src/grid.rs`, ADR 059
 
 ## Context
 
@@ -31,7 +31,7 @@ because they are on different rows.
   profile, so the hook wraps the prompt the user already has instead of
   replacing it, and `-NoExit` keeps the session.
 - The script is embedded with `include_str!` and written to
-  `%LOCALAPPDATA%\winterm\shell-integration.ps1`, so the hook does not depend on
+  `%LOCALAPPDATA%\winter\shell-integration.ps1`, so the hook does not depend on
   the install layout. A stale copy is rewritten, so an upgrade does not keep an
   old script.
 - It emits `133;A` before the prompt, `133;B` after it, `133;C` from a
@@ -44,7 +44,7 @@ because they are on different rows.
   `-EncodedCommand`, `-NonInteractive`, or a bare script). `-File` takes the
   rest of the command line, so appending after one would either be ignored or
   steal the user's own.
-- `WINTERM_SHELL_INTEGRATION=0` keeps the hook off a shell.
+- `WINTER_SHELL_INTEGRATION=0` keeps the hook off a shell.
 - Marks are now one per prompt row and one per command line, matching upstream:
   `start_prompt` and `start_command` create a mark unless one already covers
   the row, and `mark_prompt_row` (ADR 059) uses the same rule. `D` therefore
@@ -54,7 +54,7 @@ because they are on different rows.
 
 - A failing command shows a red tick and a succeeding one a blue tick, in both
   shells, on the default Windows profile, with no user setup.
-- A shell started outside winterm, or with its own `-Command`, keeps its own
+- A shell started outside Winter, or with its own `-Command`, keeps its own
   behaviour and gets only ADR 059's automatic marks.
 - The script runs for every PowerShell tab, so a profile that sets its own
   `prompt` is wrapped rather than duplicated; the wrapper captures the original

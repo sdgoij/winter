@@ -1,4 +1,4 @@
-# winterm
+# Winter
 
 A cross-platform terminal emulator in Rust, ported module by module from
 [Microsoft's Windows Terminal](https://github.com/microsoft/terminal).
@@ -31,22 +31,24 @@ after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winterm`](crates/winterm) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053), including tabs in the title bar, a profile menu beside the new-tab button, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
+| [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053), including tabs in the title bar, a profile menu beside the new-tab button, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
 
-1678 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1681 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`.agents/notes/plan.md`](.agents/notes/plan.md).
 
 ## Configuration
 
-`crates/settings` reads `%APPDATA%\winterm\settings.toml` on Windows and
-`$XDG_CONFIG_HOME/winterm/settings.toml` (else
-`$HOME/.config/winterm/settings.toml`) elsewhere. A missing file is written
+`crates/settings` reads `%APPDATA%\winter\settings.toml` on Windows and
+`$XDG_CONFIG_HOME/winter/settings.toml` (else
+`$HOME/.config/winter/settings.toml`) elsewhere. A missing file is written
 with the defaults on first start, so there is something to edit; an invalid one
 starts PowerShell on Windows (the user's `SHELL` elsewhere) from the default
-profiles and the default chords. An installation from the earlier JSON schema
-keeps its profiles: `settings.json` beside the new file is read once and
-written out as TOML (ADR 034).
+profiles and the default chords. A settings file left by the pre-rename build
+is read from the old `winterm` directory once and written to the new one, and
+an installation from the earlier JSON schema keeps its profiles:
+`settings.json` beside the new file is read once and written out as TOML
+(ADR 034).
 
 ```toml
 version = 1
@@ -163,17 +165,17 @@ just hooks       # enable the pre-commit hook, once per clone
 On Windows, image protocols (sixel, kitty) need a console host that forwards
 them. `just console-host` copies the one Windows Terminal ships beside the
 development binaries; `just dist` assembles a runnable release folder with that
-host beside `winterm.exe`, so an installed copy needs neither Windows Terminal
+host beside `winter.exe`, so an installed copy needs neither Windows Terminal
 nor a cached host (ADR 055).
 
 `just package` builds the release binary and wraps that folder in one archive
 named after the version and the target:
-`dist/winterm-<version>-<target>.zip` on Windows, `.tar.gz` elsewhere. Pushing a
+`dist/winter-<version>-<target>.zip` on Windows, `.tar.gz` elsewhere. Pushing a
 tag named `v<version>` — or `v<version>-<prerelease>`, which publishes a
 prerelease — runs the gate on all four hosts, then each host packages the binary
 it tested and the archives are published with a `SHA256SUMS`
 (`.github/workflows/ci.yml`). A prerelease tag labels the archives with the
-release's own version (`winterm-0.1.0-preview.1-…`), so a preview and the final
+release's own version (`winter-0.1.0-preview.1-…`), so a preview and the final
 release never share a file name.
 
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
@@ -191,10 +193,10 @@ run:
 
 ```sh
 sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev
-cargo run -p winterm --features gtk
+cargo run -p winter --features gtk
 ```
 
-`WINTERM_SCREENSHOT=<path>` makes that shell write its toplevel to a PNG and
+`WINTER_SCREENSHOT=<path>` makes that shell write its toplevel to a PNG and
 quit, which is how it is photographed on a machine with no display server.
 
 ## Layout
@@ -215,7 +217,7 @@ The dependency ring starts at `utils → types → {buffer, vt} → adapter → 
 `renderer` sits on `utils`, `types` and `buffer` so the adapter may call it later;
 `host` sits on `types`, `vt` and `adapter`, consuming the parser and the console
 interfaces; `server` sits on `host` and exposes the console's API surface;
-`settings` needs no workspace crate; `winterm` is the application on top and the
+`settings` needs no workspace crate; `winter` is the application on top and the
 only crate that sees everything (ADR 018). The ring is enforced by the manifests
 and described in [ADR 001](.agents/notes/adr/001-workspace-layering.md).
 

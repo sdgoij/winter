@@ -2,7 +2,7 @@
 # Pre-commit floor: formatting, lints, and the dependency policy.
 #
 # Install once per clone with `just hooks`. This is not the gate; run
-# `just gate` before claiming anything is green. Set WINTERM_PRECOMMIT_TESTS=1
+# `just gate` before claiming anything is green. Set WINTER_PRECOMMIT_TESTS=1
 # to add the workspace suite.
 set -eu
 
@@ -30,7 +30,7 @@ else
     echo "pre-commit: install it with 'cargo install cargo-deny --locked'" >&2
 fi
 
-if [ "${WINTERM_PRECOMMIT_TESTS:-0}" = "1" ]; then
+if [ "${WINTER_PRECOMMIT_TESTS:-0}" = "1" ]; then
     echo "pre-commit: test --workspace"
     cargo test --workspace
 fi

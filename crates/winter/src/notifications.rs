@@ -24,7 +24,7 @@ pub fn message(title: &str, body: &str) -> Message {
     let title = title.trim();
     Message {
         title: if title.is_empty() {
-            "winterm".to_string()
+            "Winter".to_string()
         } else {
             title.to_string()
         },
@@ -41,7 +41,7 @@ pub fn show(title: &str, body: &str) {
     let _ = Notification::new()
         .summary(&message.title)
         .body(&message.body)
-        .appname("winterm")
+        .appname("Winter")
         .show();
 }
 
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn a_blank_title_gets_the_application_name() {
-        assert_eq!(message("  ", "body").title, "winterm");
+        assert_eq!(message("  ", "body").title, "Winter");
         assert_eq!(
             message(" Build ", " body "),
             Message {

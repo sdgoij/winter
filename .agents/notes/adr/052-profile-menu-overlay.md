@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/winui/app.rs`, `crates/winterm/src/winui/menu.rs`, ADR 042, ADR 050, ADR 051
+- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/winui/menu.rs`, ADR 042, ADR 050, ADR 051
 
 ## Context
 
@@ -38,7 +38,7 @@ snapshot exposes no flyout or menu it can use:
   both 24 DIP high, and the `▾` carries the 13-DIP top offset the tab strip's
   own button has, so the two are even.
 - Its rows come from `winui::menu::entries`: every profile in the settings file
-  in file order, followed by `Settings` and `About winterm`. The list is a pure
+  in file order, followed by `Settings` and `About Winter`. The list is a pure
   function of `settings::Settings` and is unit-tested on its own.
 - A profile row opens a new tab through `TerminalSettings::for_profile` and the
   shell's shared `add_tab`; the new tab is active.

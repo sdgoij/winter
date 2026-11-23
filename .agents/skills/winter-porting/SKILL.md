@@ -1,5 +1,5 @@
 ---
-name: winterm-porting
+name: winter-porting
 description: Port one module from Microsoft's Windows Terminal C++ source into a Rust crate in this workspace. Use when adding or finishing a ported module (buffer, vt, adapter, renderer, host), translating C++ types and error handling, or deciding where a shared type belongs.
 ---
 

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/ui.rs`, `plan.md` Phases 8–9; ADR 001,
+- Related: `crates/winter/src/ui.rs`, `plan.md` Phases 8–9; ADR 001,
   ADR 006, ADR 007, ADR 017
 
 ## Context
@@ -19,9 +19,9 @@ the plan already names for the renderer.
 
 ## Decision
 
-The application crate (`crates/winterm`) uses `eframe` (winit + wgpu + egui).
+The application crate (`crates/winter`) uses `eframe` (winit + wgpu + egui).
 
-- egui is confined to `crates/winterm/src/ui.rs`, the module that turns egui
+- egui is confined to `crates/winter/src/ui.rs`, the module that turns egui
   events into the core vocabulary and paints a frame. Nothing else names it.
 - `session.rs` (the pty and its pump) and `grid.rs` (a buffer snapshot: row
   text, attribute runs, cursor) are toolkit-free and tested without a window.
@@ -47,7 +47,7 @@ The application crate (`crates/winterm`) uses `eframe` (winit + wgpu + egui).
 Positive:
 
 - A shell attached to a real pty is reachable without platform FFI for windows.
-- The core of the app stays testable with `cargo test -p winterm`.
+- The core of the app stays testable with `cargo test -p winter`.
 
 Negative:
 

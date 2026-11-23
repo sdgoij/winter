@@ -4,7 +4,7 @@ Status: decided — ADR 061. The milestones at the end are the plan of record;
 1–3 are done, and the shell paints its first frame from `renderer` (see
 *Progress*).
 Related: ADR 061 (the decision), ADR 018 (the egui shell), ADR 038 (crate
-split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winterm/src/winui/`.
+split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winter/src/winui/`.
 
 ## Goal
 
@@ -22,15 +22,15 @@ primary selection and IME.
 
 | Milestone | State |
 |---|---|
-| 1. Rig | ✅ headless weston + `WINTERM_SCREENSHOT` (see *Verification*) |
+| 1. Rig | ✅ headless weston + `WINTER_SCREENSHOT` (see *Verification*) |
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
-| 3. Skeleton | ✅ `crates/winterm/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
+| 3. Skeleton | ✅ `crates/winter/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ⏳ next |
 | 5. Host chrome | ⏳ |
 | 6. Linux extras | ⏳ |
 | 7. Cut-over | ⏳ |
 
-`cargo run -p winterm --features gtk` (or `only` that package) picks the GTK
+`cargo run -p winter --features gtk` (or `only` that package) picks the GTK
 shell on Linux; without the feature `main.rs` still runs the egui shell, so the
 default build has no GTK dependency.
 
@@ -96,7 +96,7 @@ second shell rather than as a rejected idea.
 
 ## Architecture
 
-One directory, `crates/winterm/src/linux/`, chosen in `main.rs` the way
+One directory, `crates/winter/src/linux/`, chosen in `main.rs` the way
 `winui` is (ADR 040):
 
 | Module | Owns |
@@ -160,8 +160,8 @@ Three things were measured on the guest, and they settle the rig:
 
 **Capture is the app's own job.** `weston-screenshooter` produces nothing on a
 headless output, so the shell snapshots its own toplevel with `GtkSnapshot` →
-`GskRenderNode` → PNG behind `WINTERM_SCREENSHOT=<path>`, the way
-`WINTERM_DEBUG_MARKS` drove a dump earlier. That captures the client chrome and
+`GskRenderNode` → PNG behind `WINTER_SCREENSHOT=<path>`, the way
+`WINTER_DEBUG_MARKS` drove a dump earlier. That captures the client chrome and
 CSD as GTK draws them — what a compositor would show — and needs no capture
 protocol. Popovers are separate surfaces and are snapshotted individually when
 a test needs them.
@@ -178,7 +178,7 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 ## Milestones
 
 1. **Rig.** ✅ Headless weston up, a real client on it, and the shell's own
-   `WINTERM_SCREENSHOT` snapshot producing a PNG.
+   `WINTER_SCREENSHOT` snapshot producing a PNG.
 2. **Toolchain.** Install the `-devel` packages; build and run a hello-world
    window in the guest.
 3. **Skeleton.** ✅ Window, drawing area; one frame from `renderer` painted

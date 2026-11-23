@@ -2,7 +2,7 @@
 
 - Status: Accepted; amended by ADR 041 (surface) and ADR 042 (binding)
 - Date: 2026-11-22
-- Related: `crates/winterm/src/{app,terminal_widget,config,window,icon}.rs`,
+- Related: `crates/winter/src/{app,terminal_widget,config,window,icon}.rs`,
   `crates/renderer`; ADRs 006, 007, 009, 018, 038, 039
 
 ## Context
@@ -57,7 +57,7 @@ appearance is `WindowVisuals` with `theme`, `backdrop` (Mica, MicaAlt, Acrylic),
    underneath it, and no hand-written Win32 host is written.
 2. **The dependency is Windows-only and confined.** `windows-reactor` goes in
    `[target.'cfg(windows)'.dependencies]` and is named only inside
-   `crates/winterm/src/winui/`. Nothing below the shell sees it.
+   `crates/winter/src/winui/`. Nothing below the shell sees it.
 3. **One module per upstream XAML file**, as the port does everywhere else:
    `terminal_page`, `tab_row`, `titlebar`, `palette`, `settings_editor` and
    `app`, each naming its XAML source.
@@ -138,9 +138,9 @@ Negative:
 
 | # | Slice | Touches |
 |---|---|---|
-| 1 | Toolkit-free input vocabulary and settings drafts | `winterm` only, tested |
+| 1 | Toolkit-free input vocabulary and settings drafts | `winter` only, tested |
 | 2 | `winui` skeleton: window, `TitleBar`, `TerminalPage`, one tab, an `Image` fed by the software backend, keys to `Control` | `winui` |
-| 3 | `RenderData` over `Control`, painting through `Renderer::paint_frame` | `winterm`, `renderer` consumer |
+| 3 | `RenderData` over `Control`, painting through `Renderer::paint_frame` | `winter`, `renderer` consumer |
 | 4 | `TabView` row with close and reorder; command palette | `winui` |
 | 5 | Settings editor on `NavigationView` and the shared drafts | `winui` |
 | 6 | `SwapChainPanel` and a D3D11 backend (ADR 007) | `renderer`, `winui`, one `unsafe` module |

@@ -606,12 +606,12 @@ fn packed_console(size: PtySize, input: HANDLE, output: HANDLE) -> io::Result<Op
 /// looked for where the environment points, beside this executable, in its
 /// `x64` subdirectory, and finally in the app's cache directory.
 ///
-/// A packaged release has the host beside `winterm.exe`, so it needs neither
+/// A packaged release has the host beside `winter.exe`, so it needs neither
 /// Windows Terminal nor the cache (ADR 055).
 fn console_host() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
     let directory = executable.parent()?;
-    let configured = std::env::var_os("WINTERM_CONSOLE_HOST").map(PathBuf::from);
+    let configured = std::env::var_os("WINTER_CONSOLE_HOST").map(PathBuf::from);
     let cache = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     console_host_in(directory, configured.as_deref(), cache.as_deref())
 }
@@ -634,7 +634,7 @@ fn console_host_in(directory: &Path, configured: Option<&Path>, local_app_data: 
         }
     }
 
-    let cached = local_app_data?.join("winterm").join("OpenConsole.exe");
+    let cached = local_app_data?.join("winter").join("OpenConsole.exe");
     cached.is_file().then_some(cached)
 }
 
@@ -859,7 +859,7 @@ mod tests {
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!("winterm-host-{name}-{}", std::process::id()));
+            let path = std::env::temp_dir().join(format!("winter-host-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).expect("scratch directory");
             Self(path)
@@ -890,7 +890,7 @@ mod tests {
         let exe = Scratch::new("beside");
         let cache = Scratch::new("beside-cache");
         let beside = exe.touch("OpenConsole.exe");
-        cache.touch("winterm/OpenConsole.exe");
+        cache.touch("winter/OpenConsole.exe");
 
         assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), Some(beside));
     }
@@ -930,17 +930,17 @@ mod tests {
         let cache = Scratch::new("cache-store");
         assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), None);
 
-        let cached = cache.touch("winterm/OpenConsole.exe");
+        let cached = cache.touch("winter/OpenConsole.exe");
         assert_eq!(console_host_in(exe.path(), None, Some(cache.path())), Some(cached));
     }
 
     // Requires a console host that forwards image sequences. Point
-    // `WINTERM_CONSOLE_HOST` at one (the packaged OpenConsole.exe) and run with
+    // `WINTER_CONSOLE_HOST` at one (the packaged OpenConsole.exe) and run with
     // `--ignored`.
     #[test]
-    #[ignore = "needs WINTERM_CONSOLE_HOST pointing at OpenConsole.exe"]
+    #[ignore = "needs WINTER_CONSOLE_HOST pointing at OpenConsole.exe"]
     fn a_packed_console_forwards_an_image_sequence() {
-        if std::env::var_os("WINTERM_CONSOLE_HOST").is_none() {
+        if std::env::var_os("WINTER_CONSOLE_HOST").is_none() {
             return;
         }
 
@@ -955,7 +955,7 @@ $s = [Console]::OpenStandardOutput()
 $s.Write($b, 0, $b.Length)
 $s.Flush()
 "#;
-        let path = std::env::temp_dir().join(format!("winterm-image-{}.ps1", std::process::id()));
+        let path = std::env::temp_dir().join(format!("winter-image-{}.ps1", std::process::id()));
         std::fs::write(&path, script).expect("script");
 
         let mut pty = Pty::spawn(

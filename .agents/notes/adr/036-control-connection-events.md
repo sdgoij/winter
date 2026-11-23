@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/{term_connection,term_control,term_events,term_settings,
+- Related: `crates/winter/src/{term_connection,term_control,term_events,term_settings,
   session}.rs`, `crates/server/src/{conpty,posix_pty}.rs`; ADRs 016, 018, 019
 
 ## Context

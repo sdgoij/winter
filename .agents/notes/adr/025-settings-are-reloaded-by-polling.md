@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/settings/src/watch.rs`, `crates/winterm/src/app.rs`,
-  `crates/winterm/src/winui/app.rs`; ADRs 022–024
+- Related: `crates/settings/src/watch.rs`, `crates/winter/src/app.rs`,
+  `crates/winter/src/winui/app.rs`; ADRs 022–024
 
 ## Context
 

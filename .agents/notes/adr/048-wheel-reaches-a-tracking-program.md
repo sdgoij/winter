@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/winui/app.rs`, `crates/winterm/src/winui/wheel.rs`,
-  `crates/winterm/src/input.rs`, ADR 019, ADR 046, ADR 047
+- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/winui/wheel.rs`,
+  `crates/winter/src/input.rs`, ADR 019, ADR 046, ADR 047
 
 ## Context
 

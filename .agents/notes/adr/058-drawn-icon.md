@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winterm/src/icon_draw.rs`, `crates/winterm/src/icon.rs`, `crates/winterm/build.rs`, `crates/winterm/src/winui/icon.rs`, ADR 038, ADR 055
+- Related: `crates/winter/src/icon_draw.rs`, `crates/winter/src/icon.rs`, `crates/winter/build.rs`, `crates/winter/src/winui/icon.rs`, ADR 038, ADR 055
 
 ## Context
 

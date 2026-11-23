@@ -215,13 +215,15 @@ pub(crate) fn load_from_path(path: Option<PathBuf>) -> Loaded {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return migrate_beside(&path).unwrap_or(Loaded {
-                settings: Settings::default(),
-                path: Some(path),
-                migrated_from: None,
-                error: None,
-                warnings: Vec::new(),
-            });
+            return migrate_beside(&path)
+                .or_else(|| migrate_from_old_directory(&path))
+                .unwrap_or(Loaded {
+                    settings: Settings::default(),
+                    path: Some(path),
+                    migrated_from: None,
+                    error: None,
+                    warnings: Vec::new(),
+                });
         }
         Err(error) => {
             return Loaded {
@@ -264,22 +266,32 @@ pub(crate) fn load_from_path(path: Option<PathBuf>) -> Loaded {
 /// current file; a failure to write is not a reason to lose them. The old file
 /// stays: deleting a user's file is not a migration.
 fn migrate_beside(path: &Path) -> Option<Loaded> {
-    let legacy = migration::legacy_path(path);
-    let text = match std::fs::read_to_string(&legacy) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => {
-            return Some(Loaded {
-                settings: Settings::default(),
-                path: Some(path.to_path_buf()),
-                migrated_from: None,
-                error: Some(LoadError::Unreadable {
-                    path: legacy,
-                    detail: error.to_string(),
-                }),
-                warnings: Vec::new(),
-            });
-        }
+    migrate_json(&migration::legacy_path(path), path)
+}
+
+/// Reads the settings the pre-rename directory holds, when the current
+/// directory has none.
+///
+/// The TOML file is preferred, because it is what the last build wrote; a
+/// version 0 JSON file is read when that is all the old directory has.
+fn migrate_from_old_directory(path: &Path) -> Option<Loaded> {
+    let legacy = legacy_settings_beside(path)?;
+    if legacy.exists() {
+        return migrate_toml(&legacy, path);
+    }
+    let json = migration::legacy_path(&legacy);
+    if json.exists() {
+        return migrate_json(&json, path);
+    }
+    None
+}
+
+/// Reads a version 0 JSON document and writes it beside the current path.
+fn migrate_json(legacy: &Path, path: &Path) -> Option<Loaded> {
+    let text = match read_legacy(legacy, path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return None,
+        Err(loaded) => return Some(*loaded),
     };
 
     match migration::from_json(&text) {
@@ -288,7 +300,7 @@ fn migrate_beside(path: &Path) -> Option<Loaded> {
             Some(Loaded {
                 settings,
                 path: Some(path.to_path_buf()),
-                migrated_from: Some(legacy),
+                migrated_from: Some(legacy.to_path_buf()),
                 error: None,
                 warnings,
             })
@@ -298,11 +310,61 @@ fn migrate_beside(path: &Path) -> Option<Loaded> {
             path: Some(path.to_path_buf()),
             migrated_from: None,
             error: Some(LoadError::Invalid {
-                path: legacy,
+                path: legacy.to_path_buf(),
                 detail: error.to_string(),
             }),
             warnings: Vec::new(),
         }),
+    }
+}
+
+/// Reads the current TOML schema from the pre-rename directory.
+fn migrate_toml(legacy: &Path, path: &Path) -> Option<Loaded> {
+    let text = match read_legacy(legacy, path) {
+        Ok(Some(text)) => text,
+        Ok(None) => return None,
+        Err(loaded) => return Some(*loaded),
+    };
+
+    match parse_with_warnings(&text) {
+        Ok((settings, warnings)) => {
+            let _ = save_to(path, &settings);
+            Some(Loaded {
+                settings,
+                path: Some(path.to_path_buf()),
+                migrated_from: Some(legacy.to_path_buf()),
+                error: None,
+                warnings,
+            })
+        }
+        Err(error) => Some(Loaded {
+            settings: Settings::default(),
+            path: Some(path.to_path_buf()),
+            migrated_from: None,
+            error: Some(LoadError::Invalid {
+                path: legacy.to_path_buf(),
+                detail: error.to_string(),
+            }),
+            warnings: Vec::new(),
+        }),
+    }
+}
+
+/// Reads a legacy document, distinguishing "not there" from "cannot read".
+fn read_legacy(legacy: &Path, path: &Path) -> Result<Option<String>, Box<Loaded>> {
+    match std::fs::read_to_string(legacy) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Box::new(Loaded {
+            settings: Settings::default(),
+            path: Some(path.to_path_buf()),
+            migrated_from: None,
+            error: Some(LoadError::Unreadable {
+                path: legacy.to_path_buf(),
+                detail: error.to_string(),
+            }),
+            warnings: Vec::new(),
+        })),
     }
 }
 
@@ -320,7 +382,25 @@ fn config_base() -> Option<PathBuf> {
 }
 
 fn settings_path_in(base: &Path) -> PathBuf {
-    base.join("winterm").join("settings.toml")
+    base.join("winter").join("settings.toml")
+}
+
+/// The file the pre-rename directory keeps, when `path` is under the current
+/// directory name.
+///
+/// The rename moved the directory, not the file name, so the old file is one
+/// sibling directory away.
+pub(crate) fn legacy_settings_beside(path: &Path) -> Option<PathBuf> {
+    let directory = path.parent()?;
+    if directory.file_name()?.to_str()? != "winter" {
+        return None;
+    }
+    Some(directory.parent()?.join("winterm").join(path.file_name()?))
+}
+
+/// Whether the pre-rename directory holds a settings document.
+pub(crate) fn has_legacy_settings(path: &Path) -> bool {
+    legacy_settings_beside(path).is_some_and(|legacy| legacy.exists() || migration::legacy_path(&legacy).exists())
 }
 
 #[cfg(test)]
@@ -332,8 +412,43 @@ mod tests {
         let base = Path::new("/tmp/config");
         assert_eq!(
             settings_path_in(base),
-            PathBuf::from("/tmp/config/winterm/settings.toml")
+            PathBuf::from("/tmp/config/winter/settings.toml")
         );
+    }
+
+    #[test]
+    fn a_settings_file_from_the_old_directory_is_migrated() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let old = directory.path().join("winterm").join("settings.toml");
+        std::fs::create_dir_all(old.parent().expect("parent")).expect("create");
+        std::fs::write(&old, "version = 1\n\n[font]\nsize = 30\n").expect("write");
+
+        let path = directory.path().join("winter").join("settings.toml");
+        let loaded = load_from_path(Some(path.clone()));
+
+        assert_eq!(loaded.settings.font.size, 30.0);
+        assert_eq!(loaded.path, Some(path.clone()));
+        assert_eq!(loaded.migrated_from, Some(old.clone()));
+        assert_eq!(loaded.error, None);
+        assert!(path.exists(), "the migration writes the current file");
+        assert!(old.exists(), "the old file is left alone");
+    }
+
+    #[test]
+    fn an_old_directory_with_only_the_json_file_is_migrated() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let old = directory.path().join("winterm").join("settings.toml");
+        std::fs::create_dir_all(old.parent().expect("parent")).expect("create");
+        let json = old.with_extension("json");
+        std::fs::write(&json, r#"{ "profiles": [{ "name": "work", "command": "cmd.exe" }] }"#).expect("write");
+
+        let path = directory.path().join("winter").join("settings.toml");
+        let loaded = load_from_path(Some(path.clone()));
+
+        let profile = loaded.settings.profile().expect("the migrated profile");
+        assert_eq!(profile.name, "work");
+        assert_eq!(loaded.migrated_from, Some(json));
+        assert!(path.exists(), "the migration writes the current file");
     }
 
     #[test]
@@ -399,7 +514,7 @@ mod tests {
     #[test]
     fn a_save_creates_the_directory_and_writes_a_loadable_file() {
         let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("winterm").join("settings.toml");
+        let path = directory.path().join("winter").join("settings.toml");
 
         let settings = Settings::default();
         save_to(&path, &settings).expect("save");

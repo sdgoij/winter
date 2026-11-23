@@ -991,7 +991,7 @@ impl Shell {
 
     /// The title the window shows: the active tab's.
     fn title(&self) -> &str {
-        self.tabs.active().map_or("winterm", |tab| tab.title.as_str())
+        self.tabs.active().map_or("Winter", |tab| tab.title.as_str())
     }
 
     /// Opens a tab on the same profile and activates it.
@@ -1948,7 +1948,7 @@ fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>) -> View {
         }
         MenuEntry::About => {
             let sender = sender.clone();
-            menu_button("About winterm".to_string()).on_click(move || {
+            menu_button("About Winter".to_string()).on_click(move || {
                 let _ = sender.send(Message::MenuAbout);
             })
         }
@@ -1968,13 +1968,13 @@ fn menu_button(label: String) -> Button {
 /// The About dialog: the version this build was compiled as.
 fn about_dialog(sender: &LocalSender<Message>) -> ContentDialog {
     let details = StackPanel::new().spacing(8.0).children((
-        TextBlock::new().text(format!("winterm {}", env!("CARGO_PKG_VERSION"))),
+        TextBlock::new().text(format!("Winter {}", env!("CARGO_PKG_VERSION"))),
         TextBlock::new().text("A cross-platform terminal emulator in Rust."),
         TextBlock::new().text("Ported from Microsoft's Windows Terminal."),
     ));
 
     ContentDialog::new()
-        .title("About winterm")
+        .title("About Winter")
         .close_button_text("Close")
         .is_open(true)
         .content(details)
