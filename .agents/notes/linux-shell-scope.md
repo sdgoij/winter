@@ -1,9 +1,11 @@
 # A native Linux shell — scope
 
-Status: decided — ADR 061. The milestones at the end are the plan of record;
-1–4 are done, and the shell runs a real shell on the pty (see *Progress*).
-Related: ADR 061 (the decision), ADR 018 (the egui shell), ADR 038 (crate
-split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winter/src/winui/`.
+Status: parked — ADR 062. The GTK shell reached a live terminal (milestones 1–4
+and half of 5) and is not being finished; Linux ships the egui shell. What is
+here is kept for a future attempt: the measurements, the traps and the state.
+Related: ADR 062 (the parking decision), ADR 061 (the GTK decision it amends),
+ADR 018 (the egui shell), ADR 038 (crate split), ADRs 040–053 (the WinUI shell
+this mirrors), `crates/winter/src/linux/`.
 
 ## Goal
 
@@ -236,13 +238,14 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    `GtkWindowHandle`, with the profile list as a `GtkPopoverMenu`. The find
    bar, the settings window and the native dialogs remain.
 6. **Linux extras.** Primary selection, IME preview, bell, notifications.
-7. **Cut-over.** `main.rs` prefers the native shell on Linux, egui stays for
-   macOS until its own shell exists; `just test` must stay green on a headless
-   runner with no display.
+7. **Cut-over.** Not taken: ADR 062 parks the shell, so `main.rs` keeps egui on
+   Linux and the next native shell is macOS's.
 
 ## Open questions
 
-- Do we keep egui buildable on Linux as a fallback (`--shell egui`) during the
-  transition, or cut over in one step? (Leaning: keep it selectable, ADR 061.)
+ADR 062 answers the fallback one: Linux keeps the egui shell, so there is no
+cut-over to prepare for.
+
 - Should the settings window be the native preferences dialog only, or also stay
-  available as the shared `config::Draft` form for parity testing?
+  available as the shared `config::Draft` form for parity testing? This matters
+  only if the shell is revived.

@@ -1710,7 +1710,7 @@ state at a glance, with the owning crate's measured test count.
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
 | **14. CI/CD** | ✅ DONE | One workflow (`.github/workflows/ci.yml`): the gate and a `Full tests` job (`just test-long`, the `#[ignore]`d cases in release mode) on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`); a `v*` tag packages a versioned archive per host and publishes it (`just package`) |
-| **15. Native Linux shell** | ⏳ STARTED | Host is GTK 4 and the chrome is ours (ADR 061). Behind the `gtk` feature, `crates/winter/src/linux/` runs tabs in a title bar it paints itself — close boxes, the new-tab button and a `GtkPopoverMenu` of profiles — with each tab's shell on its own pty, keys through the shared input rules and the wheel into history. The find bar, the settings window and the macOS shell remain. The architecture, the Wayland traps and the test rig are in [`linux-shell-scope.md`](linux-shell-scope.md) |
+| **15. Native Linux shell** | 💤 PARKED | ADR 062 parks the GTK 4 shell: Linux ships the egui shell. `crates/winter/src/linux/` runs a window whose title bar is a tab strip it paints, one pty per tab, the shared input rules and wheel scrollback, all behind an opt-in `gtk` feature; the find bar, the settings window and the rest of the chrome were never built. Its measurements and Wayland traps stay in [`linux-shell-scope.md`](linux-shell-scope.md) |
 | **Post-1.0 Chaos layer** | 💤 PARKED | Optional "Shitty Winter" edition: Slag-driven `bugs` instead of extensions, behind a narrow mischief surface. See below |
 
 ## Post-1.0 milestone: the chaos layer

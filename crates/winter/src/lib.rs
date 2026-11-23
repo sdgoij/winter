@@ -22,7 +22,8 @@
 //!   [`window`] the platform commands. Those four, with [`icon`], are the ones
 //!   that name a toolkit. [`linux`] is the GTK 4 shell (ADR 061): GTK hosts the
 //!   window, the menus and the dialogs, while the tab strip, the scrollbar and
-//!   the grid stay [`renderer`]'s pixels.
+//!   the grid stay [`renderer`]'s pixels. It is parked (ADR 062) -- Linux runs
+//!   this egui shell.
 //!
 //! The emulation and console crates are portable and are tested without a
 //! window.

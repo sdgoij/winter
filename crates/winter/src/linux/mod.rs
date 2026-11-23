@@ -11,7 +11,9 @@
 //! client-side decorations and the tab strip included — and quits, which is how
 //! a machine with no display server photographs the shell.
 //!
-//! The profile menu, the find bar and the settings window are later milestones.
+//! The profile menu, the find bar and the settings window were never built:
+//! ADR 062 parks this shell at its current state, and Linux ships the egui
+//! one. What is here is kept as a working reference for its traps.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};

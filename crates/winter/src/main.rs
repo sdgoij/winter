@@ -3,8 +3,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         winter::winui::run()?;
     }
-    // The GTK shell is opt-in until it reaches parity with the egui one
-    // (ADR 061): `cargo run --features gtk` picks it on Linux.
+    // The GTK shell is parked (ADR 062) and opt-in: Linux runs the egui shell
+    // below unless `cargo run --features gtk` asks for this one.
     #[cfg(all(target_os = "linux", feature = "gtk"))]
     {
         winter::linux::run()?;

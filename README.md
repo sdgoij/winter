@@ -187,9 +187,9 @@ leaves out. `cargo-deny` is required for `just deny`:
 cargo install cargo-deny --locked
 ```
 
-On Linux a GTK 4 shell is being built beside the egui one (ADR 061). It is
-opt-in, so the default build needs no GTK headers, and it needs a display to
-run:
+Linux runs the egui shell. A GTK 4 shell reached a live terminal and is parked
+(ADR 062). It stays behind an opt-in feature, so the default build needs no GTK
+headers, and running it needs a display:
 
 ```sh
 sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev

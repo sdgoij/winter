@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the GTK 4 shell (ADR 061).
+# Runs the parked GTK 4 shell (ADRs 061, 062). Linux itself runs egui.
 #
 #   just linux                          # on Linux: this machine's build
 #   just linux FedoraLinux-44           # on Windows: in that WSL distro

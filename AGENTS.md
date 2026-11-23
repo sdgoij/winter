@@ -253,7 +253,8 @@ stays down until it is released (ADR 056), a retransmitted image painted once
 per batch (ADR 057), a scrollbar with the prompt marks, a pointer selection that copies through
 the clipboard, and scrollback reached by chord and by a low-level wheel hook
 that a mouse-tracking program receives unless Shift is held (ADRs 047, 048);
-egui remains the shell on Linux and macOS. The shell has wheel
+egui remains the shell on Linux, where the GTK work is parked (ADR 062), and
+on macOS until it has a native one. The shell has wheel
 scrollback, mouse selection that reaches into history and scrolls when a drag
 leaves the pane, mouse forwarding to a
 tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC
