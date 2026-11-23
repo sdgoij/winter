@@ -34,7 +34,7 @@ publish = false
 # device and sees no workspace crate either (ADR 033). `winter` is the
 # application: it sees everything and is the only crate allowed to (ADR 018).
 # A crate that needs something from a crate to its right is a design error, not
-# a manifest to edit; see .agents/notes/adr/001-workspace-layering.md.
+# a manifest to edit; see docs/adr/001-workspace-layering.md.
 [workspace.dependencies]
 utils = { path = "crates/utils" }
 types = { path = "crates/types" }

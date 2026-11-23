@@ -35,7 +35,7 @@ after the behaviour is right.
 
 1681 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
-[`.agents/notes/plan.md`](.agents/notes/plan.md).
+[`docs/plan.md`](docs/plan.md).
 
 ## Configuration
 
@@ -232,7 +232,7 @@ The dependency ring starts at `utils → types → {buffer, vt} → adapter → 
 interfaces; `server` sits on `host` and exposes the console's API surface;
 `settings` needs no workspace crate; `winter` is the application on top and the
 only crate that sees everything (ADR 018). The ring is enforced by the manifests
-and described in [ADR 001](.agents/notes/adr/001-workspace-layering.md).
+and described in [ADR 001](docs/adr/001-workspace-layering.md).
 
 ## Contributing
 
@@ -240,7 +240,7 @@ Read [`AGENTS.md`](AGENTS.md) first: it is the working agreement, and it is shor
 Procedures (porting a C++ module, testing, changing the WinUI shell,
 writing a commit message) are skills
 under [`.agents/skills/`](.agents/skills). Decisions that constrain future code
-are ADRs under [`.agents/notes/adr/`](.agents/notes/adr/README.md). The C++ source
+are ADRs under [`docs/adr/`](docs/adr/README.md). The C++ source
 is expected at `.design/refs/terminal` (gitignored); the port is written against
 it, not from memory.
 

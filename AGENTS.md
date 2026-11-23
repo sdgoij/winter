@@ -2,11 +2,11 @@
 
 Winter is a cross-platform terminal emulator in Rust, ported module by module
 from Microsoft's Windows Terminal C++. The live porting status is
-[`.agents/notes/plan.md`](.agents/notes/plan.md); accepted decisions are in
-[`.agents/notes/adr/`](.agents/notes/adr/README.md). This file is the working
+[`docs/plan.md`](docs/plan.md); accepted decisions are in
+[`docs/adr/`](docs/adr/README.md). This file is the working
 agreement: the directions that hold for every change, whether a person or an
 agent makes it. Procedures that have been walked live in `.agents/skills/`; the
-history of a decision lives in `.agents/notes/`.
+history of a decision lives in `docs/`.
 
 ## The iron rule
 
@@ -194,8 +194,8 @@ Do not add call sites under an allowance.
 
 | Path | Holds |
 |---|---|
-| `.agents/notes/plan.md` | The porting plan, milestone status, and what to build next |
-| `.agents/notes/adr/` | Decisions that constrain future code |
+| `docs/plan.md` | The porting plan, milestone status, and what to build next |
+| `docs/adr/` | Decisions that constrain future code |
 | `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI shell, commit messages |
 | `.design/refs/terminal/` | A local checkout of the upstream C++, gitignored, because it is the oracle and not source |
 | `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
@@ -229,7 +229,7 @@ Three homes, each answering a different question:
 |---|---|---|
 | `AGENTS.md` | What must every change obey? | The working agreement: the gates, the test rules, the invariants. Instructions, not explanations, and the same for a person and an agent. |
 | `.agents/skills/<name>/SKILL.md` | How do I do this here? | A procedure that has been performed successfully at least once, with the traps that cost time while doing it. One area per skill. |
-| `.agents/notes/` | Why is it like this, and what happened? | The historical knowledgebase: the plan and its status, the ADRs, investigations and measurements. |
+| `docs/` | Why is it like this, and what happened? | The historical knowledgebase: the plan and its status, the ADRs, investigations and measurements. |
 
 - A line every change must obey goes in this file. It is short and imperative
   because it is the first thing a contributor reads.

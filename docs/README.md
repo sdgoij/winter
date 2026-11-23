@@ -10,7 +10,7 @@ directory keeps the record — the *why* and the *when*.
 | [plan.md](plan.md) | The fourteen-phase porting plan, milestone status, test targets, and what to build next. The reference for what to build next. |
 | [adr/](adr/README.md) | Architecture decision records. A decision that constrains future code gets one; a decision that a test already enforces does not. |
 | [linux-shell-scope.md](linux-shell-scope.md) | The scope the GTK host was built against, parked at milestone 5 by ADR 062; kept because it records the Wayland traps a future Linux shell would hit again. |
-| [../skills/](../skills/) | Not part of this record: procedures that have been walked — porting a module, testing, the WinUI shell, commit messages. |
+| [../.agents/skills/](../.agents/skills/) | Not part of this record: procedures that have been walked — porting a module, testing, the WinUI shell, commit messages. |
 
 The C++ source being ported is Microsoft's Windows Terminal. It is not vendored;
 `/.design/refs` is the local checkout when one is present, and the module path in

@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-23
 - Related: ADR 061 (the decision this amends), ADR 018 (the egui shell),
-  `.agents/notes/linux-shell-scope.md`, `crates/winter/src/linux/`
+  `docs/linux-shell-scope.md`, `crates/winter/src/linux/`
 
 ## Context
 

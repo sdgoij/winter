@@ -2,7 +2,7 @@
 
 - Status: Amended by ADR 062 (the GTK shell is parked)
 - Date: 2026-11-23
-- Related: `crates/winter/src/linux/`, `crates/renderer`, `.agents/notes/linux-shell-scope.md`, ADRs 018, 038, 040, 041, 043, 051
+- Related: `crates/winter/src/linux/`, `crates/renderer`, `docs/linux-shell-scope.md`, ADRs 018, 038, 040, 041, 043, 051
 
 ## Context
 
