@@ -60,8 +60,9 @@ just test-long  # release mode, the ignored cases included
 - `just doc` — doc tests. There are none yet; the recipe exists so the first
   example that stops compiling fails the gate.
 - `just test-long` — the `#[ignore]`d cases in release mode. Not in `gate`: it
-  depends on the host's installed fonts and is slow. Run it when touching a
-  crate that has an ignored case.
+  depends on the host's installed fonts and is slow. CI runs it as its own
+  `Full tests` job on every push, and `package` waits for it; run it locally
+  when touching a crate that has an ignored case.
 
 Enable the pre-commit hook once per clone:
 

@@ -174,8 +174,9 @@ runs on all four hosts first, then each host packages the binary it tested
 (`.github/workflows/ci.yml`).
 
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
-x86-64 and arm64 Linux, Windows, and macOS. `cargo-deny` is required for
-`just deny`:
+x86-64 and arm64 Linux, Windows, and macOS, plus `just test-long` as a `Full
+tests` job — the `#[ignore]`d font cases and the release profile, which the gate
+leaves out. `cargo-deny` is required for `just deny`:
 
 ```sh
 cargo install cargo-deny --locked

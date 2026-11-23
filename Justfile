@@ -39,7 +39,8 @@ deny:
 test:
     cargo test --workspace
 
-# Release-mode suite with the ignored cases, which read the host's fonts.
+# Release-mode suite with the ignored cases, which read the host's fonts. Not
+# part of `gate`; CI runs it as its own `Full tests` job.
 test-long:
     cargo test --workspace --release -- --include-ignored
 
