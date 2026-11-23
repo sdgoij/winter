@@ -206,6 +206,12 @@ is a fact about a machine; `WSL_DISTRO` sets the same thing from the
 environment. The guest keeps its artefacts in its own home rather than in the
 repository's `target/`.
 
+Wayland gives a client the compositor's keymap and nothing else, so the
+compositor is where a layout lives. WSLg always composes `us` and cannot be
+told otherwise, so a custom Windows layout never reaches it — every GUI app in
+WSL types QWERTY, `konsole` included. The fix belongs on the Windows side,
+where a scancode remapper makes that `us` keymap produce the right letters.
+
 ## Layout
 
 ```

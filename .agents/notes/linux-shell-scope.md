@@ -207,6 +207,14 @@ route line as the display name (`could not connect to display default via
 172.27.160.1 dev eth0 proto kernel onlink :0`), and GTK would have failed the
 same way; WSLg sets both variables, so the profile line is deleted.
 
+**WSLg's keymap is `us`, and it is not configurable.** Its system distro ships
+no `weston.ini`, and nothing in the guest reaches the compositor, so a custom
+Windows layout (`0409:A0000409` on this machine) never arrives: every GUI app
+in WSL types QWERTY, `konsole` included — which is how we know the shell is
+not the one dropping it. The fix belongs on the Windows side, where a scancode
+remapper makes that `us` keymap produce the right letters. X11 would take a
+keymap of its own, but X11 is not a path this shell takes.
+
 To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 (Qt route: `qt6-qtbase-devel cmake gcc-c++`). `just` is not installed there;
 `cargo` alone is enough.
