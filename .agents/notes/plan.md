@@ -1,6 +1,8 @@
 # Windows Terminal C++ → Cross-Platform Rust: Porting Plan
 
-**Reference project:** Microsoft's Windows Terminal (`refs/terminal/`)
+**Reference project:** Microsoft's Windows Terminal, a gitignored local checkout
+at `.design/refs/terminal/`. It is the oracle: where this code and upstream
+disagree, upstream wins (AGENTS.md §Porting).
 **Goal:** Port the core terminal emulator to a cross-platform Rust codebase targeting Windows, Linux (Wayland/X11), and macOS.
 
 ## Status (2026-11-22)
@@ -20,7 +22,7 @@ Verified by running the gate, not by reading the previous status:
 | `server` | ~1.0k | 17 + 1 ignored | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016), with a headless `OpenConsole.exe` host that forwards image sequences (ADR 055). The driver protocol is deliberately not ported |
 | `settings` | ~3.0k | 86 | Phase 10 (ADRs 022–032, 034, 035, 047): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names (including the scrolling six), colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
-| `winter` | ~8.0k | 188 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs a `TabView` in the title bar whose tabs each own a terminal, matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
+| `winter` | ~8.0k | 188 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs a `TabView` in the title bar whose tabs each own a terminal, matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, paints a retransmitted image once per batch (ADR 057), keeps a held key down through Win32 input records (ADR 056), and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
 for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
 
 `just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
@@ -1571,6 +1573,37 @@ corpus could not enumerate and retired the rows that would have added no layer.
   leaves an encoded sequence alone.
 - [x] `crates/utils/src/generational.rs` — a token is valid exactly while no
   write follows it, and the value it guards is the last one written.
+
+### Fidelity: oracle cases not yet ported
+
+The port is method-complete — `AdaptDispatch` implements every virtual method in
+upstream's `ITermDispatch.hpp`, and no handler in it falls back to the trait's
+`unhandled` default (ADR 004) — but fidelity is measured by the oracle's own
+cases, and these have no Rust counterpart yet. The counts are the vendored files
+under `.design/refs/terminal/`.
+
+| Upstream file | Lines | Ours today |
+|---|---|---|
+| `terminal/adapter/ut_adapter/adapterTest.cpp` | 4039 | spread over the adapter's unit modules |
+| `terminal/adapter/ut_adapter/inputTest.cpp` | 866 | 3 conformance cases plus the `TerminalInput` unit tests |
+| `buffer/out/ut_textbuffer/ReflowTests.cpp` | 726 | unit and property tests |
+| `terminal/adapter/ut_adapter/MouseInputTest.cpp` | 621 | 7 conformance cases |
+| `terminal/adapter/ut_adapter/kittyKeyboardProtocol.cpp` | 373 | 5 conformance cases |
+| `buffer/out/ut_textbuffer/TextAttributeTests.cpp`, `TextColorTests.cpp` | 327 + 201 | 10 colour and attribute tests |
+| `buffer/out/ut_textbuffer/UTextAdapterTests.cpp` | 74 | untested; the astral-plane `Replace` path |
+
+Two surfaces are absent rather than untested:
+
+- `TextBuffer::GetWithControlSequences`, which serialises a row back to text and
+  SGR. No shell consumes it yet.
+- Painting a DRCS glyph. `adapter::font_buffer` validates DECDLD, parses the
+  sixel payload, and packs and centres the glyphs; the paint path belongs to
+  `renderer`, which does not read them.
+
+Take the list smallest-first: a pure function's cases cost an afternoon and find
+real bugs (`UTextAdapterTests`' astral-plane replacement is the first), while
+`adapterTest.cpp` is a family at a time, each family its own commit. When a case
+is ported, delete its row.
 
 ### Retired rows
 

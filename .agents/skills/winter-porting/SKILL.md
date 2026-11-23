@@ -1,6 +1,6 @@
 ---
 name: winter-porting
-description: Port one module from Microsoft's Windows Terminal C++ source into a Rust crate in this workspace. Use when adding or finishing a ported module (buffer, vt, adapter, renderer, host), translating C++ types and error handling, or deciding where a shared type belongs.
+description: Port one module from Microsoft's Windows Terminal C++ source into a Rust crate in this workspace, or audit a crate against that source. Use when adding or finishing a ported module (buffer, vt, adapter, renderer, host), translating C++ types and error handling, deciding where a shared type belongs, or asking whether a crate is really ported.
 ---
 
 # Porting a module
@@ -56,7 +56,7 @@ replacement), and then it happens in exactly one place.
 ### Host ports
 
 `src/host` is Win32 console code. The portable part is the state machine; the
-platform part is a thin adapter that the `server` layer will provide.
+platform part is the `server` layer's.
 
 | Win32 | Rust here |
 |---|---|
@@ -68,6 +68,11 @@ platform part is a thin adapter that the `server` layer will provide.
 
 When the host needs a record type the adapter also uses, the type belongs in
 `types`, not in the host, and the enum grows with its first consumer.
+
+`server` keeps the same split: `console_shim_policy` is portable (ADR 015), and
+only the pty backends — `conpty.rs` and `posix_pty.rs` — are `cfg`-split, each
+carrying the module-level `#[allow(unsafe_code)]` and a `SAFETY:` note per call
+(ADR 016).
 
 ## 4. Port the tests with the code
 
@@ -94,6 +99,38 @@ it beside the working ones.
 `just gate`. If a ported signature trips a lint (long argument lists are common),
 `#[allow(clippy::...)]` with the reason "signature mirrors upstream `X`" is the
 correct answer; restructuring the signature is not.
+
+## 7. Check a crate against the oracle
+
+A module is checked when it lands; a crate is checked when someone asks "is this
+really ported?". The answer is evidence, not a count of files:
+
+1. **Find the header.** `.design/refs/terminal/src/terminal/` is a gitignored
+   checkout of `microsoft/terminal`; if it is missing, clone it there (it is the
+   oracle, not source). `AGENTS.md` §Where things live names it.
+2. **Diff the surface.** List the header's virtuals and our implementation's
+   methods, then diff by name:
+
+   ```sh
+   grep -ho 'virtual [^(]*' .design/refs/terminal/src/terminal/adapter/ITermDispatch.hpp
+   grep -o 'fn [a-z_0-9]*' crates/adapter/src/term_dispatch.rs
+   ```
+
+   Spelling drift is the usual false alarm: `designate94_charset` versus
+   `designate_94_charset` looked like a missing handler until the names were
+   compared without the underscore.
+3. **Check the defaults, not just the names.** A trait method with a default body
+   that records `unhandled` is ADR 004's soft-fail, so a method existing proves
+   nothing on its own. `AdaptDispatch::unhandled_count` is the ratchet: zero in
+   the tests means no shipped path used a default.
+4. **Diff the tests.** Upstream keeps its cases in `ut_*` and `*Tests.cpp` files.
+   `find .design/refs/terminal -name '*Tests.cpp' -o -name 'ut_*'` lists them;
+   a file with no Rust counterpart is a fidelity row in `plan.md` §Phase 12, not
+   a silent pass.
+5. **Prove an absence before writing it down.** Grep the upstream name and its
+   synonyms. DRCS was recorded as missing once because `font_buffer`'s DECDLD
+   decode was not where the note expected it; the decoder was there and only the
+   paint path was absent.
 
 ## Traps seen in this port
 

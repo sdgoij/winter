@@ -1,6 +1,0 @@
-# server crate
-
-- `unsafe` is permitted only in the two pty backends, `conpty.rs` and
-  `posix_pty.rs`, each call with a `SAFETY:` note (ADR 016).
-- Platform code stays behind `cfg(windows)` / `cfg(unix)`; the console policy in
-  `console_shim_policy` is portable.

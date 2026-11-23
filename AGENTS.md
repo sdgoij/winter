@@ -1,13 +1,12 @@
 # Working in Winter
 
 Winter is a cross-platform terminal emulator in Rust, ported module by module
-from Microsoft's Windows Terminal C++. The porting plan is
+from Microsoft's Windows Terminal C++. The live porting status is
 [`.agents/notes/plan.md`](.agents/notes/plan.md); accepted decisions are in
 [`.agents/notes/adr/`](.agents/notes/adr/README.md). This file is the working
-agreement: how a change is made, tested, gated, and committed.
-
-Procedures live in skills under `.agents/skills/`; this file stays short and
-points at them.
+agreement: the directions that hold for every change, whether a person or an
+agent makes it. Procedures that have been walked live in `.agents/skills/`; the
+history of a decision lives in `.agents/notes/`.
 
 ## The iron rule
 
@@ -15,7 +14,7 @@ points at them.
 pass while one in a crate you never opened fails. Run what CI runs, all of it,
 before claiming anything is green.
 
-The `Justfile` is the one place to look for commands. `.github/workflows/`
+The `Justfile` is the one place to look for commands. `.github/workflows/ci.yml`
 is the truth; one workflow file holds the gate and the release, so the gate CI
 runs and the gate a tag runs are the same jobs. If the two disagree, CI wins. A
 pre-commit hook is a floor, not a substitute.
@@ -33,9 +32,9 @@ pre-commit hook is a floor, not a substitute.
 6. Stop and ask only when a decision, a spec ambiguity, or a missing environment
    genuinely blocks progress.
 
-Do not claim a gate passed unless the command was run in this session and its
-result was observed. A gate that cannot be run is reported by name, never turned
-into a silent pass.
+Do not claim a gate passed unless the command was run and its result was
+observed. A gate that cannot be run is reported by name, never turned into a
+silent pass.
 
 Once every requirement is met and the gate is green, committing is the next
 step, including changes to the public surface or the architecture. Code, its
@@ -108,7 +107,7 @@ The procedure, the corpus layout, and the Windows memory trap are in the
 
 ## Commit rules
 
-Subject and body rules are in `.agents/skills/git-commit-messages`; load it when
+Subject and body rules are in `.agents/skills/git-commit-messages`; read it when
 writing one. In short: `<type>(<scope>): <imperative subject>`, no trailing
 period, body wrapped at 72 columns explaining what changed and why.
 
@@ -129,7 +128,7 @@ tests pass.
 
 - **Windows Terminal C++ is the oracle.** Where this code and upstream disagree,
   upstream wins. A deliberate divergence is an ADR naming the program that needs
-  it.
+  it. A local checkout lives in the gitignored `.design/refs/terminal/`.
 - **One Rust module per C++ file, same name**, with the upstream file named in
   the module doc comment. The method is in
   `.agents/skills/winter-porting`.
@@ -197,8 +196,8 @@ Do not add call sites under an allowance.
 |---|---|
 | `.agents/notes/plan.md` | The porting plan, milestone status, and what to build next |
 | `.agents/notes/adr/` | Decisions that constrain future code |
-| `.agents/skills/` | Procedures loaded on demand: porting, testing, the WinUI shell, commit messages |
-| `crates/*/.rules` | Crate-scoped traps; a rule that names one crate belongs beside it, not here |
+| `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI shell, commit messages |
+| `.design/refs/terminal/` | A local checkout of the upstream C++, gitignored, because it is the oracle and not source |
 | `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
 | `crates/buffer` | `OutputCell`, `Row`, `TextBuffer`, marks, search, images |
@@ -208,94 +207,73 @@ Do not add call sites under an allowance.
 | `crates/renderer` | Fonts, cell metrics, atlas, the software paint path |
 | `crates/host` | The console side: history, input buffer, cooked read, input parser, selection and its input |
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
+| `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
+| `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
+| `crates/winter` | The application: the egui shell, and `winui/` on Windows |
 
 ## Where the port stands
 
-Phases 1–5 are complete. Phase 6 (the console host) has its portable modules:
-`history.cpp`, `inputBuffer.cpp`, the `readDataCooked.cpp` edit model,
-`InputStateMachineEngine.cpp`, the portable halves of `consoleInformation.cpp`
-and `screenInfo.cpp`, `settings.cpp`, `alias.cpp` (with its expansion wired into
-the cooked read), `inputKeyInfo.cpp`, `scrolling.cpp`, `selection.cpp` and
-`selectionInput.cpp` and `utils.cpp` are ported, so the input records have a
-console, a screen, its settings, working aliases, a key description, scroll
-handling, a selection moved by keys and the mouse, and the shared console
-helpers. `directio.cpp` is the `ApiRoutines` surface and waits for the server
-layer with the read-data wait path; `registry.cpp` is a portable schema that
-layers a key over the settings, with the Win32 reads left to the server
-(ADR 037); `handle.cpp` and `tracing.cpp` have no counterpart here — a lock
-with no ctrl-event queue, and ETW. The read-data family's `IWaitRoutine` completion path,
-the cooked read's pager, the render settings and the window metrics wait for
-the server, renderer and window layers; `outputStream.cpp` has no counterpart
-(ADR 013). Phase 7 has the server's portable policy (ADR 015) and its pty
-layer (ADR 016: ConPTY and `openpty` behind two `unsafe` modules), plus a
-headless `OpenConsole.exe` host it starts when one is installed, so sixel and
-kitty graphics reach the buffer (ADRs 054, 055). Phase 8 has
-the last of `Terminal.cpp`'s input surface — focus dedup, the viewport clamp and
-AltGr aliasing — while the keyboard and mouse encoders stay in `term` (ADR 017).
-It also has a first runnable shell: `crates/winter` runs a shell on the pty and
-paints the buffer through egui on winit and wgpu (ADR 018), as a `Control` over
-a `Connection` trait with the viewport and selection in the widget and an event
-queue for the bell, a notification and an exit — a shell that exits closes its
-tab (ADR 036) — split into `app.rs`, `terminal_widget.rs`, `config.rs`,
-`window.rs` and `icon.rs` (ADR 038). On Windows the shell is WinUI 3
-(`winui/`, ADRs 040–051): a native window whose title bar is the `TabView`,
-with one terminal per tab, the ptys polled on a timer, and the active tab's
-pixels blitted by
-Direct2D onto a `SwapChainPanel`, with the pane's grid fitted to the panel's
-cells and the face rasterised at its composition scale, a start that runs the
-settings file's profile and paints its font size and scheme, a poll that
-reloads a saved settings file within a second (ADR 025), a settings dialog
-(ADR 049), a find bar (ADR 050), a profile menu beside the new-tab button
-(ADR 052), the file's chords
-matched before the terminal sees them (copy declines when nothing is selected,
-so Ctrl+C still interrupts; ADR 053), Win32 input records so a pressed key
-stays down until it is released (ADR 056), a retransmitted image painted once
-per batch (ADR 057), a scrollbar with the prompt marks, a pointer selection that copies through
-the clipboard, and scrollback reached by chord and by a low-level wheel hook
-that a mouse-tracking program receives unless Shift is held (ADRs 047, 048);
-egui remains the shell on Linux, where the GTK work is parked (ADR 062), and
-on macOS until it has a native one. The shell has wheel
-scrollback, mouse selection that reaches into history and scrolls when a drag
-leaves the pane, mouse forwarding to a
-tracking application (Shift selects instead), copy/paste (ADRs 019, 020), OSC
-titles, bell attention, cursor shapes, text decorations, reverse video,
-intense brightening, faint text and italics from the host's monospace face
-(ADR 029), tabs (ADR 021),
-splittable panes (Ctrl+Shift+D/E, Alt+Arrow to focus, Alt+Shift+Arrow to
-resize, or drag a divider), a shell chosen by the profile (or from the plus
-menu), a command palette (Ctrl+Shift+P) over the profiles and the window's
-actions, an in-terminal find bar (Ctrl+Shift+F), a scrollbar with prompt marks,
-desktop notifications for a program's OSC 777, the window chords, a
-colour scheme and the font size read from `%APPDATA%\winter\settings.toml`
-(ADRs 022–024, 034), a theme the tab strip paints (ADR 035), a settings window
-(Ctrl+,) that reports the file it loaded, lists what normalization adjusted
-(ADR 027), edits everything the file holds — font size, defaults, profiles,
-keybindings, schemes and themes (ADRs 028, 030–032, 035) — and
-previews the document a save would write, with a poll that reloads the file when
-it is saved (ADR 025). Phase 11 has the bell and DECPS: `crates/audio` turns a
-note into a tone with upstream's arithmetic, a bell flashes the pane and rings
-the console host's 800 Hz tone, and a thread plays a DECPS sequence with the
-Windows `Beep` API (ADR 033). The native window backends follow.
+The status table in `plan.md` is the live answer, and a row the code has
+outgrown is a bug in the document. Do not restate the status here: a contributor
+reads this file first, and a second copy drifts between the commits that move
+it. `README.md` carries the one-paragraph user-facing version.
 
 The plan's "Pre-Phase-5 cleanup" section is a record of what those passes
-settled, not a to-do list. The status table in `plan.md` is the live answer, and
-a row the code has outgrown is a bug in the document.
+settled, not a to-do list.
 
-## Where a rule belongs
+## Rules, skills and notes
 
-This file is read at the start of every session, so it stays high-signal.
+Three homes, each answering a different question:
 
-- A rule is a trap to avoid, not a map to follow. If it needs a paragraph of
-  explanation or a sequence of steps, it is a skill.
-- A procedure (porting a module, running the suite, changing the WinUI shell,
-  writing a commit message) lives in `.agents/skills/<name>/SKILL.md` and is
-  referenced here in one line.
-- A crate's `.rules` is scoped to that crate. Keep it a pointer list; the moment
-  an entry needs a paragraph, it is a skill wearing the wrong name.
-- Do not edit `.rules` during feature work. A trap worth keeping goes in the
-  commit or pull-request description under "Suggested `.rules` additions", and a
-  reviewer decides. A procedure, a measurement, or an explanation of a
-  mechanism is a skill, not a rule.
-- A rule that names one crate belongs in that crate's `.rules`, not here.
-- A new root rule must be non-obvious, repeatedly hit, and specific enough to
-  act on. A one-off observation is a note or a test, not a rule.
+| Home | Answers | Holds |
+|---|---|---|
+| `AGENTS.md` | What must every change obey? | The working agreement: the gates, the test rules, the invariants. Instructions, not explanations, and the same for a person and an agent. |
+| `.agents/skills/<name>/SKILL.md` | How do I do this here? | A procedure that has been performed successfully at least once, with the traps that cost time while doing it. One area per skill. |
+| `.agents/notes/` | Why is it like this, and what happened? | The historical knowledgebase: the plan and its status, the ADRs, investigations and measurements. |
+
+- A line every change must obey goes in this file. It is short and imperative
+  because it is the first thing a contributor reads.
+- A sequence of steps is a skill. Write it after the procedure works, not
+  before: it records a path that has been walked. A proposal for a path is a
+  note.
+- A record of what was decided, tried, measured, or superseded is a note. A note
+  never carries a step to follow; that is the skill's job.
+- A new rule is non-obvious, repeatedly hit, and specific enough to act on. A
+  one-off observation is a note or a test, not a rule.
+- Do not add rules during feature work. A trap worth keeping goes in the commit
+  or pull-request description under "Suggested `AGENTS.md` additions", and a
+  reviewer decides.
+- When a rule and a skill disagree, fix one of them in the same commit. Two
+  homes for the same instruction is how they drift.
+
+## Definition of done
+
+A change is done when:
+
+- the module doc names its upstream file, and every surface it claims is
+  implemented — no stub, no placeholder success;
+- the upstream cases for the change are ported, and a test that fails without it
+  exists and was watched failing;
+- the type lives in its ring crate (ADRs 001, 002), and no state crossed a layer
+  it should not;
+- a new parser state has a property in `generate.rs`, and a new sequence has an
+  expectation from the specification or `ut_*`;
+- the ADR, the `plan.md` row and the `README.md` status are updated in the same
+  commit when a milestone or a user-visible capability moved;
+- `just gate` was run and passed, with `just test-long` when an `#[ignore]`d
+  case was touched;
+- the tree is clean, LF-only, with no build output.
+
+## Review checklist
+
+- Is there a test that fails without this change, and did I watch it fail?
+- Did I run `just gate`, not only the crate the change names?
+- Does a new escape sequence have a conformance case, with its expectation from
+  ECMA-48, DEC, xterm or upstream `ut_*` rather than from our output?
+- Did `unsafe` appear outside the named exemptions?
+- Is any type defined twice, or any `cfg(windows)` / `cfg(unix)` branch in
+  parsing, buffer, or dispatch?
+- Does writing a cell still avoid allocating, and does width still come from
+  `types::codepoint_width`?
+- Is the `plan.md` row still true, and is the documentation that describes the
+  rule in this commit?

@@ -1,13 +1,16 @@
 # Notes
 
-Design and planning material for the port. `AGENTS.md` is the working
-agreement; this directory is the *why*.
+The historical knowledgebase for the port: what was decided, what was tried,
+what it cost, and where the work stands. `AGENTS.md` holds the directions every
+change obeys; `.agents/skills/` holds the procedures that have been walked. This
+directory keeps the record — the *why* and the *when*.
 
 | Document | Purpose |
 |----------|---------|
 | [plan.md](plan.md) | The fourteen-phase porting plan, milestone status, test targets, and what to build next. The reference for what to build next. |
 | [adr/](adr/README.md) | Architecture decision records. A decision that constrains future code gets one; a decision that a test already enforces does not. |
-| [../skills/](../skills/) | Procedures loaded on demand: porting a module, testing, the WinUI shell, commit messages. `AGENTS.md` points at them. |
+| [linux-shell-scope.md](linux-shell-scope.md) | The scope the GTK host was built against, parked at milestone 5 by ADR 062; kept because it records the Wayland traps a future Linux shell would hit again. |
+| [../skills/](../skills/) | Not part of this record: procedures that have been walked — porting a module, testing, the WinUI shell, commit messages. |
 
 The C++ source being ported is Microsoft's Windows Terminal. It is not vendored;
 `/.design/refs` is the local checkout when one is present, and the module path in
@@ -18,8 +21,8 @@ each Rust file's doc comment names the upstream file it came from.
 - A document here is either a plan (what to build, in what order), an ADR (a
   decision and its consequences), or a note (an investigation and its findings).
   If it is none of those, it belongs in a code comment or does not belong.
-- A procedure belongs in `.agents/skills/`, not here. This directory holds what
-  to build and why; a skill holds how to do it.
+- An entry is a record, not an instruction. A step someone must follow is a
+  skill; a line every change must obey is a rule in `AGENTS.md`.
 - Status lines are dated. A status that has been overtaken by the code is a bug
   in the document, not in the code.
 - Nothing here restates what a test already proves. The test is the record.

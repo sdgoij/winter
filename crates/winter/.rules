@@ -1,9 +1,0 @@
-# winter application crate
-
-- The Windows shell is `src/winui/`; load the `winter-winui` skill before
-  changing it.
-- `unsafe` is permitted only in `winui::surface`, `winui::wheel` and `sound`,
-  each call with a `SAFETY:` note.
-- Rules shared by both shells belong in `input`, `view`, `tabs` or
-  `term_control`, never in a toolkit module.
-- Do not add a second renderer, swap chain or pty pump thread.
