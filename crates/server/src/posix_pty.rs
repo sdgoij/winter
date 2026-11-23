@@ -16,6 +16,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Mutex;
 
 use crate::device_comm::DeviceComm;
 use crate::pty::{PtyCommand, PtySize};
@@ -30,9 +31,20 @@ pub struct Pty {
     reaped: bool,
 }
 
+/// Serialises opening a master and naming its slave.
+///
+/// `ptsname` answers from a buffer shared by every thread in the process, so
+/// two spawns at the same moment can read each other's terminal name. Both
+/// children then claim one pty, and the second `TIOCSCTTY` fails with `EPERM`:
+/// CI hit exactly that as a flake in `the_exit_status_is_reported`. The lock
+/// covers only the naming; the child starts outside it.
+static NAMING: Mutex<()> = Mutex::new(());
+
 impl Pty {
     /// Starts `command` on a new pty of `size`.
     pub fn spawn(command: &PtyCommand, size: PtySize) -> io::Result<Self> {
+        let naming = NAMING.lock().unwrap_or_else(|error| error.into_inner());
+
         // SAFETY: opens a new master descriptor that we own immediately.
         let master_fd = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
         if master_fd < 0 {
@@ -60,6 +72,7 @@ impl Pty {
         }
         // SAFETY: the pointer was just checked and is NUL-terminated.
         let slave_path = PathBuf::from(OsStr::from_bytes(unsafe { CStr::from_ptr(name) }.to_bytes()));
+        drop(naming);
 
         let slave = OpenOptions::new().read(true).write(true).open(&slave_path)?;
         let slave_fd = slave.as_raw_fd();
@@ -257,6 +270,27 @@ mod tests {
 
         let _ = read_to_string(&mut pty);
         assert_eq!(pty.wait().expect("wait").code(), Some(3));
+    }
+
+    #[test]
+    fn concurrent_spawns_each_get_their_own_terminal() {
+        // CI hit `spawn` failing with EPERM while its sibling tests passed.
+        // `ptsname` answers from a buffer shared by the whole process, so two
+        // spawns at the same moment can name the same slave, and the second
+        // child's `TIOCSCTTY` then fails because another session owns it.
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let mut pty =
+                        Pty::spawn(&PtyCommand::new(shell()).args(["-c", "tty"]), PtySize::default()).expect("spawn");
+                    read_to_string(&mut pty).trim().to_owned()
+                })
+            })
+            .collect();
+
+        let names: Vec<String> = threads.into_iter().map(|handle| handle.join().expect("join")).collect();
+        let unique: std::collections::HashSet<&String> = names.iter().collect();
+        assert_eq!(unique.len(), names.len(), "terminals: {names:?}");
     }
 
     #[test]
