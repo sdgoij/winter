@@ -20,7 +20,9 @@
 //! - [`app`] owns the tabs and the window's chords, [`terminal_widget`] is the
 //!   egui viewport over one terminal, [`config`] is the settings window, and
 //!   [`window`] the platform commands. Those four, with [`icon`], are the ones
-//!   that name a toolkit.
+//!   that name a toolkit. [`linux`] is the GTK 4 shell (ADR 061): GTK hosts the
+//!   window, the menus and the dialogs, while the tab strip, the scrollbar and
+//!   the grid stay [`renderer`]'s pixels.
 //!
 //! The emulation and console crates are portable and are tested without a
 //! window.
@@ -33,6 +35,8 @@ pub mod grid;
 pub mod icon;
 pub mod input;
 pub mod layout;
+#[cfg(all(target_os = "linux", feature = "gtk"))]
+pub mod linux;
 pub mod notifications;
 pub mod scrollbar;
 pub mod session;
@@ -44,10 +48,10 @@ pub mod term_connection;
 pub mod term_control;
 pub mod term_events;
 pub mod term_settings;
-// The renderer's view of a live terminal is the WinUI pane's: the egui pane
-// paints through `grid` instead. Its tests run on every platform, which is why
-// `test` is part of the condition rather than `windows` alone.
-#[cfg(any(windows, test))]
+// The renderer's view of a live terminal belongs to the shells that blit its
+// pixels: WinUI, and the GTK shell. Its tests run on every platform, which is
+// why `test` is part of the condition.
+#[cfg(any(windows, feature = "gtk", test))]
 pub mod terminal_render;
 pub mod terminal_widget;
 pub mod view;

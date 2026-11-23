@@ -143,7 +143,7 @@ fn font_data(face: &renderer::FontFace) -> Option<egui::FontData> {
 
 /// Returns the directories this platform keeps fonts in, keeping the ones that
 /// exist.
-fn font_directories() -> Vec<PathBuf> {
+pub(crate) fn font_directories() -> Vec<PathBuf> {
     let mut directories = Vec::new();
 
     #[cfg(windows)]

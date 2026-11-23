@@ -21,6 +21,14 @@ utils.workspace = true
 arboard.workspace = true
 notify-rust.workspace = true
 
+# The GTK 4 shell's host toolkit; only built with the `gtk` feature (ADR 061).
+gtk4 = { version = "0.11", optional = true, features = ["v4_6"] }
+
+[features]
+# The GTK 4 shell (ADR 061). Off by default while egui is still the Linux
+# default and the gate must run without `gtk4-devel`.
+gtk = ["dep:gtk4"]
+
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 windows-core = "0.100"

@@ -1710,7 +1710,7 @@ state at a glance, with the owning crate's measured test count.
 | **12. Testing** | ⏳ SWEEP | The corpus, property and long-running cases grow with each port |
 | **13. Polish** | ⏳ NOT STARTED | CLI arguments, logging, packaging |
 | **14. CI/CD** | ✅ DONE | One workflow (`.github/workflows/ci.yml`): the gate and a `Full tests` job (`just test-long`, the `#[ignore]`d cases in release mode) on x86-64 and arm64 Linux, Windows and an Intel macOS host (`macos-15-intel`); a `v*` tag packages a versioned archive per host and publishes it (`just package`) |
-| **15. Native Linux shell** | ⏳ SCOPED | Host is GTK 4 and the chrome is ours (ADR 061); the architecture, the Wayland traps and the test rig are in [`linux-shell-scope.md`](linux-shell-scope.md) |
+| **15. Native Linux shell** | ⏳ STARTED | Host is GTK 4 and the chrome is ours (ADR 061). Behind the `gtk` feature, `crates/winterm/src/linux/` already opens a window and paints a frame from `renderer`; tabs, input and the pty remain. The architecture, the Wayland traps and the test rig are in [`linux-shell-scope.md`](linux-shell-scope.md) |
 
 ## Test coverage
 

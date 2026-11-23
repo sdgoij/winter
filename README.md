@@ -185,6 +185,18 @@ leaves out. `cargo-deny` is required for `just deny`:
 cargo install cargo-deny --locked
 ```
 
+On Linux a GTK 4 shell is being built beside the egui one (ADR 061). It is
+opt-in, so the default build needs no GTK headers, and it needs a display to
+run:
+
+```sh
+sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev
+cargo run -p winterm --features gtk
+```
+
+`WINTERM_SCREENSHOT=<path>` makes that shell write its toplevel to a PNG and
+quit, which is how it is photographed on a machine with no display server.
+
 ## Layout
 
 ```

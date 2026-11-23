@@ -20,7 +20,6 @@ use renderer::{
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseEvent, MouseEventKind, WheelAxis};
-use types::color_table::ColorAlias;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
@@ -767,7 +766,7 @@ impl Shell {
             // not the data's copy, so the shell hands it the pane's palette
             // (`RenderSettings::set_color_table`), and the pane's own colours
             // become the engine's defaults.
-            let (background, foreground) = default_colors(&tab.control);
+            let (background, foreground) = tab.control.default_colors();
             let _ = renderer.set_default_colors(background, foreground);
             sync_palette(renderer, &tab.control);
 
@@ -1792,26 +1791,6 @@ fn sync_palette(renderer: &mut Renderer<TerminalData>, control: &Control) {
     }
 }
 
-/// The palette's default background and foreground, as `COLORREF`s.
-///
-/// The scheme was already applied to the control's table, so reading the table
-/// is the one place both shells agree on what the colours are.
-fn default_colors(control: &Control) -> (u32, u32) {
-    let handle = control.color_table();
-    let Ok(table) = handle.lock() else {
-        return (0x000C_0C0C, 0x00CC_CCCC);
-    };
-    let entry = |alias: ColorAlias| {
-        table
-            .get(table.alias_index(alias))
-            .map_or(0, |color| color.get_colorref())
-    };
-    (
-        entry(ColorAlias::DefaultBackground),
-        entry(ColorAlias::DefaultForeground),
-    )
-}
-
 /// A scale the panel reported, or 1.0 when it reported nonsense.
 fn finite_scale(scale: f32) -> f32 {
     if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }
@@ -2085,6 +2064,7 @@ fn repeat_count(count: u32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use types::color_table::ColorAlias;
 
     #[test]
     fn a_reloaded_document_resolves_its_profile_chords_and_font() {
@@ -2142,13 +2122,13 @@ mod tests {
 
         let mut control = Control::new(Box::new(Buffer::with_output(b"")), (20, 5));
         control.apply_scheme(terminal.scheme.as_ref());
-        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+        assert_eq!(control.default_colors(), (0x0020_1020, 0x00E0_E0E0));
 
         control.pump();
-        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+        assert_eq!(control.default_colors(), (0x0020_1020, 0x00E0_E0E0));
 
         control.resize(30, 10);
-        assert_eq!(default_colors(&control), (0x0020_1020, 0x00E0_E0E0));
+        assert_eq!(control.default_colors(), (0x0020_1020, 0x00E0_E0E0));
     }
 
     #[test]

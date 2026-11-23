@@ -1,6 +1,8 @@
 # A native Linux shell — scope
 
-Status: decided — ADR 061. The milestones at the end are the plan of record.
+Status: decided — ADR 061. The milestones at the end are the plan of record;
+1–3 are done, and the shell paints its first frame from `renderer` (see
+*Progress*).
 Related: ADR 061 (the decision), ADR 018 (the egui shell), ADR 038 (crate
 split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winterm/src/winui/`.
 
@@ -15,6 +17,22 @@ already ships: tabs in the title bar, a profile menu, chords, pointer
 selection, scrollback with prompt marks, the find bar, the settings window,
 clipboard and a bell. Plus two things Linux does better and should not lose:
 primary selection and IME.
+
+## Progress
+
+| Milestone | State |
+|---|---|
+| 1. Rig | ✅ headless weston + `WINTERM_SCREENSHOT` (see *Verification*) |
+| 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
+| 3. Skeleton | ✅ `crates/winterm/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
+| 4. Live terminal | ⏳ next |
+| 5. Host chrome | ⏳ |
+| 6. Linux extras | ⏳ |
+| 7. Cut-over | ⏳ |
+
+`cargo run -p winterm --features gtk` (or `only` that package) picks the GTK
+shell on Linux; without the feature `main.rs` still runs the egui shell, so the
+default build has no GTK dependency.
 
 ## What must not change
 
@@ -159,13 +177,14 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 
 ## Milestones
 
-1. **Rig.** Headless weston up, a real client on it, and the shell's own
-   `WINTERM_SCREENSHOT` snapshot producing a PNG — the first picture of our
-   chrome on Linux.
+1. **Rig.** ✅ Headless weston up, a real client on it, and the shell's own
+   `WINTERM_SCREENSHOT` snapshot producing a PNG.
 2. **Toolchain.** Install the `-devel` packages; build and run a hello-world
    window in the guest.
-3. **Skeleton.** Window, drawing area; paint one static frame from `renderer`
-   into it, including the tab strip; screenshot it.
+3. **Skeleton.** ✅ Window, drawing area; one frame from `renderer` painted
+   into it from a scripted connection. The cell is the face's own ascent plus
+   descent (`FontDueRasterizer::vertical_metrics`), which keeps row zero inside
+   the widget.
 4. **Live terminal.** `Session` + `Control` wiring, key input, resize, scroll;
    `cargo run` in the guest is the bar, not packaging.
 5. **Host chrome.** Native profile menu, find bar, settings window, native

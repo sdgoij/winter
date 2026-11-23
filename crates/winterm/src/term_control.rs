@@ -16,7 +16,7 @@ use server::pty::PtySize;
 use term::Terminal;
 use term::input::{KeyEvent, MouseEvent};
 use types::InputModes;
-use types::color_table::ColorTable;
+use types::color_table::{ColorAlias, ColorTable};
 
 use crate::term_connection::Connection;
 use crate::term_events::TerminalEvent;
@@ -84,6 +84,26 @@ impl Control {
     /// The palette the pane paints with.
     pub fn color_table(&self) -> Arc<Mutex<ColorTable>> {
         self.terminal.dispatch().color_table()
+    }
+
+    /// The palette's default background and foreground, as `COLORREF`s.
+    ///
+    /// The scheme was already applied to the table, so reading it is the one
+    /// place both shells agree on what the pane's colours are.
+    pub fn default_colors(&self) -> (u32, u32) {
+        let handle = self.color_table();
+        let Ok(table) = handle.lock() else {
+            return (0x000C_0C0C, 0x00CC_CCCC);
+        };
+        let entry = |alias: ColorAlias| {
+            table
+                .get(table.alias_index(alias))
+                .map_or(0, |color| color.get_colorref())
+        };
+        (
+            entry(ColorAlias::DefaultBackground),
+            entry(ColorAlias::DefaultForeground),
+        )
     }
 
     /// Moves bytes from the connection into the parser and answers the program.

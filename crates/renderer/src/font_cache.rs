@@ -988,5 +988,11 @@ mod tests {
             Err(error) => panic!("cannot load {}: {error}", face.path().display()),
         };
         assert!(rasteriser.glyph_index('M') != 0);
+
+        // A shell places the baseline from these two, and a baseline below the
+        // ascent clips the top row of the grid.
+        let (ascent, descent) = rasteriser.vertical_metrics();
+        assert!(ascent > 0.0, "ascent was {ascent}");
+        assert!(descent >= 0.0, "descent was {descent}");
     }
 }

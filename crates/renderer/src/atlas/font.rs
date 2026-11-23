@@ -62,6 +62,20 @@ impl FontDueRasterizer {
         self.font.metrics(character, self.size).advance_width
     }
 
+    /// Returns the face's ascent and descent in pixels at this size.
+    ///
+    /// A shell needs both to place the baseline inside a cell: a baseline
+    /// smaller than the ascent clips the tops of the first row, which is the
+    /// row with no earlier cell to spill into. The descent is reported
+    /// positive, as a distance below the baseline.
+    pub fn vertical_metrics(&self) -> (f32, f32) {
+        match self.font.horizontal_line_metrics(self.size) {
+            Some(metrics) => (metrics.ascent, -metrics.descent),
+            // A face with no `hhea` still has to produce a usable cell.
+            None => (self.size, self.size * 0.25),
+        }
+    }
+
     /// Returns the face name, when the font has one.
     pub fn name(&self) -> Option<&str> {
         self.font.name()
