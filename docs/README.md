@@ -1,7 +1,7 @@
 # Notes
 
 The historical knowledgebase for the port: what was decided, what was tried,
-what it cost, and where the work stands. `AGENTS.md` holds the directions every
+what it cost, and where the work stands. `CONTRIBUTING.md` holds the directions every
 change obeys; `.agents/skills/` holds the procedures that have been walked. This
 directory keeps the record — the *why* and the *when*.
 
@@ -22,7 +22,7 @@ each Rust file's doc comment names the upstream file it came from.
   decision and its consequences), or a note (an investigation and its findings).
   If it is none of those, it belongs in a code comment or does not belong.
 - An entry is a record, not an instruction. A step someone must follow is a
-  skill; a line every change must obey is a rule in `AGENTS.md`.
+  skill; a line every change must obey is a rule in `CONTRIBUTING.md`.
 - Status lines are dated. A status that has been overtaken by the code is a bug
   in the document, not in the code.
 - Nothing here restates what a test already proves. The test is the record.

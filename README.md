@@ -236,13 +236,13 @@ and described in [ADR 001](docs/adr/001-workspace-layering.md).
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first: it is the working agreement, and it is short.
-Procedures (porting a C++ module, testing, changing the WinUI shell,
-writing a commit message) are skills
-under [`.agents/skills/`](.agents/skills). Decisions that constrain future code
-are ADRs under [`docs/adr/`](docs/adr/README.md). The C++ source
-is expected at `.design/refs/terminal` (gitignored); the port is written against
-it, not from memory.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: it is the working agreement.
+Procedures (porting a C++ module, testing, changing the WinUI shell, writing a
+commit message) are Markdown files under [`.agents/skills/`](.agents/skills), one
+directory each. Decisions that constrain future code are ADRs under
+[`docs/adr/`](docs/adr/README.md). The C++ source is expected at
+`.design/refs/terminal` (gitignored); the port is written against it, not from
+memory.
 
 ## Licence
 

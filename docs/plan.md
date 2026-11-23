@@ -2,7 +2,7 @@
 
 **Reference project:** Microsoft's Windows Terminal, a gitignored local checkout
 at `.design/refs/terminal/`. It is the oracle: where this code and upstream
-disagree, upstream wins (AGENTS.md §Porting).
+disagree, upstream wins (CONTRIBUTING.md §Porting).
 **Goal:** Port the core terminal emulator to a cross-platform Rust codebase targeting Windows, Linux (Wayland/X11), and macOS.
 
 ## Status (2026-11-22)
@@ -615,7 +615,7 @@ The Windows Terminal codebase maps to these Rust module groups:
 ### VT Conformance Test Sequences (Deliverable)
 
 The corpus is implemented in `crates/term/tests/conformance/` and wired through
-`[[test]]` in `crates/term/Cargo.toml`; `AGENTS.md` and the `winter-testing`
+`[[test]]` in `crates/term/Cargo.toml`; `CONTRIBUTING.md` and the `winter-testing`
 skill are the live description. The paths below are the original sketch of the
 sequence inventory, kept as a coverage list rather than as file locations.
 
@@ -1785,7 +1785,7 @@ stays a design note, not a work item.
 
 ## Test coverage
 
-Coverage is a review property, not a percentage (see `AGENTS.md` §Test layers).
+Coverage is a review property, not a percentage (see `CONTRIBUTING.md` §Test layers).
 The live per-crate counts are in the Status table at the top. A target that no
 case enforces is not a target.
 

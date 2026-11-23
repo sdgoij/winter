@@ -1,6 +1,6 @@
 # Winter developer tasks.
 #
-# One place for the commands in AGENTS.md. `.github/workflows/ci.yml` runs the
+# One place for the commands in CONTRIBUTING.md. `.github/workflows/ci.yml` runs the
 # same recipes on every platform it supports; if the two disagree, CI is the
 # truth.
 #

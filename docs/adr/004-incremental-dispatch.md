@@ -16,7 +16,7 @@ Upstream already has the two-layer answer: `ITermDispatch` is the interface, and
 start from "everything ignored" and override what it needs.
 
 The hazard with copying that into Rust is that a no-op default makes an unported
-sequence *silently* do nothing — the failure mode `AGENTS.md` forbids, and the one
+sequence *silently* do nothing — the failure mode `CONTRIBUTING.md` forbids, and the one
 a terminal is least likely to survive, because the program that sent the sequence
 cannot tell it was dropped.
 

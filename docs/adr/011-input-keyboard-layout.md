@@ -18,7 +18,7 @@ Win32:
 - `GetDoubleClickTime` supplies the interval two clicks must fall within.
 
 None of these is portable, and the emulation and state layers must not carry
-`cfg(windows)` (AGENTS.md §Emulation). A layout-dependent answer would also make
+`cfg(windows)` (CONTRIBUTING.md §Emulation). A layout-dependent answer would also make
 the same input produce different records on two hosts running the same tests.
 
 ## Decision

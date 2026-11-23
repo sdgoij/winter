@@ -27,7 +27,7 @@ The Rust buffer has `ImageSlice` as geometry only (`x`, `y`, `width`,
 `height`, `source_*`), `Row` has no image field, and there is no renderer.
 Decoding sixel into an adapter-side store would leave the buffer unable to
 erase, scroll or copy images, and would give the renderer a second source of
-truth for screen state — which `AGENTS.md` forbids.
+truth for screen state — which `CONTRIBUTING.md` forbids.
 
 ## Decision
 

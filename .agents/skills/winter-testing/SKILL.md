@@ -5,8 +5,8 @@ description: Run and add tests in the Winter workspace. Use when running the sui
 
 # Testing Winter
 
-`AGENTS.md` states the rules; this is the procedure. The layers are in
-`AGENTS.md` §Test layers — this file is how to work in them.
+`CONTRIBUTING.md` states the rules; this is the procedure. The layers are in
+`CONTRIBUTING.md` §Test layers — this file is how to work in them.
 
 ## Run the contract
 

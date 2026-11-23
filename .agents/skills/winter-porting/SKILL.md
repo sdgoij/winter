@@ -5,7 +5,7 @@ description: Port one module from Microsoft's Windows Terminal C++ source into a
 
 # Porting a module
 
-The method is in `AGENTS.md` §Porting and ADR 003. This is the procedure.
+The method is in `CONTRIBUTING.md` §Porting and ADR 003. This is the procedure.
 
 ## 1. Locate the upstream file
 
@@ -107,7 +107,7 @@ really ported?". The answer is evidence, not a count of files:
 
 1. **Find the header.** `.design/refs/terminal/src/terminal/` is a gitignored
    checkout of `microsoft/terminal`; if it is missing, clone it there (it is the
-   oracle, not source). `AGENTS.md` §Where things live names it.
+   oracle, not source). `CONTRIBUTING.md` §Where things live names it.
 2. **Diff the surface.** List the header's virtuals and our implementation's
    methods, then diff by name:
 
