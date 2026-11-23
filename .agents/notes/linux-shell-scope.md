@@ -43,10 +43,10 @@ Measured on the Fedora 44 WSL distro here, not assumed:
 | WSLg | present (WSLg 1.0.79) but not usable from this shell: `DISPLAY`/`WAYLAND_DISPLAY` unset, `/mnt/wslg/run/user/1000` is `root:root 0700` and empty, no X socket |
 | Nested KWin | **works**: `kwin_wayland --virtual --socket wayland-wm --width 1280 --height 800` accepts Wayland clients (kcalc started cleanly) and registers `org.kde.KWin.ScreenShot2` on the session bus |
 
-So: real KDE compositing and real Qt/GTK clients already run here; what is
-missing is (a) the `-devel` packages to build against, (b) a screenshot path
-(details under *Verification*), and (c) any WSLg wiring — a nested compositor
-is the practical route, not WSLg's own.
+So: real Wayland clients and real KDE compositing already run here; what is
+missing is (a) the `-devel` packages to build against and (b) a screenshot path,
+which *Verification* below resolves as the app's own job. The rig is headless
+weston, not WSLg.
 
 ## The decision: which toolkit is "native"
 
@@ -121,31 +121,47 @@ optimisation if a 1080p frame at 8 MB per paint proves too costly.
 
 ## Verification
 
-Two rigs, both real:
+Three things were measured on the guest, and they settle the rig:
 
-1. **Nested KWin on a virtual output** (works today):
-   `kwin_wayland --virtual --socket wayland-wm --width 1280 --height 800`, then
-   the app with `WAYLAND_DISPLAY=wayland-wm`. This is a genuine KWin session —
-   real decoration, real input routing — with no display attached.
-2. **RDP into a Plasma session** (`krdp` 6.7.4 is installed): closer to a user's
-   machine, slower to script.
+- **A headless weston is the display.**
+  `weston --backend=headless-backend.so --width=1280 --height=800
+  --socket=<name>` creates a working Wayland socket; `kcalc` — a real Qt 6
+  Wayland client — runs on it with no output and stays up, and weston enables
+  its headless output at the requested size. No session, no seat, no WSLg.
+- **A nested KWin runs clients but will not screenshot them.**
+  `kwin_wayland --virtual` accepts clients and exposes
+  `org.kde.KWin.ScreenShot2`, but the call returns
+  `org.kde.KWin.ScreenShot2.Error.NoAuthorized`: the API is KAuth-gated and a
+  nested compositor has no session to authorize it. `grim` cannot help (KWin
+  implements no `zwlr-screencopy`) and `spectacle` wants X11 or the portal. So
+  KWin stays useful for *interaction* checks — real decoration, real input
+  routing — not for capture.
+- **`labwc` headless is not usable here.** It exits before creating its socket
+  (wlroots 0.18 has no pixman renderer, and its Xwayland fails on a dangling
+  `/tmp/.X11-unix` WSLg symlink). Not worth pursuing when weston works.
 
-The one unsolved piece is **capture**: `grim` fails (KWin does not implement
-`zwlr_screencopy`), `spectacle` fails (it wants X11 or the screenshot portal),
-and KWin's `org.kde.KWin.ScreenShot2` needs an fd-carrying call — a first
-attempt through `python3-gobject` stalled and is the first task of milestone 1.
-Two fallbacks if it stays awkward: `weston --backend=headless-backend.so` with
-its screenshooter (a Wayland client still runs, just not under KWin), or driving
-`krfb`/`krdp` and grabbing the stream.
+**Capture is the app's own job.** `weston-screenshooter` produces nothing on a
+headless output, so the shell snapshots its own toplevel with `GtkSnapshot` →
+`GskRenderNode` → PNG behind `WINTERM_SCREENSHOT=<path>`, the way
+`WINTERM_DEBUG_MARKS` drove a dump earlier. That captures the client chrome and
+CSD as GTK draws them — what a compositor would show — and needs no capture
+protocol. Popovers are separate surfaces and are snapshotted individually when
+a test needs them.
+
+WSLg is present (WSLg 1.0.79) but unusable from a plain shell: no `DISPLAY`, no
+socket, and `/run/user/1000/wayland-0` is a stale symlink into
+`/mnt/wslg/runtime-dir` — which is why every compositor that tried to bind
+`wayland-0` failed until a private socket name was used.
 
 To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
-(Qt route: `qt6-qtbase-devel qt6-qtdeclarative-devel cmake gcc-c++`). `just` is
-not installed there; `cargo` alone is enough.
+(Qt route: `qt6-qtbase-devel cmake gcc-c++`). `just` is not installed there;
+`cargo` alone is enough.
 
 ## Milestones
 
-1. **Rig.** Capture a screenshot of `kcalc` under nested KWin, and a script that
-   starts it, runs an app, shoots it and tears down.
+1. **Rig.** Headless weston up, a real client on it, and the shell's own
+   `WINTERM_SCREENSHOT` snapshot producing a PNG — the first picture of our
+   chrome on Linux.
 2. **Toolchain.** Install the `-devel` packages; build and run a hello-world
    window in the guest.
 3. **Skeleton.** Window, drawing area; paint one static frame from `renderer`
