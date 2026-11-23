@@ -89,3 +89,4 @@ Rules:
 | [058](058-drawn-icon.md) | The icon drawing is the single source: the egui window wraps it, the Windows build embeds it, and the WinUI window is given it from the resource | Accepted |
 | [059](059-auto-mark-prompts-on-enter.md) | Enter marks the submitted command line as a prompt when the shell sends no shell-integration mark; ticks paint over the thumb | Accepted |
 | [060](060-powershell-shell-integration-hook.md) | A PowerShell profile is started with an embedded hook that sends `OSC 133` A/B/C/D, so ticks carry the exit code; marks are one per prompt row | Accepted |
+| [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Accepted |

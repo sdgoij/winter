@@ -1,8 +1,8 @@
 # A native Linux shell — scope
 
-Status: proposal, waiting on a toolkit decision.
-Related: ADR 018 (the egui shell), ADR 038 (crate split), ADRs 040–053 (the
-WinUI shell this mirrors), `crates/winterm/src/winui/`.
+Status: decided — ADR 061. The milestones at the end are the plan of record.
+Related: ADR 061 (the decision), ADR 018 (the egui shell), ADR 038 (crate
+split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winterm/src/winui/`.
 
 ## Goal
 
@@ -62,16 +62,19 @@ Linux has no single native toolkit; it has two. The honest framing is:
 | IME / a11y | first class, AT-SPI over the toolkit | first class, also AT-SPI |
 | Risk | looks like a GNOME app to a Plasma user until Breeze-GTK is applied | more moving parts in the build, less Rust-side API surface |
 
-**Recommendation: GTK 4 + libadwaita.** It is the toolkit whose Rust bindings
-are mature enough that the shell can be unsafe-free Rust end to end, it maps
-almost every WinUI feature onto a widget that already exists (tabs, header bar,
-search bar, preferences window), and Breeze-GTK is what Plasma itself ships to
-make GTK apps look at home. The Qt route buys exact Breeze chrome at the cost of
-a C++ bridge in the hottest part of the UI code.
+**Decided (ADR 061): GTK 4 for the host layer only.** The window, its menus,
+its dialogs, IME and accessibility plumbing come from GTK; the tab strip, the
+scrollbar and the grid are our renderer's pixels, as they already are on
+Windows. Browsers split the UI the same way — the content and the chrome next to
+it are theirs, the host integration is the platform's — and it is what settles
+the dilemma: a Plasma user sees Breeze menus and dialogs around our tab strip,
+not a GNOME application.
 
-If Plasma-identical chrome matters more than build simplicity, Qt via `cxx-qt`
-is the alternative, and the rest of this document holds either way apart from
-the widget names.
+GTK over Qt for the host because the Rust bindings are mature enough that the
+shell is unsafe-free end to end, because a widget exists for every feature the
+WinUI shell has, and because `GtkAccessibleText` (GTK 4.14+) exists for a widget
+that draws its own text. Qt keeps exact Breeze chrome as a later, optional
+second shell rather than as a rejected idea.
 
 ## Architecture
 
@@ -81,13 +84,15 @@ One directory, `crates/winterm/src/linux/`, chosen in `main.rs` the way
 | Module | Owns |
 |---|---|
 | `mod.rs` | `run()`, the `gtk::Application` and the entry point's contract |
-| `window.rs` | `AdwApplicationWindow`; the tab strip is the header bar (`AdwTabView` + `AdwTabBar`), which is the Linux spelling of ADR 051 |
-| `surface.rs` | `gtk::DrawingArea`: `TerminalData::refresh` → `Renderer::paint_frame` → pixels in a `gdk::MemoryTexture` appended to the snapshot |
+| `window.rs` | `GtkApplicationWindow`, its host menu (a `GtkPopoverMenu` off a menu button), and the drawing area that the chrome and the grid fill |
+| `surface.rs` | `gtk::DrawingArea`: `TerminalData::refresh` → `Renderer::paint_frame` → pixels in a `gdk::MemoryTexture` appended to the snapshot; the tab strip and scrollbar are painted into the same target |
+| `tabs.rs` | The tab strip's hit-testing and painting over the shared `crate::tabs`, so it looks the same as on Windows instead of like `AdwTabBar` |
 | `input.rs` | `EventControllerKey`, `GestureClick`, `EventControllerScroll`, `EventControllerMotion` → `crate::input::Event` |
-| `menu.rs` | the profile drop-down as a real `GtkPopoverMenu` off a `GtkMenuButton`, replacing WinUI's hand-drawn overlay (ADR 052) |
+| `menu.rs` | The profile menu's rows, rendered by the host `GtkPopoverMenu` (a native menu, unlike WinUI's overlay — ADR 052) |
 | `find.rs` | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
 | `settings.rs` | `AdwPreferencesWindow` over `config::Draft`: spin rows, entry rows, combo rows |
 | `clipboard.rs` | `gdk::Clipboard` for `CLIPBOARD`, plus `PRIMARY` for middle-click paste |
+| `a11y.rs` | The grid as a `GtkAccessibleText`, so Orca can read the terminal |
 
 Rendering path, matching ADR 041's Direct2D blit: paint into the renderer's
 software target, wrap the pixels (`gdk::MemoryTexture` borrows a `GBytes`), and
@@ -143,11 +148,12 @@ not installed there; `cargo` alone is enough.
    starts it, runs an app, shoots it and tears down.
 2. **Toolchain.** Install the `-devel` packages; build and run a hello-world
    window in the guest.
-3. **Skeleton.** Window, header bar, drawing area; paint one static frame from
-   `renderer` into it; screenshot it.
+3. **Skeleton.** Window, drawing area; paint one static frame from `renderer`
+   into it, including the tab strip; screenshot it.
 4. **Live terminal.** `Session` + `Control` wiring, key input, resize, scroll;
-   `just package`-style parity is not needed yet, just `cargo run`.
-5. **Chrome.** Tabs, profile menu (native this time), find bar, settings window.
+   `cargo run` in the guest is the bar, not packaging.
+5. **Host chrome.** Native profile menu, find bar, settings window, native
+   dialogs where they exist.
 6. **Linux extras.** Primary selection, IME preview, bell, notifications.
 7. **Cut-over.** `main.rs` prefers the native shell on Linux, egui stays for
    macOS until its own shell exists; `just test` must stay green on a headless
@@ -155,8 +161,7 @@ not installed there; `cargo` alone is enough.
 
 ## Open questions
 
-- GTK 4 + libadwaita, or Qt 6 for exact Breeze chrome? (Recommendation above.)
-- Do we keep egui buildable on Linux as a fallback (`--features egui`) during
-  the transition, or cut over in one step?
+- Do we keep egui buildable on Linux as a fallback (`--shell egui`) during the
+  transition, or cut over in one step? (Leaning: keep it selectable, ADR 061.)
 - Should the settings window be the native preferences dialog only, or also stay
   available as the shared `config::Draft` form for parity testing?
