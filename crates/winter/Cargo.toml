@@ -22,7 +22,7 @@ arboard.workspace = true
 notify-rust.workspace = true
 
 # The GTK 4 shell's host toolkit; only built with the `gtk` feature (ADR 061).
-gtk4 = { version = "0.11", optional = true, features = ["v4_6"] }
+gtk4 = { version = "0.11", optional = true, features = ["v4_8"] }
 
 [features]
 # The GTK 4 shell (ADR 061). Off by default while egui is still the Linux

@@ -1,8 +1,7 @@
 # A native Linux shell — scope
 
 Status: decided — ADR 061. The milestones at the end are the plan of record;
-1–3 are done, and the shell paints its first frame from `renderer` (see
-*Progress*).
+1–4 are done, and the shell runs a real shell on the pty (see *Progress*).
 Related: ADR 061 (the decision), ADR 018 (the egui shell), ADR 038 (crate
 split), ADRs 040–053 (the WinUI shell this mirrors), `crates/winter/src/winui/`.
 
@@ -25,8 +24,8 @@ primary selection and IME.
 | 1. Rig | ✅ headless weston + `WINTER_SCREENSHOT` (see *Verification*) |
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
 | 3. Skeleton | ✅ `crates/winter/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
-| 4. Live terminal | ⏳ next |
-| 5. Host chrome | ⏳ |
+| 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
+| 5. Host chrome | ⏳ next |
 | 6. Linux extras | ⏳ |
 | 7. Cut-over | ⏳ |
 
@@ -159,12 +158,18 @@ Three things were measured on the guest, and they settle the rig:
   `/tmp/.X11-unix` WSLg symlink). Not worth pursuing when weston works.
 
 **Capture is the app's own job.** `weston-screenshooter` produces nothing on a
-headless output, so the shell snapshots its own toplevel with `GtkSnapshot` →
-`GskRenderNode` → PNG behind `WINTER_SCREENSHOT=<path>`, the way
-`WINTER_DEBUG_MARKS` drove a dump earlier. That captures the client chrome and
-CSD as GTK draws them — what a compositor would show — and needs no capture
-protocol. Popovers are separate surfaces and are snapshotted individually when
-a test needs them.
+headless output, so the shell snapshots its own toplevel behind
+`WINTER_SCREENSHOT=<path>`, the way `WINTER_DEBUG_MARKS` drove a dump earlier.
+That captures the client chrome and CSD as GTK draws them — what a compositor
+would show — and needs no capture protocol. Popovers are separate surfaces and
+are snapshotted individually when a test needs them.
+
+Since GTK 4.22 `GtkWidgetPaintable` renders the **last frame GTK painted**
+(`widget->priv->render_node`), not the live widget: it returns an empty node at
+any moment a redraw is queued, because queueing one drops the cached node. The
+shot therefore runs from the frame clock's `after-paint` signal, when the node
+it reads is the one just drawn. A timer — milestone 3's first approach — races
+the 16 ms pty tick and loses.
 
 WSLg is present (WSLg 1.0.79) but unusable from a plain shell: no `DISPLAY`, no
 socket, and `/run/user/1000/wayland-0` is a stale symlink into
@@ -177,7 +182,7 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 
 ## Milestones
 
-1. **Rig.** ✅ Headless weston up, a real client on it, and the shell's own
+1. **Rig.** ✅ Headless weston up, a real client on it, and a window's own
    `WINTER_SCREENSHOT` snapshot producing a PNG.
 2. **Toolchain.** Install the `-devel` packages; build and run a hello-world
    window in the guest.
@@ -185,8 +190,8 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    into it from a scripted connection. The cell is the face's own ascent plus
    descent (`FontDueRasterizer::vertical_metrics`), which keeps row zero inside
    the widget.
-4. **Live terminal.** `Session` + `Control` wiring, key input, resize, scroll;
-   `cargo run` in the guest is the bar, not packaging.
+4. **Live terminal.** ✅ `Session` + `Control` wiring, key input, resize; the
+   bar was `cargo run` on a real prompt in the guest, photographed by the shot.
 5. **Host chrome.** Native profile menu, find bar, settings window, native
    dialogs where they exist.
 6. **Linux extras.** Primary selection, IME preview, bell, notifications.
