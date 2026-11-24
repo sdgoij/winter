@@ -12,7 +12,10 @@ use std::rc::Rc;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSTextInputClient, NSTrackingArea, NSTrackingAreaOptions, NSView};
+use objc2_app_kit::{
+    NSAccessibilityRole, NSAccessibilityTextAreaRole, NSEvent, NSEventModifierFlags, NSTextInputClient, NSTrackingArea,
+    NSTrackingAreaOptions, NSView,
+};
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSNotFound, NSPoint, NSRange, NSRect, NSSize, NSString,
     NSUInteger,
@@ -280,6 +283,54 @@ define_class!(
         fn mouse_exited(&self, _event: &NSEvent) {
             self.ivars().shell.borrow_mut().pointer_left();
             self.setNeedsDisplay(true);
+        }
+
+        #[unsafe(method(isAccessibilityElement))]
+        fn is_accessibility_element(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method_id(accessibilityRole))]
+        fn accessibility_role(&self) -> Option<Retained<NSAccessibilityRole>> {
+            // SAFETY: AppKit's accessibility role constants live for the
+            // process, so retaining one is a no-op increment.
+            unsafe {
+                let role = NSAccessibilityTextAreaRole;
+                Retained::retain(role as *const NSAccessibilityRole as *mut NSAccessibilityRole)
+            }
+        }
+
+        #[unsafe(method_id(accessibilityRoleDescription))]
+        fn accessibility_role_description(&self) -> Option<Retained<NSString>> {
+            Some(NSString::from_str("terminal"))
+        }
+
+        #[unsafe(method_id(accessibilityLabel))]
+        fn accessibility_label(&self) -> Option<Retained<NSString>> {
+            let title = self.ivars().shell.borrow().title().to_string();
+            Some(NSString::from_str(&title))
+        }
+
+        #[unsafe(method_id(accessibilityValue))]
+        fn accessibility_value(&self) -> Option<Retained<NSString>> {
+            // The visible screen is the value VoiceOver reads; the terminal's
+            // own cells are not an `NSTextView`, so there is no per-cell tree.
+            let text = self.ivars().shell.borrow().accessible_text();
+            Some(NSString::from_str(&text))
+        }
+
+        #[unsafe(method(accessibilityFrame))]
+        fn accessibility_frame(&self) -> NSRect {
+            let bounds = self.bounds();
+            self.window()
+                .map(|window| window.convertRectToScreen(self.convertRect_toView(bounds, None)))
+                .unwrap_or(bounds)
+        }
+
+        #[unsafe(method_id(accessibilityChildren))]
+        fn accessibility_children(&self) -> Option<Retained<NSArray<AnyObject>>> {
+            // The pane draws no subviews, so an empty tree is the truth.
+            Some(NSArray::new())
         }
     }
 

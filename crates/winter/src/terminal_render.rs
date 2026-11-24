@@ -142,6 +142,28 @@ impl TerminalData {
         self.cursor_screen
     }
 
+    /// The visible rows as plain text, for the accessibility client.
+    ///
+    /// A row is padded to the screen's width by the buffer, so trailing spaces
+    /// are dropped; trailing blank rows are dropped too, because they are the
+    /// unused bottom of the pane rather than content.
+    pub(crate) fn visible_text(&self) -> String {
+        let mut text = String::new();
+        for row in 0..self.buffer.screen_height() {
+            let mut line = self
+                .buffer
+                .get_row_at_screen_line(row)
+                .map(buffer::Row::get_text)
+                .unwrap_or_default();
+            while line.ends_with(' ') {
+                line.pop();
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+        text.trim_end().to_string()
+    }
+
     /// How many rows the document holds, history included.
     pub const fn document_height(&self) -> i32 {
         self.document_height
@@ -393,6 +415,18 @@ mod tests {
         data.set_composition(Composition::default());
         assert_eq!(data.composition_origin(), None);
         assert!(data.tsf_preview().text.is_empty());
+    }
+
+    #[test]
+    fn the_visible_screen_reads_as_plain_text() {
+        let mut control = Control::new(Box::new(Buffer::with_output(b"one\r\ntwo")), (6, 3));
+        control.pump();
+
+        let mut data = TerminalData::new(font(), RenderSettings::new(), 6, 3);
+        data.refresh(&mut control, &View::new(), true, None);
+
+        // The padded row ends and the unused bottom row are not content.
+        assert_eq!(data.visible_text(), "one\ntwo");
     }
 
     #[test]

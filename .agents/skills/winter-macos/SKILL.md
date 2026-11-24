@@ -109,5 +109,6 @@ second.
 - Put Windows-only logic in the shared modules; the WinUI shell has its own.
 - Reset a frame's alpha to zero or drop the `| 0xFF00_0000`: the software
   backend writes `COLORREF`s, not opaque `ARGB`.
-- Claim accessibility support: it is a named follow-up in ADR 072 and
-  `docs/macos-shell-scope.md`.
+- Claim per-cell accessibility: the view exposes the visible screen as one
+  value for VoiceOver, not an `NSAccessibility` text tree. The remaining gap is
+  named in ADR 072 and `docs/macos-shell-scope.md`.

@@ -81,6 +81,12 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
     command is a bare name. Both the Launch Services icon and the drawn mark
     (ADR 058) are cached per program for the session; a program that cannot be
     resolved falls back to the mark rather than leaving the tab blank (ADR 070).
+12. **The view is an accessibility element, not a text tree.** Overriding
+    `NSView`'s accessibility methods gives the pane the text-area role, the
+    visible screen as its value, the active title as its label and an empty
+    child list. VoiceOver therefore reads what the pane shows; character-level
+    navigation through the `NSAccessibility` text protocol remains out of
+    scope and is named as such.
 
 ## Rationale
 
@@ -111,10 +117,12 @@ Negative:
 
 - **The first content path copies a frame.** A full-frame `0xAARRGGBB` copy per
   paint is correct but not fast; the GPU path is the performance milestone.
-- **Accessibility is not implemented.** The custom view reports no
-  accessibility tree; a terminal that draws its own text needs the AppKit text
-  interface before VoiceOver can read it. This is the same gap the WinUI shell
-  has with UIA.
+- **VoiceOver reads the pane, not a text tree.** The view is an accessibility
+  element whose role is a text area and whose value is the visible screen's
+  text, with the active title as its label and an empty child list. A per-cell
+  text interface — the `NSAccessibility` text methods — is the follow-up if
+  navigation by character or line is needed; this is the same shape as the
+  WinUI shell's UIA gap.
 - **No panes and no command palette.** Both are unported on WinUI as well.
 - **A preview crate.** `objc2` 0.6 is a stable release of the family, but the
   AppKit surface is generated and some generated APIs are deprecated; pin the

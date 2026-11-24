@@ -271,6 +271,11 @@ impl Shell {
         self.focused = focused;
     }
 
+    /// The visible screen as plain text, for the accessibility client.
+    pub(crate) fn accessible_text(&self) -> String {
+        self.renderer.data().visible_text()
+    }
+
     pub(crate) fn menu_requested(&mut self) -> bool {
         std::mem::take(&mut self.menu_requested)
     }

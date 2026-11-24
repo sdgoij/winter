@@ -17,7 +17,9 @@ title bar, chords, pointer selection, scrollback, the wheel, live settings
 reload, a settings dialog and a find bar (ADRs 040–051, 025). On macOS it is a
 native AppKit shell — the window, menu bar, find field and settings window are
 the platform's, while the tab strip, scrollbar and grid stay `renderer`'s
-pixels (ADR 072). Linux runs the egui shell (ADRs 018, 062).
+pixels (ADR 072), with tab reordering, input-method composition, a program icon
+per tab and an accessibility value VoiceOver reads. Linux runs the egui shell
+(ADRs 018, 062).
 
 | Crate | What it is | State |
 |---|---|---|
