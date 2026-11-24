@@ -53,9 +53,9 @@ const INITIAL_ROWS: i32 = 30;
 /// The drop-down's button width in DIPs, so its overlay can hang under it.
 const MENU_WIDTH: f64 = 240.0;
 /// The drop-down's half of the button group, in DIPs: the menu hangs under it.
-const DROP_DOWN_WIDTH: f64 = 31.0;
+const DROP_DOWN_WIDTH: f64 = 32.0;
 /// The new-tab half of the button group, in DIPs.
-const NEW_TAB_WIDTH: f64 = 31.0;
+const NEW_TAB_WIDTH: f64 = 32.0;
 /// A profile's icon edge in DIPs.
 const TAB_ICON: f64 = 16.0;
 /// A tab's close button edge in DIPs.
@@ -71,7 +71,7 @@ const TAB_PADDING_RIGHT: f64 = 4.0;
 /// the padding and gaps between them, so a tab that has been squeezed still
 /// shows both and ellipsises its title rather than overlapping them.
 const MAX_TAB_WIDTH: f64 = 240.0;
-const MIN_TAB_WIDTH: f64 = TAB_PADDING_LEFT + TAB_ICON + TAB_GAP + CLOSE_BUTTON + TAB_PADDING_RIGHT + TAB_GAP;
+const MIN_TAB_WIDTH: f64 = TAB_PADDING_LEFT + TAB_ICON + 2.0 * TAB_GAP + CLOSE_BUTTON + TAB_PADDING_RIGHT;
 /// The gap between the last tab and the new-tab group, in DIPs.
 const TAB_ROW_GAP: f64 = 6.0;
 /// What the window's own caption buttons take on the right, in DIPs, plus the
@@ -83,6 +83,11 @@ const CAPTION_GAP: f64 = 8.0;
 /// The inset the terminal's text starts at, in DIPs: the first column off the
 /// pane's left edge, and the last one short of the scrollbar.
 const PANE_PADDING_LEFT: f64 = 8.0;
+/// The height of the new-tab group, in DIPs.
+///
+/// A little taller than upstream's 24, so it fills most of the 28-DIP row it is
+/// centred in.
+const BUTTON_GROUP_HEIGHT: f64 = 26.0;
 /// The tab row's height in DIPs.
 ///
 /// Four DIPs of the title bar's slot stay above it, which is the gap a tab
@@ -112,6 +117,8 @@ const TITLEBAR: Color = Color::rgb(32, 32, 36);
 const HOVER_MIX: f32 = 0.5;
 /// How far an inactive tab's label is dimmed towards its own fill.
 const LABEL_DIM: f32 = 0.35;
+/// How far a hovered close button is tinted towards the tab's label colour.
+const CLOSE_HOVER_MIX: f32 = 0.18;
 /// Far beyond any display, and it keeps a bad metric from asking the terminal
 /// for an allocation it can never fill.
 const MAX_CELLS: i32 = 1024;
@@ -205,6 +212,8 @@ struct Shell {
     scrollbar: scrollbar::Scrollbar,
     /// The tab the pointer is over, if any.
     hovered_tab: Option<u64>,
+    /// The tab whose close button the pointer is over, if any.
+    hovered_close: Option<u64>,
     /// The active terminal's background, so the selected tab matches it.
     active_background: Color,
     /// Whether the pressed pointer is on the scrollbar rather than the grid.
@@ -257,6 +266,8 @@ pub(super) enum Message {
     Select(Option<u64>),
     /// The pointer entered (Some) or left (None) a tab.
     HoverTab(Option<u64>),
+    /// The pointer entered (Some) or left (None) a tab's close button.
+    HoverClose(Option<u64>),
     NewTab,
     /// The user asked for the tab with this id to close.
     CloseTab(u64),
@@ -421,6 +432,7 @@ impl Component for Shell {
             restore_focus_until: None,
             scrollbar: scrollbar::Scrollbar::default(),
             hovered_tab: None,
+            hovered_close: None,
             active_background: Color::rgb(12, 12, 12),
             scrollbar_press: false,
             blink_on: true,
@@ -466,6 +478,7 @@ impl Component for Shell {
         let titlebar = TITLEBAR;
         let active_background = self.active_background;
         let hovered_tab = self.hovered_tab;
+        let hovered_close = self.hovered_close;
         let selected = self.tabs.index();
 
         // A theme may name the strip's fills. A fill it leaves out keeps the
@@ -520,20 +533,26 @@ impl Component for Shell {
 
             let select = keys.clone();
             let close = keys.clone();
+            let enter_close = keys.clone();
+            let leave_close = keys.clone();
             let enter = keys.clone();
             let leave = keys.clone();
 
             // A `Border`, not a `Button`: the stock button style's padding
             // leaves a 22-DIP box a few DIPs of content, and a glyph centred in
             // what is left is not a cross. The press also has to reach the
-            // strip, which is why the strip selects by id (below).
+            // strip, which is why the strip selects by id (ADR 067).
             let close_button = Border::new()
                 .width(CLOSE_BUTTON)
                 .height(CLOSE_BUTTON)
                 // A transparent brush, not the default null one: a `Border`
                 // with no background is not hit-testable, and the press would
                 // fall through to the tab.
-                .background(Color::transparent())
+                .background(if hovered_close == Some(id) {
+                    blend(background, label, CLOSE_HOVER_MIX)
+                } else {
+                    Color::transparent()
+                })
                 .corner_radius(CornerRadius::uniform(4.0))
                 .vertical_alignment(VerticalAlignment::Center)
                 .content(
@@ -545,6 +564,12 @@ impl Component for Shell {
                         .horizontal_alignment(HorizontalAlignment::Center)
                         .vertical_alignment(VerticalAlignment::Center),
                 )
+                .on_pointer_entered(move |_| {
+                    let _ = enter_close.send(Message::HoverClose(Some(id)));
+                })
+                .on_pointer_exited(move |_| {
+                    let _ = leave_close.send(Message::HoverClose(None));
+                })
                 .on_pointer_pressed(move |info: PointerEventInfo| {
                     if !info.is_left_button_pressed {
                         return;
@@ -572,15 +597,18 @@ impl Component for Shell {
                         .height(TAB_ICON)
                         .stretch(Stretch::Uniform)
                         .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(0)
                         .into(),
                 );
             }
-            body.push(title.into());
-            body.push(close_button.into());
+            body.push(title.grid_column(1).into());
+            body.push(close_button.grid_column(2).into());
 
-            let body = StackPanel::new()
-                .orientation(Orientation::Horizontal)
-                .spacing(TAB_GAP)
+            // A Grid, not a stack: the title's column is the star, so a short
+            // title still leaves the close button at the tab's right edge.
+            let body = Grid::new()
+                .columns([GridLength::Auto, GridLength::STAR, GridLength::Auto])
+                .column_spacing(TAB_GAP)
                 .children(body);
 
             let item = Border::new()
@@ -768,7 +796,7 @@ impl Component for Shell {
             .content(glyph(PLUS_GLYPH))
             .style(ButtonStyle::Subtle)
             .width(NEW_TAB_WIDTH)
-            .height(24.0)
+            .height(BUTTON_GROUP_HEIGHT)
             .min_height(0.0)
             .on_click(move || {
                 let _ = add.send(Message::NewTab);
@@ -777,20 +805,20 @@ impl Component for Shell {
             .content(glyph(CHEVRON_GLYPH))
             .style(ButtonStyle::Subtle)
             .width(DROP_DOWN_WIDTH)
-            .height(24.0)
+            .height(BUTTON_GROUP_HEIGHT)
             .min_height(0.0)
             .on_click(move || {
                 let _ = menu_sender.send(Message::MenuToggle);
             });
         let divider = Border::new()
             .width(1.0)
-            .height(14.0)
+            .height(16.0)
             .background(blend(row, Color::rgb(255, 255, 255), 0.18))
             .vertical_alignment(VerticalAlignment::Center);
         let buttons = Border::new()
             .background(blend(row, Color::rgb(255, 255, 255), 0.06))
             .corner_radius(CornerRadius::uniform(4.0))
-            .height(24.0)
+            .height(BUTTON_GROUP_HEIGHT)
             // Centred in the row, as upstream's 32-DIP row with `Margin="0,4"`
             // centres its 24-DIP button.
             .vertical_alignment(VerticalAlignment::Center)
@@ -807,8 +835,12 @@ impl Component for Shell {
             .into();
         // The Grid wrapping the header is only there so its width can be
         // measured, which is how the menu finds the buttons' left edge (ADR
-        // 052).
-        let header = Grid::new().element_ref(&self.header).children(vec![header_panel]);
+        // 052), and so the row can sit at the bottom of the title bar's slot
+        // whatever height that turns out to be.
+        let header = Grid::new()
+            .element_ref(&self.header)
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .children(vec![header_panel]);
 
         // The tab strip is the title bar, as in Windows Terminal: the TitleBar
         // control extends the client area and hands the system the drag region,
@@ -877,6 +909,7 @@ impl Component for Shell {
             } => self.resize(width, height, scale_x, scale_y),
             Message::Select(id) => self.select(id),
             Message::HoverTab(id) => self.hovered_tab = id,
+            Message::HoverClose(id) => self.hovered_close = id,
             Message::NewTab => self.open_tab(),
             Message::CloseTab(id) => self.close_tab(id, context),
             Message::Focused(focused) => {
@@ -2156,9 +2189,12 @@ fn tab_room(pane: f64) -> f64 {
 }
 
 /// The width a tab's title may use once its icon and close button are placed.
+///
+/// A tab's grid has three columns with a gap between each pair, whether or not
+/// there is an icon, so the gaps are always counted twice.
 fn title_room(tab: f64, has_icon: bool) -> f64 {
     let content = tab - TAB_PADDING_LEFT - TAB_PADDING_RIGHT;
-    let fixed = CLOSE_BUTTON + TAB_GAP + if has_icon { TAB_ICON + TAB_GAP } else { 0.0 };
+    let fixed = CLOSE_BUTTON + 2.0 * TAB_GAP + if has_icon { TAB_ICON } else { 0.0 };
     (content - fixed).max(0.0)
 }
 

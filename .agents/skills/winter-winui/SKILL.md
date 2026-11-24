@@ -143,6 +143,14 @@ and its `+` cannot be grouped with the drop-down.
   `MAX_TAB_WIDTH` is upstream's 240 cap and `MIN_TAB_WIDTH` is a tab's icon,
   close button, padding and gaps. The title ellipsises into `title_room`, so a
   squeezed tab loses characters instead of overlapping itself.
+- A tab's body is a **Grid** `[Auto, STAR, Auto]` — icon, title, close — not a
+  horizontal `StackPanel`, which measures its children unbounded and would leave
+  the close button beside a short title instead of at the tab's right edge
+  (ADR 069). `title_room` still caps the title as a belt.
+- The close button has its own hover (`Shell::hovered_close`, a tab id, from
+  `Message::HoverClose`) that tints its 20-DIP square towards the label colour.
+- The new-tab group is `BUTTON_GROUP_HEIGHT` (26 DIP), centred in the row; the
+  header `Grid` itself is bottom-aligned in the title bar's slot (ADR 069).
 - The strip also carries `max_width(tab_room)`. That is what keeps the new-tab
   group out from under the window's caption buttons when the tabs overflow:
   they overflow their slot, and the group, declared later, paints over them.
