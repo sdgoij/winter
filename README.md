@@ -194,6 +194,13 @@ it tested and the archives are published with a `SHA256SUMS`
 release's own version (`winter-0.1.0-preview.1-…`), so a preview and the final
 release never share a file name.
 
+On macOS the archive holds `Winter.app`, and `just app` builds the bundle
+directly into `dist/Winter.app`: the binary, an `AppIcon.icns` drawn from the
+same mark as the window icon, and a plist Launch Services registers, so a
+double-click starts the shell instead of a Terminal window (ADR 074). The bundle
+is ad-hoc signed; a Developer ID, notarization and a disk image are release
+work.
+
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
 x86-64 and arm64 Linux, Windows, and macOS, plus `just test-long` as a `Full
 tests` job — the `#[ignore]`d font cases and the release profile, which the gate

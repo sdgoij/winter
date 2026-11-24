@@ -16,8 +16,16 @@ pub use draw::SIZE;
 /// The window icon this build draws.
 pub fn data() -> IconData {
     IconData {
-        rgba: draw::rgba(SIZE),
+        rgba: rgba(SIZE),
         width: SIZE as u32,
         height: SIZE as u32,
     }
+}
+
+/// The icon's pixels at `size`, as straight RGBA.
+///
+/// The `.app` bundle's iconset is drawn at each size macOS asks for, from the
+/// same geometry as the 64-pixel window icon (ADR 058).
+pub(crate) fn rgba(size: usize) -> Vec<u8> {
+    draw::rgba(size)
 }

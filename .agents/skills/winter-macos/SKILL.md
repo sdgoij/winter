@@ -45,6 +45,30 @@ is not satisfied” and a diagnostic listing both versions. Import protocols fro
 the direct `objc2-foundation` 0.3 dependency, and implement `NSObjectProtocol`
 on every `define_class!` class that conforms to an AppKit protocol.
 
+## Package
+
+```sh
+just app        # dist/Winter.app, for Finder or the Dock
+just package    # the release archive, with Winter.app inside
+```
+
+`just app` copies the release binary into the bundle, runs it with
+`WINTER_APPICON=<bundle>/Contents/Resources/Winter.iconset` to draw the ten
+iconset PNGs, compiles them with `iconutil`, writes `Info.plist`, and ad-hoc
+signs the result. The icon is the same drawing as the window icon and the
+Windows resource (ADR 058); there is no checked-in image.
+
+- **Launch Services starts a bundle at `/`.** `start_in_home` moves the process
+  to `$HOME` when the executable is inside `.app/Contents/MacOS/` and the cwd is
+  `/`; the raw binary keeps its directory, which the live check relies on.
+- **The iconset needs all ten files.** `iconutil` rejects a set missing one of
+  16, 32, 64, 128, 256, 512, 1024 (with the `@2x` pairs); `WINTER_APPICON`
+  writes them all.
+- **A bundle is not distributable until it is signed.** `codesign --sign -` is
+ad-hoc only; Gatekeeper wants a Developer ID and notarization (ADR 074).
+
+To install locally, `cp -R dist/Winter.app /Applications/`.
+
 ## Live check
 
 There is no interactive WindowServer in the agent sandbox; AppKit logs
@@ -54,6 +78,12 @@ capture is the verification path:
 ```sh
 rm -f winter-shot.png
 WINTER_SCREENSHOT=winter-shot.png ./target/debug/winter
+```
+
+After `just app`, the bundle's own binary runs the same check:
+
+```sh
+WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter
 ```
 
 Read `winter-shot.png`; a correct first frame shows the active tab in the pane's

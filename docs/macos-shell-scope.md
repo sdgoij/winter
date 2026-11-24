@@ -52,6 +52,10 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
 - A native settings window that edits the whole TOML document — font,
   profiles, keybindings, schemes, themes and the defaults — and validates it
   with the same reader startup uses before saving.
+- A `Winter.app` bundle with the drawn icon (ADR 074): `just app` builds
+  `dist/Winter.app` and `just package` puts it in the release archive, so it
+  starts from Finder or the Dock instead of under Terminal.app. Launch Services
+  starts it at `/`, and the shell moves to `$HOME` before the first pty.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
   `WINTER_OPEN_SETTINGS=1` opens the settings window at startup and
@@ -65,6 +69,9 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
 - Panes and the command palette.
+- A signed, notarized release: the bundle is ad-hoc signed, so a downloaded copy
+  still needs a Developer ID and notarization (and a disk image) to pass
+  Gatekeeper. ADR 074 records the boundary.
 
 ## Architecture
 
@@ -76,7 +83,7 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
 | `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
 | `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures, drawable presentation and the offscreen readback (ADR 073) |
-| `icon.rs` | A tab's program icon from Launch Services, and the drawn application mark (ADR 058), both cached |
+| `icon.rs` | A tab's program icon from Launch Services, the drawn application mark (ADR 058) and the bundle's iconset (ADR 074), all cached |
 | `settings.rs` | The native settings window and its action methods |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 
@@ -149,6 +156,13 @@ below `winter` sees AppKit.
 - **The content layer's drawable is top-down.** The view is flipped and its
   drawable's first row is the grid's first row, so the `CAMetalLayer` is
   `geometryFlipped`; without it the pane is upside down.
+- **Launch Services starts a bundle at `/`.** A double-clicked app's working
+  directory is the filesystem root, so the first tab would open there. The shell
+  moves to `$HOME` when its executable is inside `.app/Contents/MacOS/` and the
+  cwd is `/`; the raw binary keeps its cwd, which the live check relies on.
+- **The iconset needs every size.** `iconutil` rejects a set missing one of the
+  ten files; `WINTER_APPICON` writes them from the window icon's own drawing, and
+  the packaging script compiles them (ADR 074).
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
   content under them; `chrome::LEFT_INSET` is the gap.
 
@@ -166,6 +180,8 @@ the shell's own capture:
 ```sh
 cargo build -p winter
 WINTER_SCREENSHOT=winter-shot.png ./target/debug/winter
+just app
+WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter
 ```
 
 A first frame shows the active tab in the pane's colour, the strip, the prompt

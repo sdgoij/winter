@@ -86,6 +86,10 @@ dist:
 package:
     sh scripts/package.sh
 
+# Build the macOS app bundle into `dist/Winter.app`, for a Finder or Dock launch.
+app:
+    sh scripts/package.sh --app
+
 # Enable the pre-commit hook for this clone and silence the Windows CRLF warning.
 hooks:
     git config core.hooksPath .githooks

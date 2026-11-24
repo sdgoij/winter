@@ -53,6 +53,14 @@ pub(crate) mod view;
 
 /// Runs the macOS shell until its window closes.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // `just app` asks the binary for the bundle's iconset and exits; nothing
+    // else in this function runs for a packaging request.
+    if let Some(directory) = std::env::var_os("WINTER_APPICON") {
+        icon::write_iconset(Path::new(&directory))?;
+        return Ok(());
+    }
+    start_in_home();
+
     let mtm = MainThreadMarker::new().ok_or("the macOS shell must start on the main thread")?;
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
@@ -203,6 +211,30 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.run();
 
     Ok(())
+}
+
+/// Starts a Finder-launched bundle in the user's home directory.
+///
+/// Launch Services runs an app with `/` as its working directory, and the first
+/// tab's shell would open at the filesystem root. The raw binary keeps the
+/// directory it was started from, which is what a developer and the live check
+/// expect.
+fn start_in_home() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let at_root = std::env::current_dir().is_ok_and(|cwd| cwd.parent().is_none());
+    if !bundled_app(&exe) || !at_root {
+        return;
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let _ = std::env::set_current_dir(home);
+    }
+}
+
+/// Whether `exe` is the binary inside a `.app` bundle.
+fn bundled_app(exe: &Path) -> bool {
+    exe.to_string_lossy().contains(".app/Contents/MacOS/")
 }
 
 /// Hands the application its drawn icon (ADR 058), so the Dock and the app
@@ -1087,5 +1119,16 @@ pub(crate) fn capture_view(view: &objc2_app_kit::NSView, path: &Path) -> bool {
             eprintln!("winter: cannot write {}: {error}", path.display());
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bundle_binary_is_recognised_by_its_path() {
+        assert!(bundled_app(Path::new("/Applications/Winter.app/Contents/MacOS/winter")));
+        assert!(!bundled_app(Path::new("/Users/t/winter/target/debug/winter")));
     }
 }

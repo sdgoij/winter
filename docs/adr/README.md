@@ -103,3 +103,4 @@ Rules:
 | [072](072-macos-appkit-shell.md) | The macOS shell is AppKit for the host and `renderer`'s pixels for the strip and grid; `unsafe` is confined to `macos` | Accepted |
 | [072](072-win32-record-character.md) | A Win32 input record carries the character a key types, so Enter, Tab, Backspace and Escape reach a character-reading client | Accepted |
 | [073](073-macos-metal-content.md) | The macOS content path is Metal, presented through a `CAMetalLayer` drawable and read back only for screenshots and the fallback; the software backend is the fallback | Accepted |
+| [074](074-macos-app-bundle.md) | macOS ships as a `Winter.app` bundle: the plist and drawn `.icns` come from the binary, the bundle is ad-hoc signed, and a Finder launch starts in `$HOME` | Accepted |
