@@ -69,7 +69,49 @@ Escape closes it; Shift+wheel scrolls history while a tracking program still
 gets the wheel; a saved `settings.toml` reaches the scheme and font within a
 second.
 
+### Driving pointer input without a display
+
+A headless X server plus `xdotool` exercises selection and tab reordering for
+real; Xvfb has no window manager, so the CSD window is the only client and
+XTEST input lands in it. This is the check that caught the claimed-sequence
+bugs, and it is worth re-running after any gesture change:
+
+```sh
+setsid Xvfb :98 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 </dev/null &
+setsid env DISPLAY=:98 GDK_BACKEND=x11 dbus-run-session -- \
+  /home/t/winterm-target/debug/winter >/tmp/app.log 2>&1 </dev/null &
+# `dbus-run-session` matters: GtkApplication forwards to an existing instance
+# on the user bus and the new process exits at once.
+export DISPLAY=:98
+xdotool search --onlyvisible --name '^t@james'   # the toplevel's id
+```
+
+Use `xdotool mousemove --window <id> X Y`, then `mousedown 1`, more `mousemove`,
+`mouseup 1`; type with `xdotool type` and `xdotool key`. The pane's origin is
+`(5, 51)` in toplevel coordinates (the CSD border and the strip sit above it),
+so row 0 starts at Y=51 and a cell is about 10 x 18 px at the default face. A
+capture is `import -window <id> /tmp/shot.png`. Select with a drag and check the
+highlight spans the rows it crossed; reorder by dragging a titled tab past
+a neighbour's midpoint.
+
 ## Traps
+
+- **A claimed sequence stops everything in another group.** `GtkGestureClick`
+  claims the sequence when the shell handles a press; GTK denies every other
+  gesture group on the widget and stops propagating the sequence to the motion
+  controller. Put a `GtkGestureDrag` in the same group with
+  `click.group_with(&drag)` or it never receives a move after the press. The
+  pane and the strip both do this.
+- **A `Cell` cloned for two callbacks is two cells.** `Cell<T>` copies its value,
+  so `let begin = start.clone()` hands the second callback the initial `(0, 0)`.
+  Share an `Rc<Cell<_>>` between `drag-begin` and `drag-update`, or drag points
+  are offset by the press position (a tab drag then lands one slot short).
+- **Extend while the button is held, not while a press is pending.** The first
+  drag update hands the press's anchor to the selection and clears `press`; a
+  condition on `press.is_some()` selects one row and then stops.
+- **The pane begins at `(5, 51)` in toplevel coordinates.** A click below the
+  titlebar in window coordinates is `y - 51` in the drawing area; a driver that
+  uses raw window coordinates presses the strip instead.
 
 - **A child of a `Box` gets zero height without `vexpand`.** A `DrawingArea`
   has no natural size; without `set_vexpand(true)` the box allocates it nothing

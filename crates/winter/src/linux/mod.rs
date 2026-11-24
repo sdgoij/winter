@@ -405,6 +405,17 @@ fn activate(app: &Application) {
         // Every button: a tracking program sees all three, and without one a
         // non-primary press pastes.
         click.set_button(0);
+
+        // A drag reports the pointer even after it leaves the pane, which is how
+        // a selection scrolls when it is held past the top or bottom edge.
+        //
+        // The two gestures share a group. A claimed sequence is denied to every
+        // *other* group on the widget, so a separately grouped drag would never
+        // see a move after the press claimed it; a gesture in the same group is
+        // initialised with the group's state and keeps reporting.
+        let drag = gtk::GestureDrag::new();
+        click.group_with(&drag);
+
         let pressed = Rc::clone(&shell);
         click.connect_pressed(move |gesture, _presses, x, y| {
             pane.grab_focus();
@@ -427,24 +438,21 @@ fn activate(app: &Application) {
                 .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
             released.borrow_mut().pointer_released((x, y), button, modifiers);
         });
-        area.add_controller(click);
-    }
 
-    {
-        // A drag reports the pointer even after it leaves the pane, which is how
-        // a selection scrolls when it is held past the top or bottom edge.
         let shell = Rc::clone(&shell);
-        let start = Cell::new((0.0f64, 0.0f64));
-        let drag = gtk::GestureDrag::new();
-        let begin = start.clone();
+        let start = Rc::new(Cell::new((0.0f64, 0.0f64)));
+        let begin = Rc::clone(&start);
         drag.connect_drag_begin(move |_gesture, x, y| begin.set((x, y)));
+        let from = Rc::clone(&start);
         drag.connect_drag_update(move |gesture, dx, dy| {
-            let (x, y) = start.get();
+            let (x, y) = from.get();
             let modifiers = gesture
                 .current_event()
                 .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
             shell.borrow_mut().pointer_moved((x + dx, y + dy), modifiers);
         });
+
+        area.add_controller(click);
         area.add_controller(drag);
     }
 
@@ -480,20 +488,43 @@ fn activate(app: &Application) {
         click.connect_released(move |_gesture, _presses, _x, _y| {
             released.borrow_mut().drop_tab_drag();
         });
+
+        // The drag shares the click's group, for the same reason the pane's
+        // does: the press claims the sequence so `GtkWindowHandle` never takes
+        // it as a window gesture, and the drag inherits the claim and still
+        // reports where the pointer went, including below the strip.
+        let drag = gtk::GestureDrag::new();
+        click.group_with(&drag);
+        let start = Rc::new(Cell::new((0.0f64, 0.0f64)));
+        let begin = Rc::clone(&start);
+        drag.connect_drag_begin(move |_gesture, x, y| begin.set((x, y)));
+        let moving = Rc::clone(&shell);
+        let from = Rc::clone(&start);
+        drag.connect_drag_update(move |_gesture, dx, _dy| {
+            let (x, _) = from.get();
+            if let Ok(mut shell) = moving.try_borrow_mut() {
+                shell.drag_strip(x + dx);
+            }
+        });
+        let ended = Rc::clone(&shell);
+        drag.connect_drag_end(move |_gesture, _dx, _dy| {
+            if let Ok(mut shell) = ended.try_borrow_mut() {
+                shell.drop_tab_drag();
+            }
+        });
+
         strip.add_controller(click);
+        strip.add_controller(drag);
     }
 
     {
-        // The strip reorders a tab while a press drags it past a neighbour.
-        let shell = Rc::clone(&shell);
+        // The strip shows what is under the pointer. The reorder is a drag, so
+        // it is reported by the gesture above rather than by this controller.
         let motion = EventControllerMotion::new();
         let over = Rc::clone(&shell);
         motion.connect_motion(move |_controller, x, _y| {
             if let Ok(mut shell) = over.try_borrow_mut() {
                 shell.hover(Some(x));
-                if shell.tab_drag.is_some() {
-                    shell.drag_strip(x);
-                }
             }
         });
         let leave = Rc::clone(&shell);
@@ -1164,7 +1195,10 @@ impl Shell {
             return;
         }
         self.pointer_motion(point, modifiers);
-        if self.press.is_some() {
+        // The press is consumed by the first move (its anchor is handed to the
+        // selection), so the held button — not the pending press — decides
+        // whether later moves extend.
+        if self.held.left {
             self.pointer_drag(point, modifiers);
         }
     }
