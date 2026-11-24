@@ -60,8 +60,34 @@ const NEW_TAB_WIDTH: f64 = 31.0;
 const TAB_ICON: f64 = 16.0;
 /// A tab's close button edge in DIPs.
 const CLOSE_BUTTON: f64 = 20.0;
-/// The tab row's height in DIPs, upstream's `TabRowHeightInPixels`.
-const TAB_ROW_HEIGHT: f64 = 32.0;
+/// The gap between a tab's parts, in DIPs.
+const TAB_GAP: f64 = 6.0;
+/// A tab's padding: left, right.
+const TAB_PADDING_LEFT: f64 = 12.0;
+const TAB_PADDING_RIGHT: f64 = 4.0;
+/// A tab's widest and narrowest, in DIPs.
+///
+/// The widest is upstream's cap; the narrowest is its icon, its close button and
+/// the padding and gaps between them, so a tab that has been squeezed still
+/// shows both and ellipsises its title rather than overlapping them.
+const MAX_TAB_WIDTH: f64 = 240.0;
+const MIN_TAB_WIDTH: f64 = TAB_PADDING_LEFT + TAB_ICON + TAB_GAP + CLOSE_BUTTON + TAB_PADDING_RIGHT + TAB_GAP;
+/// The gap between the last tab and the new-tab group, in DIPs.
+const TAB_ROW_GAP: f64 = 6.0;
+/// What the window's own caption buttons take on the right, in DIPs, plus the
+/// room the strip keeps clear of them. Three buttons at 46 DIPs is the Windows
+/// 11 size at 100%; the strip stops short of the widest layout rather than
+/// measuring a control the binding does not report.
+const CAPTION_WIDTH: f64 = 138.0;
+const CAPTION_GAP: f64 = 8.0;
+/// The inset the terminal's text starts at, in DIPs: the first column off the
+/// pane's left edge, and the last one short of the scrollbar.
+const PANE_PADDING_LEFT: f64 = 8.0;
+/// The tab row's height in DIPs.
+///
+/// Four DIPs of the title bar's slot stay above it, which is the gap a tab
+/// leaves under the window's top edge.
+const TAB_ROW_HEIGHT: f64 = 28.0;
 /// How far a tab paints past its slot.
 ///
 /// The title bar's header slot does not always end at the pane's top, and the
@@ -462,6 +488,13 @@ impl Component for Shell {
             .unwrap_or(row);
 
         let mut strip_children: Vec<KeyedView> = Vec::new();
+        // Equal widths, as upstream's `TabView` uses: a tab that does not fit the
+        // window shrinks its title rather than pushing the new-tab group under
+        // the caption buttons (ADR 068).
+        let room = tab_room(pane_width(self.panel_size.0));
+        let count = self.tabs.len().max(1);
+        let gaps = count.saturating_sub(1) as f64;
+        let tab_width = ((room - gaps) / count as f64).clamp(MIN_TAB_WIDTH, MAX_TAB_WIDTH);
         for index in 0..self.tabs.len() {
             let Some(tab) = self.tabs.get(index) else {
                 continue;
@@ -519,14 +552,19 @@ impl Component for Shell {
                     let _ = close.send(Message::CloseTab(id));
                 });
 
+            // The shell's own icon, as Windows Terminal shows it (ADR 066).
+            let icon = profile_icon::png_for(&tab.program);
             let title = TextBlock::new()
                 .text(tab.title.clone())
                 .font_size(12.0)
                 .foreground(label)
-                .vertical_alignment(VerticalAlignment::Center);
-            // The shell's own icon, as Windows Terminal shows it (ADR 066).
+                .vertical_alignment(VerticalAlignment::Center)
+                .text_trimming(TextTrimming::CharacterEllipsis)
+                .max_lines(1)
+                .max_width(title_room(tab_width, icon.is_some()));
+
             let mut body: Vec<View> = Vec::new();
-            if let Some(icon) = profile_icon::png_for(&tab.program) {
+            if let Some(icon) = icon {
                 body.push(
                     Image::new()
                         .source_data(EncodedImage::new(icon))
@@ -542,17 +580,18 @@ impl Component for Shell {
 
             let body = StackPanel::new()
                 .orientation(Orientation::Horizontal)
-                .spacing(6.0)
+                .spacing(TAB_GAP)
                 .children(body);
 
             let item = Border::new()
                 .background(background)
+                .width(tab_width)
                 .corner_radius(CornerRadius::new(6.0, 6.0, 0.0, 0.0))
                 // The bottom padding and the matching negative margin cancel out
                 // for the content and not for the fill: the label stays centred
                 // in the row, and the tab's colour runs past the slot to the
                 // pane. Anything past the row is behind the pane.
-                .padding(Thickness::new(12.0, 0.0, 4.0, TAB_OVERHANG))
+                .padding(Thickness::new(TAB_PADDING_LEFT, 0.0, TAB_PADDING_RIGHT, TAB_OVERHANG))
                 .margin(Thickness::new(0.0, 0.0, 0.0, -TAB_OVERHANG))
                 .content(body)
                 .on_pointer_pressed(move |info: PointerEventInfo| {
@@ -577,6 +616,9 @@ impl Component for Shell {
             .orientation(Orientation::Horizontal)
             .spacing(1.0)
             .height(TAB_ROW_HEIGHT)
+            // A cap, not a clip: if the tabs still do not fit, the overflow stays
+            // inside this slot so the new-tab group never moves (ADR 068).
+            .max_width(room)
             .vertical_alignment(VerticalAlignment::Bottom)
             .keyed_children(strip_children);
 
@@ -608,6 +650,10 @@ impl Component for Shell {
             .focus_on_pointer_release(true)
             .element_ref(&self.focus)
             .background(self.active_background)
+            // The text starts in from the pane's left edge (ADR 068). The panel
+            // reports its own width, which is this much narrower than the pane;
+            // `pane_width` and the pointer mapping undo the difference.
+            .padding(Thickness::new(PANE_PADDING_LEFT, 0.0, 0.0, 0.0))
             .content(pane_content)
             .on_key_up(RoutedCallback::new(move |info: KeyEventInfo| {
                 if find_open || menu_open {
@@ -745,9 +791,9 @@ impl Component for Shell {
             .background(blend(row, Color::rgb(255, 255, 255), 0.06))
             .corner_radius(CornerRadius::uniform(4.0))
             .height(24.0)
-            // Upstream's `Margin="0,4"` in the 32-DIP row.
-            .margin(Thickness::new(0.0, 0.0, 0.0, 4.0))
-            .vertical_alignment(VerticalAlignment::Bottom)
+            // Centred in the row, as upstream's 32-DIP row with `Margin="0,4"`
+            // centres its 24-DIP button.
+            .vertical_alignment(VerticalAlignment::Center)
             .content(
                 StackPanel::new()
                     .orientation(Orientation::Horizontal)
@@ -756,6 +802,7 @@ impl Component for Shell {
             );
         let header_panel: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
+            .spacing(TAB_ROW_GAP)
             .children((strip, buttons))
             .into();
         // The Grid wrapping the header is only there so its width can be
@@ -1010,7 +1057,7 @@ impl Shell {
             self.rebuild_face(scale_x);
         }
 
-        let grid = grid_for(width, height, self.cell, scale_x, scale_y);
+        let grid = grid_for(grid_width(width), height, self.cell, scale_x, scale_y);
         if rescaled || grid != self.grid {
             self.apply_grid(grid);
         }
@@ -1098,7 +1145,7 @@ impl Shell {
             self.font_size = font_size;
             self.rebuild_face(self.panel_scale.0);
             let grid = grid_for(
-                self.panel_size.0,
+                grid_width(self.panel_size.0),
                 self.panel_size.1,
                 self.cell,
                 self.panel_scale.0,
@@ -1547,10 +1594,18 @@ impl Shell {
         }
     }
 
+    /// The cell a pane-relative pointer position names.
+    ///
+    /// The swap chain starts at the pane's left padding, so the position is
+    /// shifted by it before it becomes a column.
+    fn cell_at(&self, x: f64, y: f64) -> Option<(i32, i32)> {
+        pointer_cell(x - PANE_PADDING_LEFT, y, self.grid, self.cell, self.scale)
+    }
+
     /// Takes a press that landed in the scrollbar's strip, returning whether
     /// it did.
     fn scrollbar_pressed(&mut self, info: &PointerEventInfo) -> bool {
-        if !info.is_left_button_pressed || !bar::contains(self.panel_size.0, info.x) {
+        if !info.is_left_button_pressed || !bar::contains(pane_width(self.panel_size.0), info.x) {
             return false;
         }
         let track = self.panel_size.1;
@@ -1620,7 +1675,7 @@ impl Shell {
 
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         let forward = input::forwards_to_application(self.active_tracking(), shift);
-        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        let cell = self.cell_at(info.x, info.y);
         self.pointer_cell = cell;
 
         // A right press pastes, unless the program asked to see the mouse.
@@ -1704,7 +1759,7 @@ impl Shell {
         }
 
         let (columns, rows) = self.grid;
-        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        let cell = self.cell_at(info.x, info.y);
         self.pointer_cell = cell;
         let shift = info.modifiers.contains(InputModifiers::SHIFT);
         let forward = input::forwards_to_application(self.active_tracking(), shift);
@@ -1806,7 +1861,7 @@ impl Shell {
             return;
         }
 
-        let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
+        let cell = self.cell_at(info.x, info.y);
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
@@ -2077,6 +2132,34 @@ fn cells(count: f64) -> i32 {
         return 1;
     }
     (count.floor() as i64).clamp(1, i64::from(MAX_CELLS)) as i32
+}
+
+/// The pane's width in DIPs, from the swap chain's report.
+///
+/// The panel sits inside the pane's left padding, so its width is that much
+/// narrower than the pane it is centred in.
+fn pane_width(panel: f64) -> f64 {
+    panel + PANE_PADDING_LEFT
+}
+
+/// The width the grid's cells may use: the panel less the scrollbar's strip, so
+/// the last column stops short of the scrollbar instead of running under it
+/// (ADR 068).
+fn grid_width(panel: f64) -> f64 {
+    (panel - bar::WIDTH).max(0.0)
+}
+
+/// The width the tabs may share, clear of the new-tab group and the window's
+/// own buttons.
+fn tab_room(pane: f64) -> f64 {
+    (pane - CAPTION_WIDTH - CAPTION_GAP - NEW_TAB_WIDTH - DROP_DOWN_WIDTH - 1.0 - TAB_ROW_GAP).max(0.0)
+}
+
+/// The width a tab's title may use once its icon and close button are placed.
+fn title_room(tab: f64, has_icon: bool) -> f64 {
+    let content = tab - TAB_PADDING_LEFT - TAB_PADDING_RIGHT;
+    let fixed = CLOSE_BUTTON + TAB_GAP + if has_icon { TAB_ICON + TAB_GAP } else { 0.0 };
+    (content - fixed).max(0.0)
 }
 
 /// The pixel size of a `grid` of `cell`s, saturated to the settings' `u16`.
@@ -2469,6 +2552,34 @@ mod tests {
     fn the_pty_size_follows_the_grid() {
         assert_eq!(pty_size((120, 30)), PtySize::new(120, 30));
         assert_eq!(pty_size((0, 0)), PtySize::new(1, 1));
+    }
+
+    #[test]
+    fn the_tab_room_stops_short_of_the_buttons_and_the_caption() {
+        let room = tab_room(1000.0);
+        assert!(room > 0.0);
+        assert_eq!(
+            room,
+            1000.0 - CAPTION_WIDTH - CAPTION_GAP - NEW_TAB_WIDTH - DROP_DOWN_WIDTH - 1.0 - TAB_ROW_GAP
+        );
+
+        // A window too narrow for the buttons has no room, not negative room.
+        assert_eq!(tab_room(100.0), 0.0);
+    }
+
+    #[test]
+    fn a_tab_at_its_floor_has_no_room_for_a_title() {
+        assert_eq!(title_room(MIN_TAB_WIDTH, true), 0.0);
+        assert!(title_room(MIN_TAB_WIDTH, false) > 0.0);
+        assert!(title_room(MAX_TAB_WIDTH, true) < title_room(MAX_TAB_WIDTH, false));
+        assert!(title_room(0.0, true) >= 0.0);
+    }
+
+    #[test]
+    fn the_grid_stops_short_of_the_scrollbar() {
+        assert_eq!(grid_width(800.0), 800.0 - bar::WIDTH);
+        assert_eq!(grid_width(0.0), 0.0);
+        assert_eq!(grid_width(-4.0), 0.0);
     }
 
     #[test]

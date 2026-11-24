@@ -95,4 +95,5 @@ Rules:
 | [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Amended by 067 (the tab's height, the overhang and the button group) |
 | [065](065-wsl-distros-as-profiles.md) | WSL distributions are profiles the shell generates from `wsl.exe -l -q`, merged at load and never written to the settings file | Accepted |
 | [066](066-program-icons-from-the-executable.md) | A profile's icon is the icon its executable carries, extracted with GDI and carried as PNG bytes | Accepted |
-| [067](067-tab-row-height-and-split-button.md) | The tab row is a fixed 32 DIP, a tab paints past it to reach the pane, and `+`/`▾` are one split control | Accepted |
+| [067](067-tab-row-height-and-split-button.md) | The tab row is a fixed 32 DIP, a tab paints past it to reach the pane, and `+`/`▾` are one split control | Amended by 068 (28 DIP, centred group) |
+| [068](068-tab-widths-and-pane-inset.md) | Tabs share the row equally and ellipsise; the pane is inset on the left and the grid stops short of the scrollbar | Accepted |

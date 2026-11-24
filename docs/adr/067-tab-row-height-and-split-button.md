@@ -1,8 +1,8 @@
 # ADR 067 — The tab row is a fixed 32 DIP and the tab paints past it
 
-- Status: Accepted
+- Status: Amended by 068 (28-DIP row, centred group, equal tab widths)
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/app.rs`, ADR 064, ADR 051, ADR 052
+- Related: `crates/winter/src/winui/app.rs`, ADR 051, ADR 052, ADR 064
 
 ## Context
 

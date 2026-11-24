@@ -134,10 +134,22 @@ The strip is hand-built — a `StackPanel` of keyed `Border`s — and lives in t
 `TabView` is not used: its item exposes no fill, no icon and no pointer events,
 and its `+` cannot be grouped with the drop-down.
 
-- The strip is `TAB_ROW_HEIGHT` (32 DIP) and bottom-aligned in the header slot,
-  and a tab fills it (ADR 067). Do not go back to letting the slot stretch the
-  tab: it does not, and the tab then leaves a band of title-bar colour above the
-  pane.
+- The strip is `TAB_ROW_HEIGHT` (28 DIP) and bottom-aligned in the header slot,
+  and a tab fills it (ADRs 067, 068). Do not go back to letting the slot stretch
+  the tab: it does not, and the tab then leaves a band of title-bar colour above
+  the pane.
+- Tabs are **equal width**, and each has an explicit `width` (ADR 068).
+  `tab_room` is the pane less the new-tab group and the caption buttons;
+  `MAX_TAB_WIDTH` is upstream's 240 cap and `MIN_TAB_WIDTH` is a tab's icon,
+  close button, padding and gaps. The title ellipsises into `title_room`, so a
+  squeezed tab loses characters instead of overlapping itself.
+- The strip also carries `max_width(tab_room)`. That is what keeps the new-tab
+  group out from under the window's caption buttons when the tabs overflow:
+  they overflow their slot, and the group, declared later, paints over them.
+- The pane's `Border` is padded `PANE_PADDING_LEFT` (8 DIP) on the left, and the
+  grid reserves the scrollbar's width — `grid_width`, not the panel's width
+  (ADR 068). Pointer positions must go through `Shell::cell_at`, which removes
+  the inset, and `bar::contains` takes `pane_width`, not the panel's.
 - A tab paints `TAB_OVERHANG` (12 DIP) past its slot — a negative bottom margin
   with matching bottom padding, so only the fill grows. Upstream pads its strip
   by -1 for the same 1px gap; anything past the row is behind the pane, so the
