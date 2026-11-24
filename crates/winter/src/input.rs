@@ -92,6 +92,38 @@ pub fn produces_text(key: Key, modifiers: Modifiers) -> bool {
     matches!(key, Key::Char(_) | Key::Space) && !modifiers.ctrl && !modifiers.alt && !modifiers.command
 }
 
+/// The character a key produces when it does not arrive as a character event.
+///
+/// Upstream asks the keyboard layout for a key's character and, when it has one,
+/// hands the key to its character handler (`Terminal::SendKeyEvent`); the
+/// record a console client reads carries that character in its `Uc` field.
+/// Here the character event is XAML's `CharacterReceived`, which never fires for
+/// Enter, Tab, Backspace or Escape, so those keys take the key path and have to
+/// spell their character out. Without it a Win32 input record says the key went
+/// down and nothing was typed: a cooked console still submits on the virtual
+/// key, while a program reading characters — `ssh` at its host-key prompt —
+/// waits for a line that never ends (ADR 072).
+pub const fn key_character(key: Key, modifiers: Modifiers) -> Option<char> {
+    // A chord's character is the layout's business, not the terminal's; the
+    // console still sees the virtual key and the modifier state.
+    if modifiers.alt || modifiers.command {
+        return None;
+    }
+    Some(match key {
+        Key::Enter | Key::NumpadEnter => {
+            if modifiers.ctrl {
+                '\n'
+            } else {
+                '\r'
+            }
+        }
+        Key::Tab => '\t',
+        Key::Backspace => '\u{8}',
+        Key::Escape => '\u{1b}',
+        _ => return None,
+    })
+}
+
 /// Turns one portable event into the key events and paste it means.
 ///
 /// `win32` says whether the active terminal asked for Win32 input records. A
@@ -292,6 +324,41 @@ mod tests {
             repeat_count: 1,
             codepoint,
         }
+    }
+
+    #[test]
+    fn the_keys_that_never_produce_text_spell_their_character() {
+        let plain = Modifiers::default();
+        assert_eq!(key_character(Key::Enter, plain), Some('\r'));
+        assert_eq!(key_character(Key::NumpadEnter, plain), Some('\r'));
+        assert_eq!(key_character(Key::Tab, plain), Some('\t'));
+        assert_eq!(key_character(Key::Backspace, plain), Some('\u{8}'));
+        assert_eq!(key_character(Key::Escape, plain), Some('\u{1b}'));
+
+        // Ctrl+Enter is the line feed a console client expects.
+        let ctrl = Modifiers { ctrl: true, ..plain };
+        assert_eq!(key_character(Key::Enter, ctrl), Some('\n'));
+
+        // A chord's character is the layout's business.
+        let alt = Modifiers { alt: true, ..plain };
+        assert_eq!(key_character(Key::Enter, alt), None);
+        assert_eq!(key_character(Key::Char('a'), plain), None);
+        assert_eq!(key_character(Key::Up, plain), None);
+    }
+
+    #[test]
+    fn an_enter_carries_its_character_into_a_win32_record() {
+        // The console host's request is what puts the terminal in the mode that
+        // sends records; a client reading characters sees what the record says.
+        let mut terminal = term::Terminal::new();
+        terminal.process_str("\u{1b}[?9001h");
+
+        let mut sides = ModifierSides::default();
+        let enter = key_character(Key::Enter, Modifiers::default());
+        let outcome = translate(&record(Key::Enter, 0x0D, enter, true), &mut sides, true);
+        let bytes = terminal.handle_key(&outcome.keys[0]).expect("a record");
+
+        assert_eq!(bytes, "\u{1b}[13;0;13;1;0;1_", "the Uc field is the CR\n");
     }
 
     #[test]

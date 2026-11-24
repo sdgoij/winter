@@ -80,6 +80,12 @@ scroll.
 - Key-ups are a separate subscription. `on_preview_key_down` never sees a
   release; `on_key_up` does, and without it a console client can never be told
   a key came up (ADR 056).
+- Every key path passes `input::key_character`. In Win32 input mode the console
+  host sends `\x1b[?9001h` (the packed `OpenConsole.exe` always does) and every
+  key becomes `CSI Vk;Sc;Uc;Kd;Cs;Rc _`; the `Uc` field is the **only** thing a
+  client reading characters is told. Leave it out and Enter types nothing for
+  `ssh`, `python`, anything in raw mode — while a cooked PowerShell still submits
+  on the virtual key, so the bug hides (ADR 072).
 - A handled key raises no `CharacterReceived`. Printable keys must stay
   unhandled so their character arrives, then the press is held until it does
   and sent as one Win32 record with `Vk`, `Sc` and `Uc` (ADR 056).

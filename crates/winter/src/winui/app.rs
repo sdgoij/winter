@@ -1426,7 +1426,10 @@ impl Shell {
             virtual_key: virtual_key(info.key),
             scan_code: scan_code(info.status.scan_code),
             repeat_count: repeat_count(info.status.repeat_count),
-            codepoint: None,
+            // Enter, Tab, Backspace and Escape never produce a character event,
+            // so the character they type is spelled out here: a Win32 input
+            // record with a zero there is a key that typed nothing (ADR 072).
+            codepoint: input::key_character(key, modifiers),
         });
 
         // The keyboard may be handed to the window on the space release too.
