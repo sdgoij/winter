@@ -33,7 +33,7 @@ after the behaviour is right.
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
 | [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053, 064–068), including our own tab strip in the title bar, its tabs equal-width and ellipsising so they never push the controls under the caption buttons, the selected tab in the terminal's colour and painting down to the pane, a profile menu beside a split new-tab/▾ control, one row per installed WSL distribution and each program's own icon on its row and its tab, a pane whose text is inset from its edges and wraps before the scrollbar, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
 
-1731 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1732 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`docs/plan.md`](docs/plan.md).
 

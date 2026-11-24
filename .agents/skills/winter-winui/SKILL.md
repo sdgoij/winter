@@ -31,6 +31,12 @@ not Windows-specific belongs there, never in `winui`.
 - Kill a running session first. `cargo build -p winter` fails with
   `Access is denied` while `winter.exe` is alive:
   `taskkill //F //IM winter.exe`.
+- `WINTER_TRACE=<path>` (or `WINTER_TRACE=1` for `%TEMP%\winter-trace.log`)
+  makes the shell write what crossed the pty — `in` and `out` lines with escapes
+  and line ends visible — plus a `tick` heartbeat and any `frame error`. This is
+  the first thing to reach for on "it hangs": a log that stops means the timer
+  did too, `in` lines with nothing on screen means the pane stopped painting,
+  and no `in` lines after a key means the far side never answered.
 - Image sequences (sixel, kitty) need a console host that forwards them. Put an
   `OpenConsole.exe` beside the built binary — `just console-host` copies the one
   Windows Terminal ships — or set `WINTER_CONSOLE_HOST`. Without one the

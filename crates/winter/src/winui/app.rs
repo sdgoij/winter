@@ -46,6 +46,7 @@ use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
 use super::wsl;
+use crate::trace;
 
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
@@ -201,6 +202,9 @@ struct Shell {
     sides: input::ModifierSides,
     blink_on: bool,
     blink_at: Instant,
+    /// When the trace last wrote a heartbeat, so a log that stops says the
+    /// timer stopped with it.
+    trace_at: Instant,
     focused: bool,
     /// Whether the first focus request already succeeded, so a tab click is not
     /// immediately undone by the next tick.
@@ -443,6 +447,7 @@ impl Component for Shell {
             scrollbar_press: false,
             blink_on: true,
             blink_at: Instant::now(),
+            trace_at: Instant::now(),
             focused: false,
             focus_attempted: false,
             last_mouse_cell: None,
@@ -1056,8 +1061,18 @@ impl Shell {
             sync_palette(renderer, &tab.control);
 
             renderer.invalidate_all();
-            (renderer.paint_frame().is_ok(), background)
+            let painted = renderer.paint_frame();
+            if let Err(error) = &painted {
+                trace::line(format_args!("frame error: {error}"));
+            }
+            (painted.is_ok(), background)
         };
+
+        // A heartbeat, so a log that stops says the timer did too.
+        if now.duration_since(self.trace_at) >= Duration::from_secs(1) {
+            self.trace_at = now;
+            trace::line(format_args!("tick grid={:?} painted={painted}", self.grid));
+        }
 
         // The selected tab is painted in the pane's own colour, so the strip has
         // to learn it from the palette the frame was painted with -- a scheme
@@ -1116,6 +1131,9 @@ impl Shell {
 
     /// Tells every tab's terminal and the renderer how large the grid is.
     fn apply_grid(&mut self, (columns, rows): (i32, i32)) {
+        if self.grid != (columns, rows) {
+            trace::line(format_args!("grid {columns}x{rows}"));
+        }
         self.grid = (columns, rows);
         for index in 0..self.tabs.len() {
             if let Some(tab) = self.tabs.get_mut(index) {

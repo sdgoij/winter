@@ -121,6 +121,7 @@ impl Control {
             return;
         }
 
+        crate::trace::bytes("in", &bytes);
         self.terminal.process_bytes(&bytes);
         for response in self.terminal.take_responses() {
             self.write(&response);
@@ -138,6 +139,7 @@ impl Control {
         if text.is_empty() {
             return;
         }
+        crate::trace::text("out", text);
         if self.connection.write(text.as_bytes()).is_err() {
             self.exited = true;
         }

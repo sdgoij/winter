@@ -49,6 +49,7 @@ pub mod term_connection;
 pub mod term_control;
 pub mod term_events;
 pub mod term_settings;
+pub mod trace;
 // The renderer's view of a live terminal belongs to the shells that blit its
 // pixels: WinUI, and the GTK shell. Its tests run on every platform, which is
 // why `test` is part of the condition.
