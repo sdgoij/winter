@@ -25,11 +25,11 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
-    MTLBlendFactor, MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat,
-    MTLPrimitiveType, MTLRegion, MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
-    MTLRenderPipelineState, MTLResourceOptions, MTLSize, MTLStorageMode, MTLStoreAction, MTLTexture,
-    MTLTextureDescriptor, MTLTextureUsage,
+    MTLBlendFactor, MTLBlitCommandEncoder, MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder,
+    MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin,
+    MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLRenderCommandEncoder, MTLRenderPassDescriptor,
+    MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLResource, MTLResourceOptions, MTLSize, MTLStorageMode,
+    MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
 };
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use renderer::atlas::common::{
@@ -322,6 +322,12 @@ pub(crate) struct MetalBackend {
     /// Draw the offscreen target on the next frame even when a drawable is
     /// available; the screenshot path asks for this.
     force_readback: bool,
+    /// A failed target allocation has been reported, so it is not repeated
+    /// every frame.
+    noted_target_failure: bool,
+    /// A failed command buffer has been reported, so it is not repeated every
+    /// frame.
+    noted_frame_failure: bool,
     width: u32,
     height: u32,
     pixels: Vec<u32>,
@@ -395,6 +401,8 @@ impl MetalBackend {
             layer: None,
             presented: false,
             force_readback: false,
+            noted_target_failure: false,
+            noted_frame_failure: false,
             width: 0,
             height: 0,
             pixels: Vec::new(),
@@ -439,10 +447,22 @@ impl MetalBackend {
             )
         };
         descriptor.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
-        descriptor.setStorageMode(MTLStorageMode::Shared);
+        // `Managed` is the storage mode macOS textures expect for CPU access;
+        // a `Shared` render target is not portable across Intel and Apple GPUs.
+        // `read_texture` synchronizes it before reading.
+        descriptor.setStorageMode(MTLStorageMode::Managed);
         self.target = self.device.newTextureWithDescriptor(&descriptor);
-        self.pixels = vec![0; (width * height) as usize];
-        self.target.is_some()
+        if self.target.is_some() {
+            self.pixels = vec![0; (width * height) as usize];
+            true
+        } else {
+            self.pixels.clear();
+            if !self.noted_target_failure {
+                self.noted_target_failure = true;
+                eprintln!("metal: cannot allocate the readback target; screenshots and the fallback are lost");
+            }
+            false
+        }
     }
 
     fn render(&mut self, payload: &mut RenderingPayload) {
@@ -458,20 +478,20 @@ impl MetalBackend {
             self.height = height;
             self.target = None;
         }
-        if !self.ensure_target() {
-            return;
-        }
 
         let data = self.build(payload, cell_width, cell_height, width, height);
         self.atlas.upload();
 
-        // The drawable is what the window shows. The offscreen target is only
-        // drawn when presentation fails, or when a capture is pending: it is a
-        // full-frame copy, and the screenshot path is the only reader.
-        if self.force_readback {
+        // The drawable is what the window shows, and it does not need the
+        // offscreen target. The readback is for a capture or a fallback:
+        // drawing it every frame would copy a full screen nobody reads.
+        let presented = if self.force_readback {
             self.presented = false;
-            self.offscreen(payload, &data);
-        } else if !self.present(payload, &data) {
+            false
+        } else {
+            self.present(payload, &data)
+        };
+        if !presented && self.ensure_target() {
             self.offscreen(payload, &data);
         }
         self.force_readback = false;
@@ -587,13 +607,14 @@ impl MetalBackend {
     /// Encodes `data` into `target`, presents `drawable` when there is one, and
     /// waits for the GPU.
     fn draw_frame(
-        &self,
+        &mut self,
         payload: &RenderingPayload,
         target: &ProtocolObject<dyn MTLTexture>,
         drawable: Option<&ProtocolObject<dyn CAMetalDrawable>>,
         data: &FrameData,
     ) -> bool {
         let Some(command) = self.queue.commandBuffer() else {
+            self.note_frame_failure("no command buffer");
             return false;
         };
         let pass = MTLRenderPassDescriptor::renderPassDescriptor();
@@ -605,6 +626,7 @@ impl MetalBackend {
         attachment.setStoreAction(MTLStoreAction::Store);
         attachment.setClearColor(clear_color(payload));
         let Some(encoder) = command.renderCommandEncoderWithDescriptor(&pass) else {
+            self.note_frame_failure("no render encoder");
             return false;
         };
 
@@ -644,14 +666,34 @@ impl MetalBackend {
         }
 
         encoder.endEncoding();
+        // A managed target must be synchronized before the CPU reads it, and
+        // the blit belongs in the same command buffer as the draws.
+        if drawable.is_none()
+            && let Some(blit) = command.blitCommandEncoder()
+        {
+            let target: &ProtocolObject<dyn MTLResource> = target.as_ref();
+            blit.synchronizeResource(target);
+            blit.endEncoding();
+        }
         if let Some(drawable) = drawable {
             let drawable: &ProtocolObject<dyn MTLDrawable> = drawable.as_ref();
             command.presentDrawable(drawable);
         }
         command.commit();
         command.waitUntilCompleted();
+        if let Some(error) = command.error() {
+            self.note_frame_failure(&format!("the frame did not complete: {error}"));
+        }
         drop(keep_alive);
         true
+    }
+
+    /// Reports a device failure once, instead of once per frame.
+    fn note_frame_failure(&mut self, what: &str) {
+        if !self.noted_frame_failure {
+            self.noted_frame_failure = true;
+            eprintln!("metal: {what}");
+        }
     }
 
     /// Uploads every image band that is not cached, and evicts the rest.
@@ -1210,9 +1252,8 @@ mod tests {
             eprintln!("metal: this host hands out no drawable; skipping");
             return;
         }
-        // The offscreen target was skipped, so it still holds the zeros it was
-        // allocated with rather than the cursor the drawable shows.
-        assert_eq!(backend.pixel(8, 0), Some(0));
+        // The offscreen target was not even allocated: nothing reads it.
+        assert_eq!(backend.pixel(8, 0), None);
 
         // A capture forces the readback, and the offscreen frame arrives.
         backend.force_readback = true;

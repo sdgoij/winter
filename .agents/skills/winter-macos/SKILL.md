@@ -87,6 +87,11 @@ second.
   which forces one offscreen frame, so `drawRect:` paints the readback pixels
   and `chrome`'s overlays for that one draw. A presenting frame never reads
   back, so without the forced frame the capture would blit stale pixels.
+- **A readback target is `Managed`, not `Shared`.** A `Shared` `BGRA8Unorm`
+  render target works on Apple GPUs and reads back zeros on Intel ones. The
+  offscreen target is `Managed`, and the rendering command buffer ends with a
+  blit `synchronizeResource` before `getBytes`. `Shared` sampled textures (the
+  atlas, an image) are fine.
 - **The content layer is `geometryFlipped`.** The view is flipped and the
   drawable's first row is the grid's first row; without the flip the pane is
   upside down.

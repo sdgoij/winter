@@ -41,15 +41,18 @@ the content view, which cannot see a `CAMetalLayer` drawable.
    view's own drawing, sizes it to the grid's whole cells and attaches it to the
    content backend; each frame is encoded into the layer's next drawable and
    presented, and nothing is copied back. When the layer cannot hand out a
-   drawable, the frame is drawn into a shared `BGRA8Unorm` texture instead and
-   read back as `0xAARRGGBB` for the existing `Frame` blit. A screenshot asks
-   for the same thing explicitly: a drawable never appears in
-   `cacheDisplayInRect`, so the controller forces one offscreen frame before it
-   captures the view. The readback is also what makes the content path testable:
-   the ignored device tests compare pixels, and a real-font glyph matches the
-   software backend exactly when its colours are opaque. Where antialiased text
-   is blended over a fill, the GPU's round-to-nearest differs from the software
-   path's truncation by at most one 8-bit step.
+   drawable, or a screenshot forces it, the frame is drawn into a shared
+   `BGRA8Unorm` texture and read back as `0xAARRGGBB` for the existing `Frame`
+   blit. That texture is `Managed` and a blit `synchronizeResource` runs in the
+   same command buffer before `getBytes`, because a `Shared` render target is
+   not portable across Intel and Apple GPUs. A screenshot asks for the readback
+   explicitly: a drawable never appears in `cacheDisplayInRect`, so the
+   controller forces one offscreen frame before it captures the view. The
+   readback is also what makes the content path testable: the ignored device
+   tests compare pixels, and a real-font glyph matches the software backend
+   exactly when its colours are opaque. Where antialiased text is blended over a
+   fill, the GPU's round-to-nearest differs from the software path's truncation
+   by at most one 8-bit step.
 5. **The two overlays that cross the content are layers too.** The find
    backdrop and the bell flash are drawn above the grid, so an opaque content
    layer would hide them. They are `CALayer`s above it, with the same geometry
@@ -92,6 +95,11 @@ Positive:
 
 Negative:
 
+- **The readback target is `Managed`, not `Shared`.** A `Shared` render target
+  is creatable on Apple GPUs and fails or reads back zeros on Intel ones; the
+  target and its `getBytes` need the documented managed path, with a blit
+  `synchronizeResource` in the rendering command buffer. A failed allocation or
+  a command buffer with an error prints once and falls back to the blit.
 - **A capture costs an extra frame.** The offscreen target is drawn only when
   there is no drawable and when a screenshot is pending, so the presenting path
   is one draw per frame; `prepare_capture` re-renders once before the view is

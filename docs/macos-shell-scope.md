@@ -141,6 +141,11 @@ below `winter` sees AppKit.
   background colour starts a 0.25-second action; a window resize would slide
   the content instead of fitting it. The controller wraps every change in a
   `CATransaction` with actions disabled.
+- **A readback target is `Managed`, not `Shared`.** A `Shared` `BGRA8Unorm`
+  render target works on Apple GPUs and reads back zeros on Intel ones. The
+  offscreen target is `Managed`, and the rendering command buffer ends with a
+  blit `synchronizeResource` so `getBytes` sees the GPU's writes. A `Shared`
+  sampled texture (the atlas, an image) is fine.
 - **The content layer's drawable is top-down.** The view is flipped and its
   drawable's first row is the grid's first row, so the `CAMetalLayer` is
   `geometryFlipped`; without it the pane is upside down.
