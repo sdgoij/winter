@@ -21,6 +21,7 @@ use renderer::{
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseEvent, MouseEventKind, WheelAxis};
+use types::text_color::ColorType;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
@@ -50,6 +51,13 @@ const INITIAL_ROWS: i32 = 30;
 const MENU_WIDTH: f64 = 240.0;
 /// The drop-down button's width in DIPs.
 const DROP_DOWN_WIDTH: f64 = 32.0;
+/// The tab row's fill: behind an inactive tab, and between the last tab and
+/// the caption buttons.
+const TITLEBAR: Color = Color::rgb(32, 32, 36);
+/// How far a hovered tab moves from the title bar towards the pane's colour.
+const HOVER_MIX: f32 = 0.5;
+/// How far an inactive tab's label is dimmed towards its own fill.
+const LABEL_DIM: f32 = 0.35;
 /// Far beyond any display, and it keeps a bad metric from asking the terminal
 /// for an allocation it can never fill.
 const MAX_CELLS: i32 = 1024;
@@ -135,6 +143,10 @@ struct Shell {
     restore_focus_until: Option<Instant>,
     /// The scrollbar's drag state.
     scrollbar: scrollbar::Scrollbar,
+    /// The tab the pointer is over, if any.
+    hovered_tab: Option<u64>,
+    /// The active terminal's background, so the selected tab matches it.
+    active_background: Color,
     /// Whether the pressed pointer is on the scrollbar rather than the grid.
     scrollbar_press: bool,
     /// The cell a forwarded move last reported, so a still pointer is silent.
@@ -183,11 +195,11 @@ pub(super) enum Message {
     },
     /// The tab strip selected `index`, or nothing.
     Select(Option<usize>),
+    /// The pointer entered (Some) or left (None) a tab.
+    HoverTab(Option<u64>),
     NewTab,
     /// The user asked for the tab with this id to close.
     CloseTab(u64),
-    /// The tab strip's new order, by id.
-    Reorder(Vec<u64>),
     Focused(bool),
     Pressed(PointerEventInfo),
     Moved(PointerEventInfo),
@@ -345,6 +357,8 @@ impl Component for Shell {
             pending: None,
             restore_focus_until: None,
             scrollbar: scrollbar::Scrollbar::default(),
+            hovered_tab: None,
+            active_background: Color::rgb(12, 12, 12),
             scrollbar_press: false,
             blink_on: true,
             blink_at: Instant::now(),
@@ -369,9 +383,6 @@ impl Component for Shell {
         let keys = context.sender();
         let characters = keys.clone();
         let add = keys.clone();
-        let select = keys.clone();
-        let close = keys.clone();
-        let reorder = keys.clone();
         let got = keys.clone();
         let lost = keys.clone();
         let pressed = keys.clone();
@@ -383,36 +394,110 @@ impl Component for Shell {
         let releases = keys.clone();
         let bindings = Rc::clone(&self.bindings);
 
-        let items: Vec<KeyedView> = (0..self.tabs.len())
-            .filter_map(|index| self.tabs.get(index))
-            .map(|tab| {
-                KeyedView::new(
-                    tab_key(tab.id),
-                    TabViewItem::new().header(tab.title.clone()).is_closable(true),
-                )
-            })
-            .collect();
+        // The strip is ours, not a `TabView`: only then can a tab carry the
+        // terminal's own background, a hover fill and (later) an icon (ADR
+        // 064). A tab also has to fill the row's height -- a 34-DIP tab in a
+        // 40-DIP row leaves a band the pane cannot cover -- so it is left
+        // without a height and stretches, and the selected tab ends flush with
+        // the pane instead of floating above it.
+        let titlebar = TITLEBAR;
+        let active_background = self.active_background;
+        let hovered_tab = self.hovered_tab;
+        let selected = self.tabs.index();
 
-        let strip = TabView::new()
-            .is_add_tab_button_visible(true)
-            .can_reorder_tabs(true)
-            .selected_index(Some(self.tabs.index()))
-            .keyed_tab_items(items)
-            .on_add_tab_button_click(move || {
-                let _ = add.send(Message::NewTab);
-            })
-            .on_selection_changed(move |index| {
-                let _ = select.send(Message::Select(index));
-            })
-            .on_close_requested(move |key: windows_reactor::Key| {
-                if let Some(id) = key.as_str().and_then(tab_id) {
+        // A theme may name the strip's fills. A fill it leaves out keeps the
+        // one the window would have chosen anyway, so the default window is the
+        // terminal's colour from the selected tab down to the pane, and a theme
+        // that asks for something else gets it (ADRs 035, 064).
+        let theme = self.settings.theme();
+        let focused = self.focused;
+        let row = theme
+            .and_then(|theme| theme.tab_row_background(focused))
+            .and_then(theme_color)
+            .unwrap_or(titlebar);
+        let active_fill = theme
+            .and_then(|theme| theme.tab_background(true))
+            .and_then(theme_color)
+            .unwrap_or(active_background);
+        let idle_fill = theme
+            .and_then(|theme| theme.tab_background(false))
+            .and_then(theme_color)
+            .unwrap_or(row);
+
+        let mut strip_children: Vec<KeyedView> = Vec::new();
+        for index in 0..self.tabs.len() {
+            let Some(tab) = self.tabs.get(index) else {
+                continue;
+            };
+            let id = tab.id;
+            let is_active = selected == index;
+            let background = if is_active {
+                active_fill
+            } else if hovered_tab == Some(id) {
+                blend(idle_fill, active_fill, HOVER_MIX)
+            } else {
+                idle_fill
+            };
+            // The fill names no foreground, so the label picks a side and an
+            // inactive one is dimmed towards it -- the same rule the egui strip
+            // applies, and what keeps a light scheme readable (ADR 035).
+            let foreground = contrasting_text(background);
+            let label = if is_active {
+                foreground
+            } else {
+                blend(foreground, background, LABEL_DIM)
+            };
+
+            let select = keys.clone();
+            let close = keys.clone();
+            let enter = keys.clone();
+            let leave = keys.clone();
+
+            let title = TextBlock::new()
+                .text(tab.title.clone())
+                .font_size(12.0)
+                .foreground(label)
+                .vertical_alignment(VerticalAlignment::Center);
+            let close_button = Button::new()
+                .content(TextBlock::new().text("\u{2715}").font_size(10.0).foreground(label))
+                .style(ButtonStyle::Subtle)
+                .width(22.0)
+                .height(22.0)
+                .min_height(0.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .on_click(move || {
                     let _ = close.send(Message::CloseTab(id));
-                }
-            })
-            .on_reordered(move |keys: Vec<windows_reactor::Key>| {
-                let ids = keys.iter().filter_map(|key| key.as_str().and_then(tab_id)).collect();
-                let _ = reorder.send(Message::Reorder(ids));
-            });
+                });
+            let body = StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .children((title, close_button));
+
+            let item = Border::new()
+                .background(background)
+                .corner_radius(CornerRadius::new(6.0, 6.0, 0.0, 0.0))
+                .padding(Thickness::new(12.0, 0.0, 4.0, 0.0))
+                .min_height(32.0)
+                .content(body)
+                .on_pointer_pressed(move |_| {
+                    let _ = select.send(Message::Select(Some(index)));
+                })
+                .on_pointer_entered(move |_| {
+                    let _ = enter.send(Message::HoverTab(Some(id)));
+                })
+                .on_pointer_exited(move |_| {
+                    let _ = leave.send(Message::HoverTab(None));
+                });
+            // Keyed by the tab's id, so closing the middle tab updates the
+            // elements that remain instead of re-binding their handlers to a
+            // shifted index.
+            strip_children.push(KeyedView::new(tab_key(id), item));
+        }
+
+        let strip = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(1.0)
+            .keyed_children(strip_children);
 
         let find_open = self.tabs.active().is_some_and(|tab| tab.find.open);
         let menu_open = self.menu_open;
@@ -441,7 +526,7 @@ impl Component for Shell {
             .capture_pointer_on_press(true)
             .focus_on_pointer_release(true)
             .element_ref(&self.focus)
-            .background(Color::rgb(12, 12, 12))
+            .background(self.active_background)
             .content(pane_content)
             .on_key_up(RoutedCallback::new(move |info: KeyEventInfo| {
                 if find_open || menu_open {
@@ -539,38 +624,48 @@ impl Component for Shell {
                 .client_size(self.initial_client.0, self.initial_client.1),
         );
 
-        // The drop-down sits immediately after the strip's `+`, as in Windows
-        // Terminal: the two are the same height and share one header. The Grid
-        // wraps them only so its width can be measured, which is how the menu
-        // finds the button's left edge (ADR 052).
+        // The drop-down sits immediately after the strip and the `+`, as in
+        // Windows Terminal: one group, so the halves read as a single control
+        // rather than two unrelated buttons (ADR 064). Both are centred in the
+        // row, whose height the tabs now define.
+        let new_tab = Button::new()
+            .content("+")
+            .style(ButtonStyle::Subtle)
+            .width(DROP_DOWN_WIDTH)
+            .height(24.0)
+            .min_height(0.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .on_click(move || {
+                let _ = add.send(Message::NewTab);
+            });
         let drop_down = Button::new()
             .content("\u{25be}")
             .style(ButtonStyle::Subtle)
             .width(DROP_DOWN_WIDTH)
             .height(24.0)
-            // A Button's stock style has a 32-DIP minimum; the tab strip's own
-            // button is 24, so the default would make the two uneven.
             .min_height(0.0)
-            // The tab strip's own button sits 13 DIP below the header's top (a
-            // 32-DIP tab item with a 24-DIP button, and the header's slot starts
-            // 4 DIP above the title bar's content); match it, or the two buttons
-            // are visibly uneven.
-            .vertical_alignment(VerticalAlignment::Top)
-            .margin(Thickness::new(0.0, 13.0, 0.0, 0.0))
+            .vertical_alignment(VerticalAlignment::Center)
             .on_click(move || {
                 let _ = menu_sender.send(Message::MenuToggle);
             });
+        let buttons = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(0.0)
+            .children((new_tab, drop_down));
         let header_panel: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
-            .children((strip, drop_down))
+            .children((strip, buttons))
             .into();
+        // The Grid wrapping the header is only there so its width can be
+        // measured, which is how the menu finds the buttons' left edge (ADR
+        // 052).
         let header = Grid::new().element_ref(&self.header).children(vec![header_panel]);
 
         // The tab strip is the title bar, as in Windows Terminal: the TitleBar
         // control extends the client area and hands the system the drag region,
         // leaving room for the caption buttons on its right.
         let title_bar = Border::new()
-            .background(Color::rgb(32, 32, 36))
+            .background(row)
             // This snapshot leaves an 8-DIP strip of the system caption title
             // above the control's content; pulling the row up covers it
             // (ADR 051).
@@ -632,9 +727,9 @@ impl Component for Shell {
                 scale_y,
             } => self.resize(width, height, scale_x, scale_y),
             Message::Select(index) => self.select(index),
+            Message::HoverTab(id) => self.hovered_tab = id,
             Message::NewTab => self.open_tab(),
             Message::CloseTab(id) => self.close_tab(id, context),
-            Message::Reorder(ids) => self.reorder(&ids),
             Message::Focused(focused) => {
                 self.focused = focused;
                 if focused {
@@ -775,6 +870,11 @@ impl Shell {
             renderer.invalidate_all();
             (renderer.paint_frame().is_ok(), background)
         };
+
+        // The selected tab is painted in the pane's own colour, so the strip has
+        // to learn it from the palette the frame was painted with -- a scheme
+        // change or an OSC 11 reply moves both together.
+        self.active_background = color_of(background);
 
         // The GPU backend presents inside `paint_frame`; only the software
         // fallback has pixels left to blit.
@@ -1061,17 +1161,6 @@ impl Shell {
             let _ = context.close_window();
         } else {
             let _ = self.focus.request_focus();
-        }
-    }
-
-    /// Applies the strip's new order, which names tabs by id.
-    fn reorder(&mut self, ids: &[u64]) {
-        let order: Vec<usize> = ids
-            .iter()
-            .filter_map(|id| (0..self.tabs.len()).find(|&index| self.tabs.get(index).is_some_and(|tab| tab.id == *id)))
-            .collect();
-        if order.len() == self.tabs.len() {
-            let _ = self.tabs.reorder(&order);
         }
     }
 
@@ -1648,14 +1737,51 @@ fn pty_size(grid: (i32, i32)) -> PtySize {
     PtySize::new(side(grid.0), side(grid.1))
 }
 
-/// The key a tab item is declared with.
+/// The key a tab's element is declared with.
 fn tab_key(id: u64) -> String {
     format!("tab-{id}")
 }
 
-/// The tab id a key names, if it names one.
-fn tab_id(key: &str) -> Option<u64> {
-    key.strip_prefix("tab-")?.parse().ok()
+/// Black or white, whichever reads on `fill`.
+///
+/// A fill names no foreground, so a tab's label has to pick a side; a light
+/// scheme would otherwise paint a white label on white. The weights and the
+/// cut-off are shared with the egui strip (ADR 035).
+fn contrasting_text(fill: Color) -> Color {
+    let luminance = 0.299 * f32::from(fill.r) + 0.587 * f32::from(fill.g) + 0.114 * f32::from(fill.b);
+    if luminance > 140.0 {
+        Color::rgb(20, 20, 20)
+    } else {
+        Color::rgb(230, 230, 230)
+    }
+}
+
+/// A colour from the settings file as the toolkit's colour, when it names one.
+fn theme_color(color: settings::Color) -> Option<Color> {
+    match color.text_color().get_type() {
+        ColorType::Rgb { r, g, b } => Some(Color::rgb(r, g, b)),
+        _ => None,
+    }
+}
+
+/// A `COLORREF` (`0x00BBGGRR`, which is what the terminal's palette uses) as
+/// the toolkit's colour.
+fn color_of(colorref: u32) -> Color {
+    Color::rgb(
+        (colorref & 0xFF) as u8,
+        ((colorref >> 8) & 0xFF) as u8,
+        ((colorref >> 16) & 0xFF) as u8,
+    )
+}
+
+/// Mixes two opaque colours, fraction `t` of the way from `a` to `b`.
+fn blend(a: Color, b: Color, t: f32) -> Color {
+    let channel = |from: u8, to: u8| {
+        let from = f32::from(from);
+        let to = f32::from(to);
+        (from + (to - from) * t).round().clamp(0.0, 255.0) as u8
+    };
+    Color::rgb(channel(a.r, b.r), channel(a.g, b.g), channel(a.b, b.b))
 }
 
 /// The settings vocabulary key for a terminal key, if it has one.
@@ -2178,23 +2304,49 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_key_round_trips_its_id() {
-        assert_eq!(tab_id(&tab_key(7)), Some(7));
-        assert_eq!(tab_id("tab-0"), Some(0));
-    }
-
-    #[test]
-    fn a_key_that_is_not_a_tab_id_is_ignored() {
-        assert_eq!(tab_id("tab-"), None);
-        assert_eq!(tab_id("tab-x"), None);
-        assert_eq!(tab_id("other-1"), None);
-        assert_eq!(tab_id(""), None);
-    }
-
-    #[test]
     fn the_pty_size_follows_the_grid() {
         assert_eq!(pty_size((120, 30)), PtySize::new(120, 30));
         assert_eq!(pty_size((0, 0)), PtySize::new(1, 1));
+    }
+
+    #[test]
+    fn a_tab_key_is_unique_per_tab() {
+        assert_eq!(tab_key(0), "tab-0");
+        assert_ne!(tab_key(1), tab_key(11));
+    }
+
+    #[test]
+    fn a_label_picks_the_side_that_reads() {
+        assert_eq!(contrasting_text(Color::rgb(12, 12, 12)), Color::rgb(230, 230, 230));
+        assert_eq!(contrasting_text(Color::rgb(250, 250, 250)), Color::rgb(20, 20, 20));
+    }
+
+    #[test]
+    fn a_theme_colour_becomes_the_toolkit_color() {
+        let colour = settings::Color::parse("#102030").expect("a hex colour");
+        assert_eq!(theme_color(colour), Some(Color::rgb(0x10, 0x20, 0x30)));
+    }
+
+    #[test]
+    fn a_colorref_becomes_the_toolkit_color() {
+        // COLORREF is 0x00BBGGRR, the order the palette stores.
+        assert_eq!(color_of(0x0020_1020), Color::rgb(0x20, 0x10, 0x20));
+        assert_eq!(color_of(0x00C8_3010), Color::rgb(0x10, 0x30, 0xC8));
+    }
+
+    #[test]
+    fn blend_picks_the_endpoints_and_the_middle() {
+        let black = Color::rgb(0, 0, 0);
+        let white = Color::rgb(255, 255, 255);
+        assert_eq!(blend(black, white, 0.0), black);
+        assert_eq!(blend(black, white, 1.0), white);
+        assert_eq!(blend(black, white, 0.5), Color::rgb(128, 128, 128));
+        // A tab between the title bar and the pane is neither of them.
+        let titlebar = TITLEBAR;
+        let pane = Color::rgb(12, 12, 12);
+        let hover = blend(titlebar, pane, HOVER_MIX);
+        assert_ne!(hover, titlebar);
+        assert_ne!(hover, pane);
     }
 
     #[test]

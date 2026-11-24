@@ -79,7 +79,7 @@ Rules:
 | [048](048-wheel-reaches-a-tracking-program.md) | The wheel is forwarded to a mouse-tracking program; Shift keeps it for the viewport | Accepted |
 | [049](049-winui-settings-dialog.md) | The WinUI settings window is a modal dialog over the shared `config::Draft` | Accepted |
 | [050](050-winui-find-bar.md) | The WinUI find bar is an overlay over the shared `find::FindBar`; the renderer paints the matches | Accepted |
-| [051](051-tabs-in-the-title-bar.md) | The WinUI tab strip is the title bar: a `TitleBar` with the `TabView` in its left header | Accepted |
+| [051](051-tabs-in-the-title-bar.md) | The WinUI tab strip is the title bar: a `TitleBar` with the `TabView` in its left header | Amended by 064 (the strip is hand-built) |
 | [052](052-profile-menu-overlay.md) | The WinUI profile menu is a custom overlay: the binding has no flyout; rows come from `winui::menu` | Accepted |
 | [053](053-ctrl-c-declines-without-selection.md) | `ctrl+c` is bound to copy; copy declines when nothing is selected, so `^C` still reaches the program | Accepted |
 | [054](054-kitty-graphics-over-apc.md) | Kitty graphics ride APC; the parser delivers them and the adapter paints the subset; the Windows pty host must forward them | Accepted |
@@ -92,3 +92,4 @@ Rules:
 | [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Amended by 062 (parked) |
 | [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Accepted |
 | [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |
+| [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Accepted |

@@ -128,11 +128,28 @@ scroll.
 
 ## Title bar
 
-The `TabView` is the `TitleBar` control's `left_header`, and the pane is the
-second root row. The row carries a solid background and a `-8` DIP top margin:
-this snapshot leaves a strip of the system caption title above the control's
-content. Tabs and `+` stay interactive; the rest of the row drags the window.
-The window title remains the active tab's title for the taskbar.
+The strip is hand-built — a `StackPanel` of keyed `Border`s — and lives in the
+`TitleBar` control's `left_header`; the pane is the second root row (ADR 064).
+`TabView` is not used: its item exposes no fill, no icon and no pointer events,
+and its `+` cannot be grouped with the drop-down.
+
+- A tab is given **no height**, so the row's stretch makes it as tall as the
+  row. That is what puts the selected tab's square bottom edge against the pane;
+  a fixed height leaves a band of title-bar colour between them.
+- The selected tab's fill is `Shell::active_background`, refreshed in `tick`
+  from `Control::default_colors()` in the same call that paints the frame, so a
+  scheme or an OSC 11 reply moves the tab and the pane together. The pane's own
+  `Border` uses the same colour. A theme's `tab` and `tab_row` fills in the
+  settings file win over that; a fill the theme leaves out falls back to it.
+- Tab elements are keyed `tab-<id>`: the handlers capture an index, and a
+  positional reconcile would leave them pointing at a shifted one after a close.
+- Drag-reorder is **not implemented** (ADR 064). `Tabs::reorder` is still there
+  for when it is.
+
+The row carries a solid background and a `-8` DIP top margin: this snapshot
+leaves a strip of the system caption title above the control's content. Tabs and
+the button group stay interactive; the rest of the row drags the window. The
+window title remains the active tab's title for the taskbar.
 
 ## Scrollbar
 
