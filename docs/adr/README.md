@@ -93,3 +93,4 @@ Rules:
 | [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Accepted |
 | [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |
 | [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Accepted |
+| [065](065-wsl-distros-as-profiles.md) | WSL distributions are profiles the shell generates from `wsl.exe -l -q`, merged at load and never written to the settings file | Accepted |

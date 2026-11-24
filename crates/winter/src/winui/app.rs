@@ -43,6 +43,7 @@ use super::scrollbar as bar;
 use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
+use super::wsl;
 
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
@@ -99,6 +100,10 @@ struct Shell {
     bindings: Rc<[settings::Keybinding]>,
     /// The settings file in force, so a save can resolve its parts again.
     settings: settings::Settings,
+    /// The profiles the window offers: the file's, then one per WSL distro the
+    /// file does not already name. The distros are the machine's, so they are
+    /// merged here and never written back with a save (ADR 065).
+    profiles: Vec<settings::Profile>,
     /// The settings dialog and its draft.
     settings_window: SettingsWindow,
     /// Whether the profile drop-down is showing.
@@ -247,6 +252,7 @@ impl Component for Shell {
         let (template, bindings, font_size) = resolved_settings(&loaded.settings);
         let settings_window = SettingsWindow::new(&loaded);
         let settings = loaded.settings;
+        let profiles = offered_profiles(&settings);
 
         let session = spawn_shell(&template.command, size).expect("a shell");
         let mut control = Control::new(Box::new(session), grid);
@@ -336,6 +342,7 @@ impl Component for Shell {
             template,
             bindings,
             settings,
+            profiles,
             settings_window,
             menu_open: false,
             about_open: false,
@@ -517,7 +524,7 @@ impl Component for Shell {
             }
         }
         if menu_open {
-            pane_children.push(profile_menu(&self.settings, &dialog, menu_left(self)));
+            pane_children.push(profile_menu(&self.profiles, &dialog, menu_left(self)));
         }
         let pane_content = Grid::new().children(pane_children);
 
@@ -981,6 +988,7 @@ impl Shell {
         }
 
         self.settings = loaded.settings;
+        self.profiles = offered_profiles(&self.settings);
         self.settings_path = loaded.path;
         self.settings_window.set_report(warnings, migrated_from);
         self.settings_window.clear_error();
@@ -1106,10 +1114,10 @@ impl Shell {
     /// Opens a tab on the profile the drop-down named and activates it.
     fn open_profile_tab(&mut self, name: &str) {
         self.close_menu();
-        let Some(profile) = self.settings.profile_named(name) else {
+        let Some(profile) = self.profiles.iter().find(|profile| profile.name == name).cloned() else {
             return;
         };
-        let terminal = TerminalSettings::for_profile(&self.settings, Some(profile));
+        let terminal = TerminalSettings::for_profile(&self.settings, Some(&profile));
         self.add_tab(terminal);
     }
 
@@ -1988,6 +1996,25 @@ fn resolved_settings(document: &settings::Settings) -> (TerminalSettings, Rc<[se
     )
 }
 
+/// The profiles the window offers: the file's, then the WSL distributions.
+fn offered_profiles(settings: &settings::Settings) -> Vec<settings::Profile> {
+    merged(settings.profiles.clone(), wsl::profiles())
+}
+
+/// `file` with every distro no profile already names appended to it.
+///
+/// A distribution that shares a name with a profile of the user's is dropped,
+/// not renamed: the file is what the user wrote, and two menu rows with one name
+/// would resolve to whichever came first.
+fn merged(mut file: Vec<settings::Profile>, distros: Vec<settings::Profile>) -> Vec<settings::Profile> {
+    for distro in distros {
+        if !file.iter().any(|profile| profile.name == distro.name) {
+            file.push(distro);
+        }
+    }
+    file
+}
+
 /// The find bar: a query field, previous and next, and the match count.
 fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox>) -> View {
     let count = tab.find.matches.len();
@@ -2042,8 +2069,8 @@ fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox
 ///
 /// The pinned binding has no flyout, so this is an overlay anchored to the
 /// pane's top-left, under the title bar (ADR 052).
-fn profile_menu(settings: &settings::Settings, sender: &LocalSender<Message>, left: f64) -> View {
-    let rows: Vec<View> = menu::entries(settings)
+fn profile_menu(profiles: &[settings::Profile], sender: &LocalSender<Message>, left: f64) -> View {
+    let rows: Vec<View> = menu::entries(profiles)
         .into_iter()
         .map(|entry| menu_row(entry, sender))
         .collect();
@@ -2313,6 +2340,27 @@ mod tests {
     fn a_tab_key_is_unique_per_tab() {
         assert_eq!(tab_key(0), "tab-0");
         assert_ne!(tab_key(1), tab_key(11));
+    }
+
+    #[test]
+    fn a_distro_named_like_a_profile_does_not_list_twice() {
+        let file = vec![settings::Profile {
+            name: "Ubuntu".to_string(),
+            ..settings::Profile::default()
+        }];
+        let distros = vec![
+            settings::Profile {
+                name: "Ubuntu".to_string(),
+                ..settings::Profile::default()
+            },
+            settings::Profile {
+                name: "Debian".to_string(),
+                ..settings::Profile::default()
+            },
+        ];
+
+        let names: Vec<String> = merged(file, distros).into_iter().map(|profile| profile.name).collect();
+        assert_eq!(names, vec!["Ubuntu", "Debian"]);
     }
 
     #[test]

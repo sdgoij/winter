@@ -19,6 +19,7 @@ description: Build, run and live-check the WinUI 3 shell in crates/winter/src/wi
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
 | `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
 | `../find.rs` | The query, matches and screen spans, shared with the egui pane |
+| `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
 | `mod.rs` | Module boundary and `run()` |
 
 `app.rs` owns the only `Renderer` and swap chain. Both shells share `input.rs`,
@@ -150,6 +151,21 @@ The row carries a solid background and a `-8` DIP top margin: this snapshot
 leaves a strip of the system caption title above the control's content. Tabs and
 the button group stay interactive; the rest of the row drags the window. The
 window title remains the active tab's title for the taskbar.
+
+## Profiles and the drop-down
+
+`Shell::profiles` is what the window offers: the settings file's profiles, then
+one per installed WSL distribution (ADR 065). Both the menu and
+`open_profile_tab` read that list, **not** `settings.profiles` — a distro
+profile exists only there, and it must never reach `settings`, because the
+settings window and the writer work from the parsed file.
+
+- `wsl.rs` runs `wsl.exe -l -q` with `CREATE_NO_WINDOW` (without it a console
+  window flashes) once in `new` and once per `reload_settings`.
+- Its output is UTF-16LE or UTF-8 depending on the release; `decode` decides by
+  the bytes, so do not "fix" it to one encoding.
+- A distribution named like a profile in the file is dropped from the merge; the
+  file wins.
 
 ## Scrollbar
 

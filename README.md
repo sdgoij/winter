@@ -31,9 +31,9 @@ after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053, 064), including our own tab strip in the title bar, whose selected tab is the terminal's colour and meets the pane, a profile menu beside the new-tab button, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
+| [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053, 064, 065), including our own tab strip in the title bar, whose selected tab is the terminal's colour and meets the pane, a profile menu beside the new-tab button with one row per installed WSL distribution, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
 
-1710 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+1715 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`docs/plan.md`](docs/plan.md).
 
@@ -99,6 +99,10 @@ and the defaults load instead (ADR 023).
 The plus button starts any profile by name; Ctrl+Shift+P opens the command
 palette, which lists a tab per profile followed by the window's actions with the
 chord each is bound to (type to filter, arrows move, Enter runs, Escape closes).
+On Windows the drop-down also offers one profile per installed WSL
+distribution, generated from `wsl.exe -l -q` at load: the list belongs to the
+machine, so it is never written to the settings file, and a distribution the
+file already names is left to the file (ADR 065).
 Ctrl+Shift+F opens the find bar: every match in the history and on screen is
 highlighted, Enter and Shift+Enter step through them, and Escape closes it. On
 Windows the bar is an overlay in the pane (ADR 050). A

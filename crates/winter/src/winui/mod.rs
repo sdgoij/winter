@@ -23,5 +23,6 @@ mod scrollbar;
 mod app;
 mod menu;
 mod settings;
+mod wsl;
 
 pub use app::run;
