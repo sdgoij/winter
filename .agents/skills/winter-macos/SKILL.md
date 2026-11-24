@@ -49,7 +49,7 @@ on every `define_class!` class that conforms to an AppKit protocol.
 
 ```sh
 just app        # dist/Winter.app, for Finder or the Dock
-just package    # the release archive, with Winter.app inside
+just package    # the release disk image, with Winter.app inside
 ```
 
 `just app` copies the release binary into the bundle, runs it with
@@ -59,12 +59,23 @@ signs the result. The icon is the same drawing as the window icon and the
 Windows resource (ADR 058); there is no checked-in image.
 
 `just package` on macOS builds **both** architectures — the host and the other
-`-apple-darwin` target — and writes one archive per target.
-`WINTER_TARGET=<target>` packages just one. The other slice must be installed
-(`rustup target add aarch64-apple-darwin`); CI's macOS gate cross-checks it with
-`cargo check` and runs `just app`, so the bundle path is exercised on every
-push. The Intel runner links the arm64 slice from the SDK, so no arm64 macOS
-runner is involved.
+`-apple-darwin` target — and writes one compressed disk image per target with
+`Winter.app`, `LICENSE.md`, `README.md` and an `Applications` symlink at the
+mount point. `WINTER_TARGET=<target>` packages just one. The other slice must
+be installed (`rustup target add aarch64-apple-darwin`); CI's macOS gate
+cross-checks it with `cargo check` and runs `just app`, so the bundle path is
+exercised on every push. The Intel runner links the arm64 slice from the SDK, so
+no arm64 macOS runner is involved.
+
+```sh
+hdiutil verify dist/winter-<version>-<target>.dmg
+hdiutil attach -nobrowse -readonly -mountpoint /tmp/winter-dmg dist/winter-<version>-<target>.dmg
+WINTER_SCREENSHOT=winter-shot.png /tmp/winter-dmg/Winter.app/Contents/MacOS/winter
+hdiutil detach /tmp/winter-dmg
+```
+
+`hdiutil` and a read-only mount work without a WindowServer, so the DMG's
+contents can be checked headlessly.
 
 - **Launch Services starts a bundle at `/`.** `start_in_home` moves the process
   to `$HOME` when the executable is inside `.app/Contents/MacOS/` and the cwd is

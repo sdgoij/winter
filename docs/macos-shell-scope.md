@@ -53,11 +53,11 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   profiles, keybindings, schemes, themes and the defaults — and validates it
   with the same reader startup uses before saving.
 - A `Winter.app` bundle with the drawn icon (ADR 074): `just app` builds
-  `dist/Winter.app` and `just package` puts it in the release archive, so it
-  starts from Finder or the Dock instead of under Terminal.app. `just package`
-  builds both `x86_64` and `aarch64` on the Intel runner, so no arm64 macOS
-  runner is needed. Launch Services starts it at `/`, and the shell moves to
-  `$HOME` before the first pty.
+  `dist/Winter.app`, and `just package` puts it in a compressed disk image with
+  an `Applications` shortcut, so it starts from Finder or the Dock instead of
+  under Terminal.app. `just package` builds both `x86_64` and `aarch64` on the
+  Intel runner, so no arm64 macOS runner is needed. Launch Services starts it at
+  `/`, and the shell moves to `$HOME` before the first pty.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
   `WINTER_OPEN_SETTINGS=1` opens the settings window at startup and
@@ -72,8 +72,8 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   gap the WinUI shell has with UIA.
 - Panes and the command palette.
 - A signed, notarized release: the bundle is ad-hoc signed, so a downloaded copy
-  still needs a Developer ID and notarization (and a disk image) to pass
-  Gatekeeper. ADR 074 records the boundary.
+  still needs a Developer ID and notarization to pass Gatekeeper. ADR 074 records
+  the boundary.
 
 ## Architecture
 
@@ -184,6 +184,8 @@ cargo build -p winter
 WINTER_SCREENSHOT=winter-shot.png ./target/debug/winter
 just app
 WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter
+just package
+hdiutil verify dist/winter-<version>-<target>.dmg
 ```
 
 A first frame shows the active tab in the pane's colour, the strip, the prompt

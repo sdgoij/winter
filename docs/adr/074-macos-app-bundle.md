@@ -1,4 +1,4 @@
-# ADR 074 — macOS ships as a `Winter.app` bundle
+# ADR 074 — macOS ships as a `Winter.app` bundle in a disk image
 
 - Status: Accepted
 - Date: 2026-11-24
@@ -21,7 +21,8 @@ sizes.
 ## Decision
 
 1. **`just app` assembles `dist/Winter.app`.** `just package` puts the same
-   bundle inside the release archive; Linux and Windows keep their archives.
+   bundle in a compressed disk image with an `Applications` shortcut, which is
+   the macOS install gesture; Linux keeps its tar and Windows its zip.
    `scripts/package.sh` owns the layout for every host.
 2. **The bundle is the platform's own document type.** `Contents/Info.plist`
    names the executable, the icon, the display name, `APPL` as the package type,
@@ -34,8 +35,8 @@ sizes.
    script compiles them with `iconutil`. The Dock image the shell sets at runtime
    and the bundle's icon are therefore the same drawing.
 4. **The bundle is ad-hoc signed.** `codesign --sign -` gives a locally built
-   app one identity. A Developer ID, notarization and a disk image are the
-   release task below, not this one.
+   app one identity. A Developer ID and notarization are the release task below,
+   not this one.
 5. **A bundle starts its shell in the home directory.** When the executable is
    inside `.app/Contents/MacOS/` and the process was started at `/`, the shell
    changes to `$HOME` before the first pty. The raw binary keeps the directory it
@@ -55,17 +56,18 @@ sizes.
 - **One artwork, three homes.** The Windows resource, the Dock image and the
   bundle's `.icns` come from the same function, so they cannot drift and the
   tree still has no binary asset (ADR 058).
-- **Packaging stays one script.** The Windows console host, the Linux archive
-  and the macOS bundle are the same `package.sh`; CI's four hosts run the same
+- **Packaging stays one script.** The Windows console host, the Linux tar and
+  the macOS disk image are the same `package.sh`; CI's four hosts run the same
   recipe.
 
 ## Consequences
 
 Positive:
 
-- The macOS archive is an application a user can drag to `/Applications`,
-  launch from Finder or the Dock, and recognise by its icon.
-- An Apple silicon archive exists without an arm64 macOS runner, and the gate
+- The macOS download is a mounted disk image with the app beside an
+  `Applications` shortcut: a user drags it across, launches from Finder or the
+  Dock, and recognises it by its icon.
+- An Apple silicon disk image exists without an arm64 macOS runner, and the gate
   builds it on every push rather than discovering a break at a tag.
 - The first tab opens in the user's home rather than `/`.
 - `WINTER_APPICON` makes the icon reproducible and testable from the command
@@ -75,7 +77,8 @@ Negative:
 
 - **An ad-hoc signature is not distributable.** A downloaded, quarantined copy
   fails Gatekeeper until the release is signed with a Developer ID and
-  notarized; that needs an Apple identity the project does not have in CI yet.
+  notarized; that needs an Apple identity the project does not have in CI yet,
+  and it applies to the disk image as much as to the bundle.
 - **The icon's edges are hard rather than antialiased.** The drawing is the
   binary-coverage geometry ADR 058 fixed; at 1024 it is accurate per pixel, and
   a supersampled version would be a change to every consumer of that drawing.
@@ -95,6 +98,6 @@ Negative:
 |---|---|
 | Ship the bare executable and a wrapper script | Finder still starts the script under Terminal.app, and the Dock shows a generic icon |
 | Commit an `.icns` | A binary asset in the tree with no readable source, and a second copy of the drawing (ADR 058) |
-| A disk image now | DMG layout and Gatekeeper acceptance are release work; a directory with the bundle is the part a user needs |
+| A tar of the bundle | A downloaded tar is not the macOS install gesture, and it loses the drag-to-Applications shortcut; `hdiutil` is one call in the same script |
 | A Developer ID signature in CI | No identity or notarization credentials are configured, and an unsigned-but-ad-hoc app is honest about what it is |
 | Wait for an arm64 macOS runner | The pool is frequently unavailable, and a release must not depend on one being free; the Intel host can link both slices |

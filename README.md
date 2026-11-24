@@ -190,24 +190,24 @@ development binaries; `just dist` assembles a runnable release folder with that
 host beside `winter.exe`, so an installed copy needs neither Windows Terminal
 nor a cached host (ADR 055).
 
-`just package` builds the release binary and wraps that folder in one archive
+`just package` builds the release binary and wraps that folder in one package
 named after the version and the target:
-`dist/winter-<version>-<target>.zip` on Windows, `.tar.gz` elsewhere. Pushing a
-tag named `v<version>` — or `v<version>-<prerelease>`, which publishes a
-prerelease — runs the gate on all four hosts, then each host packages the binary
-it tested and the archives are published with a `SHA256SUMS`
-(`.github/workflows/ci.yml`). A prerelease tag labels the archives with the
-release's own version (`winter-0.1.0-preview.1-…`), so a preview and the final
-release never share a file name.
+`dist/winter-<version>-<target>.zip` on Windows, `.tar.gz` on Linux and `.dmg`
+on macOS. Pushing a tag named `v<version>` — or `v<version>-<prerelease>`,
+which publishes a prerelease — runs the gate on all four hosts, then each host
+packages the binary it tested and the packages are published with a
+`SHA256SUMS` (`.github/workflows/ci.yml`). A prerelease tag labels the packages
+with the release's own version (`winter-0.1.0-preview.1-…`), so a preview and
+the final release never share a file name.
 
-On macOS the archive holds `Winter.app`, and `just app` builds the bundle
-directly into `dist/Winter.app`: the binary, an `AppIcon.icns` drawn from the
-same mark as the window icon, and a plist Launch Services registers, so a
-double-click starts the shell instead of a Terminal window (ADR 074). A macOS
-package builds both `x86_64` and `aarch64` on the Intel runner — the SDK links
-either slice — so a release never waits for an arm64 macOS runner. The bundle
-is ad-hoc signed; a Developer ID, notarization and a disk image are release
-work.
+On macOS the disk image holds `Winter.app` and an `Applications` shortcut, so a
+user drags the app across to install it. `just app` builds the bundle directly
+into `dist/Winter.app`: the binary, an `AppIcon.icns` drawn from the same mark
+as the window icon, and a plist Launch Services registers, so a double-click
+starts the shell instead of a Terminal window (ADR 074). A macOS package builds
+both `x86_64` and `aarch64` on the Intel runner — the SDK links either slice —
+so a release never waits for an arm64 macOS runner. The bundle is ad-hoc signed;
+a Developer ID and notarization are release work.
 
 On Linux the archive is an app rather than a bare binary: `winter`, a desktop
 entry, the generated icon and `install.sh`, which installs them for the current

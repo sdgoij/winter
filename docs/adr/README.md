@@ -103,7 +103,7 @@ Rules:
 | [072](072-macos-appkit-shell.md) | The macOS shell is AppKit for the host and `renderer`'s pixels for the strip and grid; `unsafe` is confined to `macos` | Accepted |
 | [072](072-win32-record-character.md) | A Win32 input record carries the character a key types, so Enter, Tab, Backspace and Escape reach a character-reading client | Accepted |
 | [073](073-macos-metal-content.md) | The macOS content path is Metal, presented through a `CAMetalLayer` drawable and read back only for screenshots and the fallback; the software backend is the fallback | Accepted |
-| [074](074-macos-app-bundle.md) | macOS ships as a `Winter.app` bundle: the plist and drawn `.icns` come from the binary, the bundle is ad-hoc signed, and a Finder launch starts in `$HOME` | Accepted |
+| [074](074-macos-app-bundle.md) | macOS ships as a `Winter.app` bundle in a disk image: the plist and drawn `.icns` come from the binary, the bundle is ad-hoc signed, both architectures are cross-built, and a Finder launch starts in `$HOME` | Accepted |
 | [075](075-linux-gtk-shell-ships.md) | The Linux shell is GTK 4; the feature is on by default, the gate installs the headers and builds it, and the named gaps are primary selection, an accessible text tree, tab icons and sound | Accepted |
 | [076](076-linux-opengl-content.md) | The Linux content path is OpenGL over GTK's GL area, with the software backend as the fallback; `linux::gl` carries the loader's unsafe exemption | Accepted |
 | [077](077-linux-package-is-an-app.md) | The Linux archive is an app tree — desktop entry named after the GTK application id, a generated icon and a rootless installer — with AppImage, Flatpak and deb left in the plan | Accepted |

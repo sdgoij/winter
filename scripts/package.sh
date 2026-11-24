@@ -2,9 +2,9 @@
 # Builds this platform's release and packages it into `dist/`.
 #
 #   just package
-#       dist/winter-<version>-<target>.tar.gz            Linux
-#       dist/winter-<version>-<target>.tar.gz            macOS, one per arch
-#       dist/winter-<version>-<target>.zip                Windows
+#       dist/winter-<version>-<target>.tar.gz           Linux
+#       dist/winter-<version>-<target>.dmg              macOS, one per arch
+#       dist/winter-<version>-<target>.zip              Windows
 #
 #   just app
 #       dist/Winter.app                                   macOS only
@@ -12,13 +12,14 @@
 # `<version>` is `WINTER_VERSION` with a leading `v` stripped when the
 # environment supplies one -- a tag, in CI, so a preview and the final release
 # cannot ship assets with the same name -- and the version in Cargo.toml
-# otherwise. The target comes from rustc, so an archive's name always matches
+# otherwise. The target comes from rustc, so a package's name always matches
 # the binary inside it and two platforms can never write the same file.
 # Windows also gets the console host and the licences it travels with
-# (ADR 055); elsewhere the host is the system's own. macOS gets an app bundle,
-# because a bare executable opened from Finder starts under a Terminal window
-# (ADR 074), and both architectures, because the Intel runner cross-builds the
-# Apple silicon archive instead of waiting for an arm64 macOS runner.
+# (ADR 055); elsewhere the host is the system's own. macOS gets a disk image
+# holding the app bundle and an Applications shortcut, because a bare executable
+# opened from Finder starts under a Terminal window (ADR 074), and both
+# architectures, because the Intel runner cross-builds the Apple silicon image
+# instead of waiting for an arm64 macOS runner.
 #
 # `WINTER_TARGET=<target>` packages one target instead of the default set.
 #
@@ -221,8 +222,12 @@ for target in $targets; do
         build_app "$stage/Winter.app" "$binary" "$icon_binary"
         cp LICENSE.md "$stage/LICENSE.md"
         cp README.md "$stage/README.md"
-        tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
-        echo "dist/$name.tar.gz"
+        # The image's root is the stage's contents: the app, the documents and
+        # the Applications shortcut a user drags it onto.
+        ln -s /Applications "$stage/Applications"
+        hdiutil create -quiet -volname "Winter" -srcfolder "$stage" -ov -format UDZO "$root/dist/$name.dmg"
+        rm -rf "$stage"
+        echo "dist/$name.dmg"
         ;;
     Linux)
         # The archive is an app, not a bare binary: launching it from the menu
