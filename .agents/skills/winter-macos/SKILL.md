@@ -21,13 +21,14 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 | `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state; no AppKit except the `Frame` |
 | `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
+| `metal.rs` | The Metal content backend, its glyph atlas and the offscreen readback |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
 | `settings.rs` | Native settings window over the whole TOML document |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 
-The module declares the workspace's `unsafe` exemption for the AppKit boundary
-(ADR 072). `keys.rs` and `shell.rs` contain none. Do not add `unsafe` outside
-`macos`.
+The module declares the workspace's `unsafe` exemption for the AppKit and Metal
+boundary (ADRs 072, 073). `keys.rs` and `shell.rs` contain none. Do not add
+`unsafe` outside `macos`.
 
 ## Build
 
@@ -73,6 +74,13 @@ second.
   alpha. `to_ne_bytes` produces `B,G,R,A`, which the rep reads as a nearly
   transparent image; the pane looks white over the window. Use
   `(pixel | 0xFF00_0000).to_be_bytes()` and `SourceOver`.
+- **Metal's vertex buffers are unretained by the encoder.** Keep them alive
+  until `waitUntilCompleted`. Use `packed_float` in MSL so the vertex structs
+  match the Rust `#[repr(C)]` layout, and read a BGRA8 target back as
+  little-endian `u32` (`0xAARRGGBB`) for `Frame::copy`.
+- **`WINTER_SOFTWARE=1` selects the software backend.** Use it to A/B a frame;
+  the two renderers match for opaque glyphs, and antialiased text differs by at
+  most one 8-bit step from the GPU's rounding.
 - **Build the face at the window's backing scale and size the opening window
   to the initial grid.** Spawning the shell at 100×28 and then resizing it for
   the real view makes the pty change size after zsh has laid out its first

@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use renderer::renderer::Renderer;
 use renderer::{
-    AtlasEngine, CellSizeInDIP, Composition, CompositionRange, FontDueRasterizer, FontFace, FontInfo, RenderSettings,
-    Settings, SharedBackend, SoftwareBackend,
+    AtlasEngine, CellSizeInDIP, Composition, CompositionRange, FontDueRasterizer, FontFace, FontInfo, IBackend,
+    RenderSettings, RenderingPayload, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
@@ -35,6 +35,7 @@ use crate::view::View as ViewState;
 
 use super::chrome::{self, STRIP_HEIGHT, Strip, StripColors, StripHit};
 use super::frame::Frame;
+use super::metal;
 
 /// The grid the window opens with, before its bounds are known.
 pub(crate) const INITIAL_GRID: (i32, i32) = (100, 28);
@@ -84,7 +85,7 @@ pub(crate) struct Shell {
     migrated_from: Option<PathBuf>,
     settings_error: Option<String>,
     renderer: Renderer<TerminalData>,
-    shared: SharedBackend,
+    shared: Content,
     face: FontFace,
     font_size: f32,
     /// The cell in physical pixels.
@@ -1450,7 +1451,7 @@ fn font_setup(face: &FontFace, base_size: f32, scale: f32, grid: (i32, i32)) -> 
     })
 }
 
-fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, SharedBackend) {
+fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, Content) {
     let Fonts {
         font,
         settings,
@@ -1458,7 +1459,29 @@ fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, Shar
         rasterizer,
     } = fonts;
 
-    let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(rasterizer)));
+    // Metal is the content path; a host without a device, a shader that does
+    // not compile, or `WINTER_SOFTWARE=1` keeps the CPU backend the shell
+    // shipped with.
+    let accelerated = if std::env::var_os("WINTER_SOFTWARE").is_none() {
+        metal::Metal::new()
+    } else {
+        None
+    };
+    let shared = match accelerated {
+        Some(metal) => {
+            metal.set_rasterizer(Box::new(rasterizer));
+            Content::Metal(metal)
+        }
+        None => {
+            if std::env::var_os("WINTER_SOFTWARE").is_none() {
+                eprintln!("winter: Metal is unavailable; using the software renderer");
+            }
+            Content::Software(SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(
+                rasterizer,
+            ))))
+        }
+    };
+
     let mut engine = AtlasEngine::with_settings(settings, Box::new(shared.clone()));
     engine.set_shaping(Box::new(shaper));
 
@@ -1468,6 +1491,59 @@ fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, Shar
     );
     renderer.add_engine(Box::new(engine));
     (renderer, shared)
+}
+
+/// The content backend a frame is rasterised with.
+///
+/// Both variants hand the shell the same `0xAARRGGBB` pixels; only the work
+/// that produced them differs.
+#[derive(Clone)]
+enum Content {
+    Software(SharedBackend),
+    Metal(metal::Metal),
+}
+
+impl Content {
+    fn width(&self) -> u32 {
+        match self {
+            Self::Software(backend) => backend.width(),
+            Self::Metal(backend) => backend.width(),
+        }
+    }
+
+    fn height(&self) -> u32 {
+        match self {
+            Self::Software(backend) => backend.height(),
+            Self::Metal(backend) => backend.height(),
+        }
+    }
+
+    fn with_pixels<T>(&self, read: impl FnOnce(&[u32]) -> T) -> T {
+        match self {
+            Self::Software(backend) => backend.with_pixels(read),
+            Self::Metal(backend) => backend.with_pixels(read),
+        }
+    }
+}
+
+impl IBackend for Content {
+    fn release_resources(&mut self) {
+        match self {
+            Self::Software(backend) => backend.release_resources(),
+            Self::Metal(backend) => backend.release_resources(),
+        }
+    }
+
+    fn render(&mut self, payload: &mut RenderingPayload) {
+        match self {
+            Self::Software(backend) => backend.render(payload),
+            Self::Metal(backend) => backend.render(payload),
+        }
+    }
+
+    fn requires_continuous_redraw(&mut self) -> bool {
+        false
+    }
 }
 
 /// The pty size a grid asks for.

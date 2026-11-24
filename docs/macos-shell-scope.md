@@ -1,13 +1,13 @@
 # A native macOS shell — scope and state
 
 Status: shipping first cut (ADR 072). The shell runs a real pty, paints the
-terminal through `renderer`, and owns a native window, menu bar, find field,
-settings window, input-method client and an accessibility element. A GPU
-content pass, panes and the command palette are named follow-ups below, not
-hidden gaps.
-Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
-040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split), ADRs 064,
-068, 069 (the strip), `crates/winter/src/macos/`.
+terminal through `renderer` — on Metal by default (ADR 073) — and owns a native
+window, menu bar, find field, settings window, input-method client and an
+accessibility element. Panes and the command palette are named follow-ups
+below, not hidden gaps.
+Related: ADRs 072 and 073 (the decisions), ADR 062 (macOS is the next native
+shell), ADR 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split),
+ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
 
 ## What ships
 
@@ -19,7 +19,10 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   and a `▾` profile dropdown, painted from `crate::tabs`'s geometry and the
   pane's palette. A theme's four fills are honoured.
 - The grid, cursor, selection, find highlights and prompt ticks from the shared
-  renderer, copied into an `NSBitmapImageRep`.
+  renderer: cell quads, glyphs from a coverage atlas, images, grid lines and the
+  cursor are drawn by Metal and read back into an `NSBitmapImageRep` (ADR 073).
+  The software backend is the fallback when no device is available or
+  `WINTER_SOFTWARE=1` is set.
 - A real menu bar: About, Settings… (⌘,), Quit (⌘Q), New Tab (⌘T), Close Tab
   (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), and the standard Edit menu
   whose `copy:`/`paste:` go to the terminal or the focused text field.
@@ -59,7 +62,9 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   as one value; character- and line-level navigation through the
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
-- Panes, the command palette and a GPU content path.
+- A `CAMetalLayer` presentation: the content is GPU-rendered but its frame is
+  read back for the existing blit (ADR 073).
+- Panes and the command palette.
 
 ## Architecture
 
@@ -70,6 +75,7 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 | `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the IME composition. No AppKit except the `Frame` it owns |
 | `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
+| `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures and the offscreen readback (ADR 073) |
 | `icon.rs` | A tab's program icon from Launch Services, and the drawn application mark (ADR 058), both cached |
 | `settings.rs` | The native settings window and its action methods |
 | `keys.rs` | Virtual-key codes and layout-character selection |
@@ -110,6 +116,16 @@ below `winter` sees AppKit.
   `Retained<T>` return is only accepted under `#[unsafe(method_id(...))]`. The
   symptom is "`Retained<NSAttributedString>: Encode` is not satisfied" with a
   note listing both `objc2` versions.
+- **Metal's vertex buffers are unretained.** A buffer bound with
+  `setVertexBuffer:offset:atIndex:` must outlive the command buffer; keep it
+  alive until `waitUntilCompleted` or the draw silently reads freed memory.
+- **MSL `packed_float` matches Rust `[f32; N]`.** A plain `float2`/`float4`
+  struct aligns its fields differently from `#[repr(C)]`, which shifts every
+  colour and UV. The shader uses packed types so the CPU's layout is the
+  device's.
+- **A BGRA8 readback is already `0xAARRGGBB`.** The bytes are `B, G, R, A`;
+  read little-endian and hand the `u32` to `Frame::copy`, which applies the
+  `AlphaFirst` byte order (ADR 072's bitmap trap).
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
   content under them; `chrome::LEFT_INSET` is the gap.
 

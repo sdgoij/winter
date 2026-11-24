@@ -9,10 +9,10 @@
 //! toolkit-free modules — `session`, `term_control`, `view`, `tabs`, `input`,
 //! `find`, `scrollbar`, `terminal_render` — are shared unchanged.
 //!
-//! `unsafe` is confined to the AppKit boundary: this module declares the
-//! allowance for its own calls and for `view`, `chrome`, `frame`, `icon` and
-//! `settings`, which call objc2's window, menu and bitmap entry points (ADR
-//! 072). `keys` and `shell` contain none.
+//! `unsafe` is confined to the AppKit and Metal boundary: this module declares
+//! the allowance for its own calls and for `view`, `chrome`, `frame`, `icon`,
+//! `metal` and `settings`, which call objc2's window, menu, bitmap and device
+//! entry points (ADRs 072, 073). `keys` and `shell` contain none.
 
 #![allow(unsafe_code)]
 
@@ -45,6 +45,7 @@ pub(crate) mod chrome;
 pub(crate) mod frame;
 pub(crate) mod icon;
 pub(crate) mod keys;
+pub(crate) mod metal;
 pub(crate) mod settings;
 pub(crate) mod shell;
 pub(crate) mod view;

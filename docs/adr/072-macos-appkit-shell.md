@@ -36,20 +36,21 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
    the find field, the settings window, the About alert and the clipboard are
    native controls. `NSWindow` is full-size content with a transparent title bar;
    the strip leaves room for the traffic lights on the left.
-3. **The terminal content is painted by `renderer`.** The software backend's
-   `0xAARRGGBB` buffer is copied into an `NSBitmapImageRep` and drawn into the
-   pane's rect. This is ADR 041's blit with AppKit instead of Direct2D; the GPU
-   path stays a later milestone (ADR 007).
+3. **The terminal content is painted by `renderer`.** `MetalBackend` draws the
+   payload's backgrounds, images, glyphs, grid lines and cursor on the device and
+   reads the frame back for the `NSBitmapImageRep` blit (ADR 073); the software
+   backend remains the fallback when no device is available. This is ADR 063's
+   split with Metal instead of Direct2D.
 4. **The tab strip and the scrollbar are ours**, painted with AppKit paths and
    attributed strings from the shared `tabs` and `scrollbar` geometry. They are
    not `NSTabView`/`NSScrollView` because those controls cannot carry the
    terminal's own fills, the close box beside the title and the prompt ticks
    (the reasons ADR 064 gives for Windows).
-5. **`unsafe` is confined to the AppKit boundary.** `macos/mod.rs`, `view`,
-   `chrome`, `frame`, `icon` and `settings` carry one module-level
-   `#[allow(unsafe_code)]`; every call has a `SAFETY:` note where the invariant
-   is not obvious. `keys` and `shell` contain no `unsafe`, and no other crate
-   gains an exemption.
+5. **`unsafe` is confined to the AppKit and Metal boundary.** `macos/mod.rs`,
+   `view`, `chrome`, `frame`, `icon`, `metal` and `settings` carry one
+   module-level `#[allow(unsafe_code)]`; every call has a `SAFETY:` note where the
+   invariant is not obvious. `keys` and `shell` contain no `unsafe`, and no other
+   crate gains an exemption.
 6. **The shell shares every rule it can.** `input`, `view`, `tabs`,
    `term_control`, `session`, `find`, `scrollbar`, `grid` and `terminal_render`
    are used unchanged. Windows-only logic stays in `winui`; macOS-only logic
@@ -118,12 +119,15 @@ Positive:
   settings window and the standard editing shortcuts.
 - The chrome follows the terminal's palette, as on Windows; a theme's fills
   reach the strip.
+- The content path runs on the GPU through Metal, with a software fallback and
+  pixel-identical output (ADR 073).
 - The emulation crates, the pty and the console host are unchanged.
 
 Negative:
 
-- **The first content path copies a frame.** A full-frame `0xAARRGGBB` copy per
-  paint is correct but not fast; the GPU path is the performance milestone.
+- **A frame is read back from the GPU.** The offscreen texture is copied to the
+  CPU so the existing blit can draw it; a `CAMetalLayer` drawable is the next
+  presentation step (ADR 073).
 - **VoiceOver reads the pane, not a text tree.** The view is an accessibility
   element whose role is a text area and whose value is the visible screen's
   text, with the active title as its label and an empty child list. A per-cell

@@ -78,6 +78,25 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "objc2-core-graphics",
 ] }
 objc2-foundation = "0.3.2"
+# Only the Metal modules the content backend names; the default set also pulls
+# in the whole MTL4, ray-tracing and machine-learning surface.
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLPixelFormat",
+    "MTLRenderCommandEncoder",
+    "MTLRenderPass",
+    "MTLRenderPipeline",
+    "MTLResource",
+    "MTLTexture",
+    "MTLTypes",
+] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

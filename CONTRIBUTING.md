@@ -171,7 +171,8 @@ tests pass.
   `winui::surface`, `winui::wheel`, `winui::icon` and `winui::profile_icon`
   modules do for Direct2D, the wheel hook, the window icon and a program's icon
   (ADRs 041, 047, 058, 066), and `macos` declares one allowance for the AppKit
-  boundary — its window, menu and bitmap calls (ADR 072). The two
+  and Metal boundary — its window, menu, bitmap and device calls (ADRs 072,
+  073). The two
   self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
