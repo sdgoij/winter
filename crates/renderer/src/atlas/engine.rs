@@ -156,6 +156,9 @@ impl RenderEngine for AtlasEngine {
         for (index, row) in self.payload.rows.iter_mut().enumerate() {
             row.clear(index as i32, cell_height);
         }
+        // The cursor is too: a frame that does not paint one (scrolled back, or
+        // hidden by the program) must not keep drawing the last frame's rect.
+        self.payload.cursor_rect = (0, 0, 0, 0);
         Ok(StartPaint::Continue)
     }
 
@@ -672,6 +675,23 @@ mod tests {
         };
         engine.paint_cursor(&options).expect("cursor");
         assert_eq!(engine.payload().cursor_rect, (2, 0, 3, 1));
+    }
+
+    #[test]
+    fn a_frame_without_a_cursor_clears_the_last_cursor_rect() {
+        let (mut engine, _log) = engine();
+        let options = CursorOptions {
+            coord_cursor: Point::new(2, 0),
+            is_visible: true,
+            in_viewport: true,
+            ..CursorOptions::default()
+        };
+        engine.paint_cursor(&options).expect("cursor");
+
+        // Scrolling back hides the cursor; the engine paints no cursor, and the
+        // previous frame's rect must not survive into this one.
+        engine.start_paint().expect("paint");
+        assert_eq!(engine.payload().cursor_rect, (0, 0, 0, 0));
     }
 
     #[test]
