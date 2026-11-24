@@ -180,7 +180,7 @@ On this host there is no interactive WindowServer session, so the live check is
 the shell's own capture:
 
 ```sh
-cargo build -p winter
+cargo build -p app
 WINTER_SCREENSHOT=winter-shot.png ./target/debug/winter
 just app
 WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter

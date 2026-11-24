@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/macos/metal.rs`, `crates/winter/Cargo.toml`,
+- Related: `crates/cocoa/src/metal.rs`, `crates/cocoa/Cargo.toml`,
   `crates/renderer/src/atlas/`; ADRs 007, 041, 063, 072
 
 ## Context

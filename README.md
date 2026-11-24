@@ -245,7 +245,7 @@ headers; the other hosts need nothing extra:
 
 ```sh
 sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev
-cargo run -p winter
+cargo run -p app
 ```
 
 There is no headers-free build: the GTK shell is the Linux shell (ADR 079), so

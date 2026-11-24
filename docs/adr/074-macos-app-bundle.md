@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `scripts/package.sh`, `Justfile`, `crates/winter/src/macos/icon.rs`,
-  `crates/winter/src/macos/mod.rs`; ADRs 058, 072, 073
+- Related: `scripts/package.sh`, `Justfile`, `crates/cocoa/src/icon.rs`,
+  `crates/cocoa/src/lib.rs`; ADRs 058, 072, 073
 
 ## Context
 

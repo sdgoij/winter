@@ -5,10 +5,11 @@ description: Build, run and live-check the AppKit shell in crates/cocoa/src. Use
 
 # The macOS shell
 
-`crates/cocoa/src/` is the macOS shell; `main.rs` chooses it under
+`crates/cocoa/src/` is the macOS shell; `crates/app`'s `main` chooses it under
 `cfg(target_os = "macos")`. AppKit owns the window, menu bar, text fields,
 dialogs and pasteboard; the tab strip, scrollbar and grid are our pixels, the
-split ADR 072 takes from ADR 061. `winui`, `linux` and this module share
+split ADR 072 takes from ADR 061. `winter-winui`, `winter-gtk4` and this crate
+share the `winter` crate's
 `input`, `view`, `tabs`, `term_control`, `session`, `find`, `scrollbar`, `grid`
 and `terminal_render`; a rule that is not AppKit-specific belongs there.
 
@@ -28,22 +29,26 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 
 The module declares the workspace's `unsafe` exemption for the AppKit and Metal
 boundary (ADRs 072, 073). `keys.rs` and `shell.rs` contain none. Do not add
-`unsafe` outside `macos`.
+`unsafe` outside `cocoa`.
 
 ## Build
 
 ```sh
-cargo build -p winter --offline
+cargo build -p app --offline
 ```
 
 The dependencies are `objc2` 0.6.5, `objc2-app-kit`, `objc2-foundation`,
-`objc2-metal` and `objc2-quartz-core` 0.3.2, all target-specific. `eframe` and
-`winit` also carry
-`objc2` on this host: **`winit` 0.30 uses `objc2` 0.5 / `objc2-app-kit` 0.2**.
-A class defined against the wrong copy fails with “the trait `NSObjectProtocol`
-is not satisfied” and a diagnostic listing both versions. Import protocols from
-the direct `objc2-foundation` 0.3 dependency, and implement `NSObjectProtocol`
-on every `define_class!` class that conforms to an AppKit protocol.
+`objc2-metal` and `objc2-quartz-core` 0.3.2, all target-specific on the
+`winter-cocoa` crate. A feature the shell names must be in that crate's
+`objc2-app-kit` list: `NSApplicationActivationPolicy` and
+`setActivationPolicy:` live behind **`NSRunningApplication`**, not
+`NSApplication`, and the compile fails with "no `NSApplicationActivationPolicy`
+in the root" when it is missing.
+
+Only one `objc2` 0.6 tree is in the workspace now (the egui shell and its
+`winit` 0.30 are gone, ADR 079); import protocols from the direct
+`objc2-foundation` dependency and implement `NSObjectProtocol` on every
+`define_class!` class that conforms to an AppKit protocol.
 
 ## Package
 
@@ -84,7 +89,7 @@ contents can be checked headlessly.
   16, 32, 64, 128, 256, 512, 1024 (with the `@2x` pairs); `WINTER_APPICON`
   writes them all.
 - **A bundle is not distributable until it is signed.** `codesign --sign -` is
-ad-hoc only; Gatekeeper wants a Developer ID and notarization (ADR 074).
+  ad-hoc only; Gatekeeper wants a Developer ID and notarization (ADR 074).
 
 To install locally, `cp -R dist/Winter.app /Applications/`.
 

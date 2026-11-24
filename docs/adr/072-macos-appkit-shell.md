@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/macos/`, `crates/winter/Cargo.toml`,
+- Related: `crates/cocoa/`, `crates/cocoa/Cargo.toml`,
   `docs/macos-shell-scope.md`; ADRs 040, 041, 051, 061, 062, 064, 068, 069
 
 ## Context
@@ -30,8 +30,9 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
 
 1. **The macOS shell is AppKit**, through `objc2` 0.6, `objc2-app-kit` 0.3 and
    `objc2-foundation` 0.3, all in `[target.'cfg(target_os = "macos")'.dependencies]`
-   and named only inside `crates/winter/src/macos/`. `main.rs` selects it under
-   `cfg(target_os = "macos")`; Linux keeps egui (ADR 062).
+   and named only inside `crates/cocoa/src/`. `crates/app`'s `main` selects it
+   under `cfg(target_os = "macos")`; Linux ran egui at the time (ADR 062,
+   superseded by 079).
 2. **The host layer is AppKit's.** The window, the menu bar, the profile dropdown,
    the find field, the settings window, the About alert and the clipboard are
    native controls. `NSWindow` is full-size content with a transparent title bar;
