@@ -134,15 +134,32 @@ The strip is hand-built — a `StackPanel` of keyed `Border`s — and lives in t
 `TabView` is not used: its item exposes no fill, no icon and no pointer events,
 and its `+` cannot be grouped with the drop-down.
 
-- A tab is given **no height**, so the row's stretch makes it as tall as the
-  row. That is what puts the selected tab's square bottom edge against the pane;
-  a fixed height leaves a band of title-bar colour between them.
+- The strip is `TAB_ROW_HEIGHT` (32 DIP) and bottom-aligned in the header slot,
+  and a tab fills it (ADR 067). Do not go back to letting the slot stretch the
+  tab: it does not, and the tab then leaves a band of title-bar colour above the
+  pane.
+- A tab paints `TAB_OVERHANG` (12 DIP) past its slot — a negative bottom margin
+  with matching bottom padding, so only the fill grows. Upstream pads its strip
+  by -1 for the same 1px gap; anything past the row is behind the pane, so the
+  overhang cannot overshoot visibly.
+- A tab's close button is a `Border`, not a `Button`: the stock button style's
+  padding leaves no room for a glyph, and a `Border` needs an **explicit
+  transparent background** or it is not hit-testable and the press falls through
+  to the tab.
+- The strip selects a tab **by id**. A press on the close button bubbles to the
+  tab after the close has run; an index would name whatever slid into its place.
+- Glyphs come from `SYMBOL_FONT` — `Segoe Fluent Icons,Segoe MDL2 Assets`,
+  upstream's `SymbolThemeFontFamily` — at upstream's codepoints: `U+E710` plus,
+  `U+E70D` chevron, `U+E711` close. They are Private Use characters, so a wrong
+  or missing family draws nothing at all, not a box.
 - The selected tab's fill is `Shell::active_background`, refreshed in `tick`
   from `Control::default_colors()` in the same call that paints the frame, so a
   scheme or an OSC 11 reply moves the tab and the pane together. The pane's own
   `Border` uses the same colour. A theme's `tab` and `tab_row` fills in the
   settings file win over that; a fill the theme leaves out falls back to it.
-- Tab elements are keyed `tab-<id>`: the handlers capture an index, and a
+- `+` and `▾` are one split control (ADR 067): a 24-DIP `Border` pill with a
+  hairline between two flat buttons, since the binding has no `SplitButton`.
+- Tab elements are keyed `tab-<id>`: the handlers capture an id, and a
   positional reconcile would leave them pointing at a shifted one after a close.
 - A tab shows the icon of the program it started (ADR 066). `Tab::program` is
   kept for that; the strip sets a 16-DIP `Image` from `profile_icon::png_for`,

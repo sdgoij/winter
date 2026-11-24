@@ -1,6 +1,6 @@
 # ADR 064 — The WinUI shell builds its own tab strip
 
-- Status: Accepted
+- Status: Amended by 067 (the tab's height, the overhang and the button group)
 - Date: 2026-11-24
 - Related: `crates/winter/src/winui/app.rs`, ADR 051, ADR 052
 

@@ -50,12 +50,35 @@ use super::wsl;
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
 const INITIAL_ROWS: i32 = 30;
-/// The drop-down's width in DIPs, so its overlay can hang under it.
+/// The drop-down's button width in DIPs, so its overlay can hang under it.
 const MENU_WIDTH: f64 = 240.0;
-/// The drop-down's button width in DIPs.
-const DROP_DOWN_WIDTH: f64 = 32.0;
+/// The drop-down's half of the button group, in DIPs: the menu hangs under it.
+const DROP_DOWN_WIDTH: f64 = 31.0;
+/// The new-tab half of the button group, in DIPs.
+const NEW_TAB_WIDTH: f64 = 31.0;
 /// A profile's icon edge in DIPs.
 const TAB_ICON: f64 = 16.0;
+/// A tab's close button edge in DIPs.
+const CLOSE_BUTTON: f64 = 20.0;
+/// The tab row's height in DIPs, upstream's `TabRowHeightInPixels`.
+const TAB_ROW_HEIGHT: f64 = 32.0;
+/// How far a tab paints past its slot.
+///
+/// The title bar's header slot does not always end at the pane's top, and the
+/// band between them is the one thing a tab strip that merges with its pane
+/// cannot show. Upstream pads the strip by -1 for the same reason
+/// (`TabRowControl.xaml`); this binding leaves more, and anything past the row
+/// is painted over by the pane.
+const TAB_OVERHANG: f64 = 12.0;
+/// The face Windows Terminal draws its own glyphs from: upstream's
+/// `SymbolThemeFontFamily`, which WinUI defines as this pair, so a Windows 10
+/// machine that has no Fluent Icons file still finds every codepoint in MDL2.
+const SYMBOL_FONT: &str = "Segoe Fluent Icons,Segoe MDL2 Assets";
+/// A plus, the drop-down's chevron and a tab's close cross, as upstream names
+/// them (`U+E710`, `U+E70D`, `U+E711`).
+const PLUS_GLYPH: &str = "\u{e710}";
+const CHEVRON_GLYPH: &str = "\u{e70d}";
+const CLOSE_GLYPH: &str = "\u{e711}";
 /// The tab row's fill: behind an inactive tab, and between the last tab and
 /// the caption buttons.
 const TITLEBAR: Color = Color::rgb(32, 32, 36);
@@ -204,8 +227,8 @@ pub(super) enum Message {
         scale_x: f32,
         scale_y: f32,
     },
-    /// The tab strip selected `index`, or nothing.
-    Select(Option<usize>),
+    /// The tab strip selected `id`, or nothing.
+    Select(Option<u64>),
     /// The pointer entered (Some) or left (None) a tab.
     HoverTab(Option<u64>),
     NewTab,
@@ -467,22 +490,40 @@ impl Component for Shell {
             let enter = keys.clone();
             let leave = keys.clone();
 
+            // A `Border`, not a `Button`: the stock button style's padding
+            // leaves a 22-DIP box a few DIPs of content, and a glyph centred in
+            // what is left is not a cross. The press also has to reach the
+            // strip, which is why the strip selects by id (below).
+            let close_button = Border::new()
+                .width(CLOSE_BUTTON)
+                .height(CLOSE_BUTTON)
+                // A transparent brush, not the default null one: a `Border`
+                // with no background is not hit-testable, and the press would
+                // fall through to the tab.
+                .background(Color::transparent())
+                .corner_radius(CornerRadius::uniform(4.0))
+                .vertical_alignment(VerticalAlignment::Center)
+                .content(
+                    TextBlock::new()
+                        .text(CLOSE_GLYPH)
+                        .font_family(SYMBOL_FONT)
+                        .font_size(10.0)
+                        .foreground(label)
+                        .horizontal_alignment(HorizontalAlignment::Center)
+                        .vertical_alignment(VerticalAlignment::Center),
+                )
+                .on_pointer_pressed(move |info: PointerEventInfo| {
+                    if !info.is_left_button_pressed {
+                        return;
+                    }
+                    let _ = close.send(Message::CloseTab(id));
+                });
+
             let title = TextBlock::new()
                 .text(tab.title.clone())
                 .font_size(12.0)
                 .foreground(label)
                 .vertical_alignment(VerticalAlignment::Center);
-            let close_button = Button::new()
-                .content(TextBlock::new().text("\u{2715}").font_size(10.0).foreground(label))
-                .style(ButtonStyle::Subtle)
-                .width(22.0)
-                .height(22.0)
-                .min_height(0.0)
-                .vertical_alignment(VerticalAlignment::Center)
-                .on_click(move || {
-                    let _ = close.send(Message::CloseTab(id));
-                });
-
             // The shell's own icon, as Windows Terminal shows it (ADR 066).
             let mut body: Vec<View> = Vec::new();
             if let Some(icon) = profile_icon::png_for(&tab.program) {
@@ -507,11 +548,18 @@ impl Component for Shell {
             let item = Border::new()
                 .background(background)
                 .corner_radius(CornerRadius::new(6.0, 6.0, 0.0, 0.0))
-                .padding(Thickness::new(12.0, 0.0, 4.0, 0.0))
-                .min_height(32.0)
+                // The bottom padding and the matching negative margin cancel out
+                // for the content and not for the fill: the label stays centred
+                // in the row, and the tab's colour runs past the slot to the
+                // pane. Anything past the row is behind the pane.
+                .padding(Thickness::new(12.0, 0.0, 4.0, TAB_OVERHANG))
+                .margin(Thickness::new(0.0, 0.0, 0.0, -TAB_OVERHANG))
                 .content(body)
-                .on_pointer_pressed(move |_| {
-                    let _ = select.send(Message::Select(Some(index)));
+                .on_pointer_pressed(move |info: PointerEventInfo| {
+                    if !info.is_left_button_pressed {
+                        return;
+                    }
+                    let _ = select.send(Message::Select(Some(id)));
                 })
                 .on_pointer_entered(move |_| {
                     let _ = enter.send(Message::HoverTab(Some(id)));
@@ -528,6 +576,8 @@ impl Component for Shell {
         let strip = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(1.0)
+            .height(TAB_ROW_HEIGHT)
+            .vertical_alignment(VerticalAlignment::Bottom)
             .keyed_children(strip_children);
 
         let find_open = self.tabs.active().is_some_and(|tab| tab.find.open);
@@ -655,34 +705,55 @@ impl Component for Shell {
                 .client_size(self.initial_client.0, self.initial_client.1),
         );
 
-        // The drop-down sits immediately after the strip and the `+`, as in
-        // Windows Terminal: one group, so the halves read as a single control
-        // rather than two unrelated buttons (ADR 064). Both are centred in the
-        // row, whose height the tabs now define.
+        // The `+` and the drop-down are one split control, as in Windows
+        // Terminal's `SplitButton` (`TabRowControl.xaml`): a single 24-DIP pill
+        // with a hairline between the halves, each half its own press. The
+        // binding has no `SplitButton`, so the pill is a `Border` around two
+        // flat buttons.
+        let glyph = |text: &str| {
+            TextBlock::new()
+                .text(text)
+                .font_family(SYMBOL_FONT)
+                .font_size(10.0)
+                .horizontal_alignment(HorizontalAlignment::Center)
+                .vertical_alignment(VerticalAlignment::Center)
+        };
         let new_tab = Button::new()
-            .content("+")
+            .content(glyph(PLUS_GLYPH))
             .style(ButtonStyle::Subtle)
-            .width(DROP_DOWN_WIDTH)
+            .width(NEW_TAB_WIDTH)
             .height(24.0)
             .min_height(0.0)
-            .vertical_alignment(VerticalAlignment::Center)
             .on_click(move || {
                 let _ = add.send(Message::NewTab);
             });
         let drop_down = Button::new()
-            .content("\u{25be}")
+            .content(glyph(CHEVRON_GLYPH))
             .style(ButtonStyle::Subtle)
             .width(DROP_DOWN_WIDTH)
             .height(24.0)
             .min_height(0.0)
-            .vertical_alignment(VerticalAlignment::Center)
             .on_click(move || {
                 let _ = menu_sender.send(Message::MenuToggle);
             });
-        let buttons = StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(0.0)
-            .children((new_tab, drop_down));
+        let divider = Border::new()
+            .width(1.0)
+            .height(14.0)
+            .background(blend(row, Color::rgb(255, 255, 255), 0.18))
+            .vertical_alignment(VerticalAlignment::Center);
+        let buttons = Border::new()
+            .background(blend(row, Color::rgb(255, 255, 255), 0.06))
+            .corner_radius(CornerRadius::uniform(4.0))
+            .height(24.0)
+            // Upstream's `Margin="0,4"` in the 32-DIP row.
+            .margin(Thickness::new(0.0, 0.0, 0.0, 4.0))
+            .vertical_alignment(VerticalAlignment::Bottom)
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(0.0)
+                    .children((new_tab, divider, drop_down)),
+            );
         let header_panel: View = StackPanel::new()
             .orientation(Orientation::Horizontal)
             .children((strip, buttons))
@@ -757,7 +828,7 @@ impl Component for Shell {
                 scale_x,
                 scale_y,
             } => self.resize(width, height, scale_x, scale_y),
-            Message::Select(index) => self.select(index),
+            Message::Select(id) => self.select(id),
             Message::HoverTab(id) => self.hovered_tab = id,
             Message::NewTab => self.open_tab(),
             Message::CloseTab(id) => self.close_tab(id, context),
@@ -1173,9 +1244,13 @@ impl Shell {
         let _ = self.focus.request_focus();
     }
 
-    /// Activates the tab the strip selected.
-    fn select(&mut self, index: Option<usize>) {
-        let Some(index) = index else {
+    /// Activates the tab `id`.
+    ///
+    /// The id, not the index: a press on a tab's close button bubbles to the
+    /// tab after the close has run, and an index would then name whatever slid
+    /// into that place.
+    fn select(&mut self, id: Option<u64>) {
+        let Some(index) = id.and_then(|id| tab_index(&self.tabs, id)) else {
             return;
         };
         if self.tabs.select(index) {
@@ -1185,8 +1260,7 @@ impl Shell {
 
     /// Closes the tab `id`, or the window when it was the last one.
     fn close_tab(&mut self, id: u64, context: &ComponentContext<Self>) {
-        let Some(index) = (0..self.tabs.len()).find(|&index| self.tabs.get(index).is_some_and(|tab| tab.id == id))
-        else {
+        let Some(index) = tab_index(&self.tabs, id) else {
             return;
         };
 
@@ -1773,6 +1847,11 @@ fn pty_size(grid: (i32, i32)) -> PtySize {
 /// The key a tab's element is declared with.
 fn tab_key(id: u64) -> String {
     format!("tab-{id}")
+}
+
+/// The index of the open tab `id` names, if it is still open.
+fn tab_index(tabs: &Tabs<Tab>, id: u64) -> Option<usize> {
+    (0..tabs.len()).find(|&index| tabs.get(index).is_some_and(|tab| tab.id == id))
 }
 
 /// Black or white, whichever reads on `fill`.
@@ -2390,6 +2469,35 @@ mod tests {
     fn the_pty_size_follows_the_grid() {
         assert_eq!(pty_size((120, 30)), PtySize::new(120, 30));
         assert_eq!(pty_size((0, 0)), PtySize::new(1, 1));
+    }
+
+    #[test]
+    fn an_id_names_its_tab_and_nothing_once_it_closes() {
+        fn tab(id: u64) -> Tab {
+            use crate::term_connection::tests::Buffer;
+
+            Tab {
+                id,
+                control: Control::new(Box::new(Buffer::with_output(b"")), (20, 5)),
+                view: ViewState::new(),
+                title: format!("tab {id}"),
+                program: "cmd.exe".to_string(),
+                find: FindBar::default(),
+            }
+        }
+
+        let mut tabs = Tabs::new(tab(0));
+        tabs.add(tab(1));
+        tabs.add(tab(2));
+        assert_eq!(tab_index(&tabs, 2), Some(2));
+
+        // A press on a close button bubbles its tab's select after the close
+        // has run. The id has to name nothing then, not whatever slid into its
+        // place, which is what an index would do.
+        assert!(tabs.close(2));
+        assert_eq!(tab_index(&tabs, 2), None);
+        assert_eq!(tab_index(&tabs, 0), Some(0));
+        assert_eq!(tab_index(&tabs, 1), Some(1));
     }
 
     #[test]

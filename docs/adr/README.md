@@ -92,6 +92,7 @@ Rules:
 | [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Amended by 062 (parked) |
 | [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Accepted |
 | [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |
-| [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Accepted |
+| [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Amended by 067 (the tab's height, the overhang and the button group) |
 | [065](065-wsl-distros-as-profiles.md) | WSL distributions are profiles the shell generates from `wsl.exe -l -q`, merged at load and never written to the settings file | Accepted |
 | [066](066-program-icons-from-the-executable.md) | A profile's icon is the icon its executable carries, extracted with GDI and carried as PNG bytes | Accepted |
+| [067](067-tab-row-height-and-split-button.md) | The tab row is a fixed 32 DIP, a tab paints past it to reach the pane, and `+`/`▾` are one split control | Accepted |
