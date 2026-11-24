@@ -22,8 +22,9 @@
 //!   [`window`] the platform commands. Those four, with [`icon`], are the ones
 //!   that name a toolkit. `linux` is the GTK 4 shell (ADR 074): GTK hosts the
 //!   window, the menus, the find bar and the settings window, while the tab
-//!   strip, the scrollbar and the grid stay [`renderer`]'s pixels. The egui
-//!   modules above remain the fallback when the `gtk` feature is off.
+//!   strip, the scrollbar and the grid stay [`renderer`]'s pixels, drawn through
+//!   GTK's OpenGL context with the software blit as the fallback (ADR 075). The
+//!   egui modules above remain the fallback when the `gtk` feature is off.
 //!   `macos` is the AppKit shell (ADR 072): AppKit hosts the window, its menu
 //!   bar, its find field and its settings window, and the tab strip, the
 //!   scrollbar and the grid are `renderer`'s pixels there too.

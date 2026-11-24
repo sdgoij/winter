@@ -25,8 +25,9 @@ it is a native GTK 4 shell — the window, profile menu, find bar and settings
 editor are the platform's, while the tab strip, scrollbar and grid stay
 `renderer`'s pixels (ADR 074), with pointer selection and drag scrolling,
 copy/paste, scrollback with prompt marks, tab reordering, input-method
-composition, a bell flash, notifications and an accessibility value; egui
-remains the `--no-default-features` fallback (ADR 018).
+composition, a bell flash, notifications and an accessibility value; the grid
+is drawn on the GPU through GTK's OpenGL context (ADR 075), and egui remains
+the `--no-default-features` fallback (ADR 018).
 
 | Crate | What it is | State |
 |---|---|---|
@@ -227,6 +228,10 @@ cargo run -p winter
 
 `--no-default-features` builds the egui shell instead, which needs no GTK
 headers and is the fallback if the toolkit is unavailable.
+
+The pane draws through GTK's OpenGL context when the host has one (ADR 075);
+`WINTER_SOFTWARE=1` forces the CPU blit. A capture includes the GL area, so
+`WINTER_SCREENSHOT` is the same either way.
 
 `WINTER_SCREENSHOT=<path>` makes the GTK shell write its toplevel to a PNG and
 quit, which is how it is photographed on a machine with no display server;

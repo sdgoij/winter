@@ -25,13 +25,19 @@ notify-rust.workspace = true
 # The GTK 4 shell's host toolkit (ADRs 061, 074). GTK 4.10 is the floor the
 # accessible-property API needs.
 gtk4 = { version = "0.11", optional = true, features = ["v4_8", "v4_10"] }
+# The OpenGL content path (ADR 075): safe bindings over the context GTK makes
+# current, the dynamic loader for libGL/libEGL, and the cast for vertex bytes.
+# All three are already in the lock through eframe and wgpu.
+glow = { version = "0.17", optional = true }
+libloading = { version = "0.8", optional = true }
+bytemuck = { version = "1.25", optional = true }
 
 [features]
 # The GTK 4 shell is the Linux shell (ADRs 061, 074). It is on by default, so
 # the gate and the release build it; `--no-default-features` keeps the egui
 # shell as the fallback and needs no GTK headers.
 default = ["gtk"]
-gtk = ["dep:gtk4"]
+gtk = ["dep:gtk4", "dep:glow", "dep:libloading", "dep:bytemuck"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The macOS shell is AppKit, through the same objc2 crates eframe already uses on

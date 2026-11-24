@@ -1,11 +1,13 @@
 //! The GTK 4 shell: a native window over the renderer's pixels (ADR 061).
 //!
 //! A `GtkHeaderBar` holds the tab strip, which this module paints itself; below
-//! it a `GtkDrawingArea` paints the active terminal from `renderer`. The
-//! terminal is the shared `Control` over a pty, and every tab keeps draining
-//! while it is in the background. Keys go through the shared `input` rules, the
-//! wheel scrolls history unless a tracking program owns it, and a chord the
-//! settings file binds is the window's before the shell sees it.
+//! it a base `GtkDrawingArea` paints the pane's fill, scrollbar and margins, and
+//! a `GtkGLArea` inset by those margins draws the grid through GTK's OpenGL
+//! context (ADR 075), with the software blit as the fallback. The terminal is
+//! the shared `Control` over a pty, and every tab keeps draining while it is in
+//! the background. Keys go through the shared `input` rules, the wheel scrolls
+//! history unless a tracking program owns it, and a chord the settings file
+//! binds is the window's before the shell sees it.
 //!
 //! `WINTER_SCREENSHOT=<path>` writes the toplevel exactly as GTK draws it —
 //! client-side decorations and the tab strip included — and quits, which is how
@@ -13,8 +15,8 @@
 //!
 //! The profile menu is a native `GtkPopoverMenu`. A saved settings file is
 //! reloaded within a second, a bell flashes the pane and a program's OSC 777
-//! becomes a desktop notification. The egui shell is still what ships until
-//! this one reaches parity (ADR 074).
+//! becomes a desktop notification. The GPU path is the default when the host
+//! has GL; `WINTER_SOFTWARE=1` or a failed context selects the software blit.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -34,7 +36,7 @@ use gtk::{
 use renderer::renderer::Renderer;
 use renderer::{
     AtlasEngine, CellSizeInDIP, Composition, FontDueRasterizer, FontId, FontInfo, GlyphBitmap, GlyphRasterizer,
-    RenderSettings, Settings, SharedBackend, SoftwareBackend,
+    IBackend, RenderSettings, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::PtySize;
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
@@ -51,6 +53,10 @@ use crate::term_events::TerminalEvent;
 use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View;
+
+mod gl;
+
+use gl::Gl;
 
 /// The window opens at this many cells, like the WinUI shell.
 const CELLS: (i32, i32) = (100, 28);
@@ -109,7 +115,22 @@ fn activate(app: &Application) {
     let bindings = document.keybindings.clone().into();
 
     let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(fonts.rasterizer)));
-    let mut engine = AtlasEngine::with_settings(fonts.settings.clone(), Box::new(shared.clone()));
+    // The GPU path is the default when this host has GL (ADR 075); the
+    // software backend remains built because it is the fallback and the
+    // screenshot blit.
+    let gpu = if std::env::var_os("WINTER_SOFTWARE").is_some() {
+        None
+    } else {
+        Gl::new()
+    };
+    if let Some(gl) = &gpu {
+        gl.set_rasterizer(Box::new(fonts.gpu));
+    }
+    let backend: Box<dyn IBackend> = match &gpu {
+        Some(gl) => Box::new(gl.clone()),
+        None => Box::new(shared.clone()),
+    };
+    let mut engine = AtlasEngine::with_settings(fonts.settings.clone(), backend);
     engine.set_shaping(Box::new(fonts.shaper));
 
     let mut renderer = Renderer::new(
@@ -171,10 +192,28 @@ fn activate(app: &Application) {
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
     column.append(&search_bar);
-    column.append(&area);
+
+    // The pane is the base widget; the GL area sits above it, inset by the left
+    // pane margin and the scrollbar's gutter, so its framebuffer is exactly the
+    // grid. The base widget paints the margins, the scrollbar and the bell's
+    // background; the GL area paints the cells (ADR 075).
+    let gl_area = gtk::GLArea::new();
+    gl_area.set_hexpand(true);
+    gl_area.set_vexpand(true);
+    gl_area.set_margin_start(PANE_LEFT as i32);
+    gl_area.set_margin_end(scrollbar::WIDTH as i32);
+    gl_area.set_visible(gpu.is_some());
+
+    let overlay = gtk::Overlay::new();
+    overlay.set_hexpand(true);
+    overlay.set_vexpand(true);
+    overlay.set_child(Some(&area));
+    overlay.add_overlay(&gl_area);
+    column.append(&overlay);
     window.set_child(Some(&column));
 
     let menu = gtk::PopoverMenu::from_model(Some(&profile_menu(&document)));
+    let shell_gpu = gpu.is_some();
 
     let shell = Rc::new(RefCell::new(Shell {
         window: window.clone(),
@@ -182,6 +221,9 @@ fn activate(app: &Application) {
         strip: strip.clone(),
         renderer,
         shared,
+        gl: gpu,
+        gl_area: gl_area.clone(),
+        gpu: shell_gpu,
         tabs: Tabs::new(first),
         template,
         document,
@@ -257,6 +299,29 @@ fn activate(app: &Application) {
             if let Ok(mut shell) = shell.try_borrow_mut() {
                 shell.paint_strip(context, width, height);
             }
+        });
+    }
+
+    {
+        // GTK makes the context current for the render signal, so this is
+        // where the engine's frame is drawn; a failed context falls back to
+        // the software blit.
+        let realized = Rc::clone(&shell);
+        gl_area.connect_realize(move |area| {
+            area.make_current();
+            if area.error().is_some()
+                && let Ok(mut shell) = realized.try_borrow_mut()
+            {
+                shell.disable_gpu();
+            }
+        });
+        let rendered = Rc::clone(&shell);
+        gl_area.connect_render(move |area, _context| {
+            let Ok(mut shell) = rendered.try_borrow_mut() else {
+                return glib::Propagation::Proceed;
+            };
+            shell.paint_gpu(area.width(), area.height());
+            glib::Propagation::Stop
         });
     }
 
@@ -382,7 +447,7 @@ fn activate(app: &Application) {
                 .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
             shell.borrow_mut().pointer_moved((x, y), modifiers);
         });
-        area.add_controller(motion);
+        overlay.add_controller(motion);
     }
 
     {
@@ -394,7 +459,7 @@ fn activate(app: &Application) {
                 .is_some_and(|event| event.modifier_state().contains(gdk::ModifierType::SHIFT_MASK));
             shell.borrow_mut().wheel(y, controller.unit(), shift)
         });
-        area.add_controller(scroll);
+        overlay.add_controller(scroll);
     }
 
     {
@@ -452,8 +517,8 @@ fn activate(app: &Application) {
             shell.borrow_mut().pointer_moved((x + dx, y + dy), modifiers);
         });
 
-        area.add_controller(click);
-        area.add_controller(drag);
+        overlay.add_controller(click);
+        overlay.add_controller(drag);
     }
 
     {
@@ -673,6 +738,12 @@ struct Shell {
     strip: DrawingArea,
     renderer: Renderer<TerminalData>,
     shared: SharedBackend,
+    /// The GPU content path, when this host has one.
+    gl: Option<Gl>,
+    /// The GL area the grid is drawn in.
+    gl_area: gtk::GLArea,
+    /// Whether the renderer's engine draws through the GPU path.
+    gpu: bool,
     tabs: Tabs<Tab>,
     /// The profile a new tab starts from.
     template: TerminalSettings,
@@ -808,7 +879,7 @@ impl Shell {
         if titled {
             self.after_select();
         } else {
-            self.area.queue_draw();
+            self.queue_paint();
         }
     }
 
@@ -877,7 +948,14 @@ impl Shell {
         self.chrome = fonts.chrome;
 
         let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(fonts.rasterizer)));
-        let mut engine = AtlasEngine::with_settings(fonts.settings.clone(), Box::new(shared.clone()));
+        let backend: Box<dyn IBackend> = match (&self.gl, self.gpu) {
+            (Some(gl), true) => {
+                gl.set_rasterizer(Box::new(fonts.gpu));
+                Box::new(gl.clone())
+            }
+            _ => Box::new(shared.clone()),
+        };
+        let mut engine = AtlasEngine::with_settings(fonts.settings.clone(), backend);
         engine.set_shaping(Box::new(fonts.shaper));
         let mut renderer = Renderer::new(
             TerminalData::new(fonts.info, RenderSettings::new(), self.grid.0, self.grid.1),
@@ -1604,6 +1682,10 @@ impl Shell {
     /// Fits the grid to the area and paints one frame.
     fn paint(&mut self, context: &cairo::Context, width: i32, height: i32) {
         self.fit(width, height);
+        if self.gpu {
+            self.paint_background(context, width, height);
+            return;
+        }
 
         let blink_on = self.blink_on;
         let painted = {
@@ -1671,6 +1753,77 @@ impl Shell {
 
         self.paint_scrollbar(context, width, height);
         self.announce_text();
+    }
+
+    /// Paints what the GL area does not cover: the pane's fill, the left margin
+    /// and the scrollbar's gutter.
+    fn paint_background(&self, context: &cairo::Context, width: i32, height: i32) {
+        let (background, _) = self
+            .tabs
+            .active()
+            .map_or((0x000C_0C0C, 0x00CC_CCCC), |tab| tab.control.default_colors());
+        let (red, green, blue) = channels(background);
+        context.set_source_rgb(red, green, blue);
+        context.paint().ok();
+        self.paint_scrollbar(context, width, height);
+    }
+
+    /// Draws one frame through the GL backend.
+    ///
+    /// GTK makes the pane's context current before the GL area's render signal,
+    /// which is where the engine's backend draws; nothing is read back.
+    fn paint_gpu(&mut self, width: i32, height: i32) {
+        if !self.gpu {
+            return;
+        }
+        // The GL area is inset by the margins, so its size is the grid.
+        self.fit_grid(width, height);
+
+        let blink_on = self.blink_on;
+        let bell = {
+            let Shell {
+                renderer,
+                tabs,
+                composition,
+                ..
+            } = self;
+            let Some(tab) = tabs.active_mut() else {
+                return;
+            };
+            renderer
+                .data_mut()
+                .refresh(&mut tab.control, &tab.view, blink_on, Some(&tab.find));
+
+            let (background, foreground) = tab.control.default_colors();
+            let _ = renderer.set_default_colors(background, foreground);
+            if let Ok(table) = tab.control.color_table().lock() {
+                renderer.settings_mut().set_color_table(table.clone());
+            }
+            renderer.data_mut().set_composition(composition.clone());
+            renderer.invalidate_all();
+            tab.control.bell_alpha(Instant::now())
+        };
+
+        if let Some(gl) = &self.gl {
+            gl.set_bell(bell);
+        }
+        if self.renderer.paint_frame().is_err() || self.gl.as_ref().is_some_and(Gl::failed) {
+            self.disable_gpu();
+            return;
+        }
+        self.announce_text();
+    }
+
+    /// Falls back to the software path after a GL context or a frame failed.
+    fn disable_gpu(&mut self) {
+        if !self.gpu {
+            return;
+        }
+        eprintln!("winter: the GPU content path is off; using the software path");
+        self.gpu = false;
+        self.gl_area.set_visible(false);
+        self.rebuild_fonts();
+        self.queue_paint();
     }
 
     /// Publishes the visible screen to the accessibility tree.
@@ -1866,11 +2019,25 @@ impl Shell {
         top + f64::from(ascent)
     }
 
-    /// Fits the terminal and the renderer to whole cells.
+    /// Fits the terminal and the renderer to whole cells inside the pane's
+    /// inset and the scrollbar.
     fn fit(&mut self, width: i32, height: i32) {
         let usable = (width - PANE_LEFT as i32 - scrollbar::WIDTH as i32).max(0);
         let columns = (usable / i32::from(self.cell.0)).max(1);
         let rows = (height / i32::from(self.cell.1)).max(1);
+        self.apply_grid(columns, rows);
+    }
+
+    /// Fits the terminal to whole cells when the GL area is already exactly the
+    /// grid, so no inset is subtracted.
+    fn fit_grid(&mut self, width: i32, height: i32) {
+        let columns = (width / i32::from(self.cell.0)).max(1);
+        let rows = (height / i32::from(self.cell.1)).max(1);
+        self.apply_grid(columns, rows);
+    }
+
+    /// Tells every tab and the renderer how large the grid is.
+    fn apply_grid(&mut self, columns: i32, rows: i32) {
         if (columns, rows) == self.grid {
             return;
         }
@@ -1891,6 +2058,15 @@ impl Shell {
             .resize(target, InclusiveRect::new(0, 0, columns - 1, rows - 1));
     }
 
+    /// Asks the pane to paint: the GL area when the GPU path is active, and the
+    /// base widget that holds the margins and the scrollbar either way.
+    fn queue_paint(&self) {
+        if self.gpu {
+            self.gl_area.queue_render();
+        }
+        self.area.queue_draw();
+    }
+
     /// Shows the active tab's title and asks both widgets to repaint.
     fn after_select(&mut self) {
         let title = self.tabs.active().map(|tab| tab.title.clone()).unwrap_or_default();
@@ -1899,7 +2075,7 @@ impl Shell {
             self.window_title = title;
         }
         self.strip.queue_draw();
-        self.area.queue_draw();
+        self.queue_paint();
     }
 
     /// Gives the keyboard back to the active pane, then repaints the chrome.
@@ -2544,6 +2720,8 @@ struct Fonts {
     settings: Settings,
     shaper: FontDueRasterizer,
     rasterizer: FontDueRasterizer,
+    /// The GPU path's own rasteriser, so the software fallback keeps its.
+    gpu: FontDueRasterizer,
     chrome: FontDueRasterizer,
     cell: (u16, u16),
 }
@@ -2561,6 +2739,7 @@ fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
 
     let shaper = FontDueRasterizer::from_file(face.path(), size).ok()?;
     let rasterizer = FontDueRasterizer::from_file(face.path(), size).ok()?;
+    let gpu = FontDueRasterizer::from_file(face.path(), size).ok()?;
     // The strip's titles use the same face, so a tab reads like its own text.
     let chrome = FontDueRasterizer::from_file(face.path(), size * 0.85).ok()?;
 
@@ -2622,6 +2801,7 @@ fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
         settings,
         shaper,
         rasterizer,
+        gpu,
         chrome,
         cell: (cell_w, cell_h),
     })

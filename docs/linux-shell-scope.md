@@ -39,14 +39,15 @@ build from either host.
 
 ## What must not change
 
-- `renderer` stays the only painter. Both native shells blit the software
-  backend's pixels; a GTK/Qt canvas draws our buffer, not its own.
+- `renderer` stays the only painter. The pane is the payload `renderer`
+  produces — the software backend's pixels or the GL backend's draws from the
+  same payload; a GTK/Qt canvas never paints its own glyphs or rules.
 - `input`, `view`, `tabs`, `term_control`, `session`, `shell_integration` stay
   shared. A rule that is not Linux-specific belongs there, never in the shell.
 - The emulation crates stay platform-independent. `cfg(target_os = "linux")`
   appears in `main.rs` and the shell module and nowhere else.
-- No new `unsafe`. gtk-rs is safe to use, so the Linux shell should not need an
-  exemption in the workspace's deny list (unlike `winui::surface`).
+- `unsafe` is confined to `linux::gl`, the OpenGL loader and its calls (ADR
+  075); gtk-rs stays safe to use, and the rest of the shell needs no exemption.
 
 ## What this machine can already do
 
@@ -106,22 +107,25 @@ One module, `crates/winter/src/linux/mod.rs`, chosen in `main.rs` the way
 |---|---|
 | entry | `run()`, the `gtk::Application`, the window and the `GtkWindowHandle` title bar |
 | strip | the tab strip's layout, hit testing, painting and drag-reorder over `crate::tabs` |
-| pane | the `DrawingArea`: `TerminalData::refresh` → `Renderer::paint_frame` → Cairo, the scrollbar with prompt marks, and the bell overlay |
+| pane | the base `DrawingArea`: the pane fill, the scrollbar with prompt marks and the input controllers over the GL area |
+| gl | the OpenGL content path (ADR 075): one `GtkGLArea` above the pane, the two pipelines, the glyph atlas, image textures, and the software fallback |
 | input | `EventControllerKey`, the `IMContext`, `GestureClick`, `GestureDrag`, the scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
 | settings | a `GtkTextView` over the whole TOML document, beside the profile `GtkPopoverMenu` |
 | clipboard | `gdk::Clipboard` for `CLIPBOARD`; `PRIMARY` waits for the GTK 4.16 floor |
 | a11y | the visible screen as the pane's accessible description; a cell-addressable `GtkAccessibleText` needs a custom widget class |
 
-The module is about 2.6k lines. Splitting it along those rows is the next
+The module is about 3.5k lines. Splitting it along those rows is the next
 cleanup, once the shell has been exercised interactively; the WinUI and macOS
 shells are the shape to follow.
 
-Rendering path, matching ADR 041's Direct2D blit: paint into the renderer's
-software target, copy the pixels into a Cairo `ImageSurface`, and draw that
-surface into the drawing area. Full-frame uploads are the first cut — the same
-thing WinUI does — with dirty-row uploads as a later optimisation if a 1080p
-frame at 8 MB per paint proves too costly.
+Rendering path: the engine produces one `RenderingPayload`. The GL backend (ADR
+075) draws it into the GL area's framebuffer — solid quads for backgrounds,
+grid lines and the cursor, a one-channel glyph atlas for text, RGBA textures for
+images — and GTK composites the area into the window. The software backend is
+the fallback: it rasterises the same payload, the pane copies the pixels into a
+Cairo `ImageSurface`, and the same capture path reads the window. The strip,
+scrollbar and margins are always Cairo.
 
 ## Wayland rules that will bite
 
@@ -260,7 +264,13 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 - **Program icons on tabs.** The macOS shell gets one from Launch Services and
   WinUI from the executable; the GTK strip draws titles only.
 - **Sound.** ADR 033 stands: the bell flashes and DECPS is silent on Linux.
-- **The module split.** `linux/mod.rs` carries entry, strip, pane, input, find,
+- **HiDPI scale.** The face, the cell and the GL viewport are physical pixels
+  while GTK allocates logical ones; both content paths assume scale 1. A
+  fractional scale needs the same treatment ADR 043 gives Windows.
+- **GL resources survive a renderer rebuild.** A font-size change drops the
+  backend but the context owns its objects until it is destroyed; deleting per
+  rebuild is the follow-up.
+- **The module split.** `linux/mod.rs` carries entry, strip, pane, gl, input, find,
   settings, clipboard and accessibility; splitting it is the cleanup named in
   *Architecture*.
 

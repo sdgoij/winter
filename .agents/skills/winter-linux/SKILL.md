@@ -1,6 +1,6 @@
 ---
 name: winter-linux
-description: Build, run and live-check the GTK 4 shell in crates/winter/src/linux. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar or the Cairo blit, or when a Linux build or headless screenshot behaves differently.
+description: Build, run and live-check the GTK 4 shell in crates/winter/src/linux. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar, the OpenGL content path or the Cairo blit, or when a Linux build or headless screenshot behaves differently.
 ---
 
 # The Linux shell
@@ -21,7 +21,8 @@ One module owns:
 |---|---|
 | entry | `run()`, the window, the `GtkWindowHandle` title bar |
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
-| pane | the `DrawingArea`: refresh → `paint_frame` → Cairo, scrollbar, marks, bell |
+| pane | the base `DrawingArea`: pane fill, scrollbar, marks, and the input controllers over the GL area |
+| gl | the OpenGL content path (ADR 075): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
 | settings | a `GtkTextView` over the TOML document; Save/Revert/Close |
@@ -41,6 +42,9 @@ wsl.exe -d FedoraLinux-44 -- bash -lc 'cd /mnt/c/.../winterm && \
 Use `/home/t/winterm-target` when the checkout is under `/mnt`: nine-mount I/O
 makes an in-tree `target/` far slower. `--no-default-features` builds the egui
 fallback and needs no headers; the gate checks it on Linux.
+
+The grid is drawn through GTK's OpenGL context when libGL/libEGL exists;
+`WINTER_SOFTWARE=1` forces the CPU blit. Both paths are built either way.
 
 ## Live check
 
@@ -112,7 +116,30 @@ a neighbour's midpoint.
 - **The pane begins at `(5, 51)` in toplevel coordinates.** A click below the
   titlebar in window coordinates is `y - 51` in the drawing area; a driver that
   uses raw window coordinates presses the strip instead.
-
+- **GL calls only run in the GL area's `render`.** That signal is the only
+  place GTK makes the context current. The engine's backend is created lazily on
+  the first frame for that reason; never call the backend from the tick or the
+  base drawing area.
+- **The engine's backend is fixed at creation.** A failed context or frame
+  cannot swap it in place; the shell rebuilds the renderer with the software
+  backend and hides the GL area.
+- **The GL area is an overlay child above the base drawing area.** Its margins
+  are the pane inset and the scrollbar's gutter, so its framebuffer is exactly
+  the grid; the base widget paints the fill and scrollbar. Input controllers sit
+  on the overlay, because the GL area would otherwise swallow the pointer.
+- **A capture includes the GL area.** `GtkWidgetPaintable` composites it, so
+  `WINTER_SCREENSHOT` needs no readback; do not add one without a case the
+  composite misses.
+- **GDK may give a GLES context.** Under Xvfb + llvmpipe this host reports
+  `OpenGL ES 3.1`, so both shader variants matter; `gl.version().is_embedded`
+  selects `#version 300 es` (or a desktop 330 core). A desktop context older
+  than 3.3 or GLES older than 3.0 falls back.
+- **GDK exposes no entry-point resolver.** `linux::gl`'s loader tries
+  `glXGetProcAddressARB`, then `eglGetProcAddress`, then the libraries' own
+  symbol tables; core 1.1 names are not guaranteed by the proc lookups.
+- **The atlas is `R8`/`RED` with `UNPACK_ALIGNMENT` 1.** Image bands arrive as
+  `0xAARRGGBB` and are swizzled to RGBA once per revision, because BGRA uploads
+  are not portable to GLES.
 - **A child of a `Box` gets zero height without `vexpand`.** A `DrawingArea`
   has no natural size; without `set_vexpand(true)` the box allocates it nothing
   and the pane paints no frame (a white window with a live strip).
@@ -151,8 +178,8 @@ a neighbour's midpoint.
 
 ## Do not
 
-- Add `unsafe`: gtk-rs is safe, and the workspace's exemption list does not
-  name this shell.
+- Add `unsafe` outside `linux::gl`: gtk-rs is safe, and the GL loader's
+  exemption is the only one the shell names (ADR 075).
 - Add a second renderer, pty pump or timer. The connection is not `Send`; the
   timer polls every pty on the UI thread.
 - Put GTK in a shared module, or Linux logic in `input`, `view`, `tabs`,

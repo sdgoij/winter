@@ -176,7 +176,8 @@ tests pass.
   modules do for Direct2D, the wheel hook, the window icon and a program's icon
   (ADRs 041, 047, 058, 066), and `macos` declares one allowance for the AppKit
   and Metal boundary — its window, menu, bitmap, layer and device calls (ADRs
-  072, 073). The two
+  072, 073); `linux::gl` declares one for resolving libGL/libEGL's entry points
+  and the OpenGL calls over GTK's context (ADR 075). The two
   self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
@@ -218,7 +219,7 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
-| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 074, with egui as the `--no-default-features` fallback), `winui/` on Windows, and `macos/` on macOS |
+| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 074, with egui as the `--no-default-features` fallback) and its OpenGL content path (ADR 075), `winui/` on Windows, and `macos/` on macOS |
 
 ## Where the port stands
 
