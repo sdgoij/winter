@@ -144,6 +144,10 @@ and its `+` cannot be grouped with the drop-down.
   settings file win over that; a fill the theme leaves out falls back to it.
 - Tab elements are keyed `tab-<id>`: the handlers capture an index, and a
   positional reconcile would leave them pointing at a shifted one after a close.
+- A tab shows the icon of the program it started (ADR 066). `Tab::program` is
+  kept for that; the strip sets a 16-DIP `Image` from `profile_icon::png_for`,
+  which caches per program and runs `view` on every frame — never extract
+  without going through the cache.
 - Drag-reorder is **not implemented** (ADR 064). `Tabs::reorder` is still there
   for when it is.
 
@@ -166,6 +170,8 @@ settings window and the writer work from the parsed file.
   the bytes, so do not "fix" it to one encoding.
 - A distribution named like a profile in the file is dropped from the merge; the
   file wins.
+- A row's icon is the program's, from `profile_icon` (ADR 066). `Settings` and
+  `About` have none, so their rows are text only.
 
 ## Scrollbar
 

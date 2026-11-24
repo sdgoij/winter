@@ -94,3 +94,4 @@ Rules:
 | [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |
 | [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Accepted |
 | [065](065-wsl-distros-as-profiles.md) | WSL distributions are profiles the shell generates from `wsl.exe -l -q`, merged at load and never written to the settings file | Accepted |
+| [066](066-program-icons-from-the-executable.md) | A profile's icon is the icon its executable carries, extracted with GDI and carried as PNG bytes | Accepted |

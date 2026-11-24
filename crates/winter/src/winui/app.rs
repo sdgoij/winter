@@ -12,6 +12,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use renderer::renderer::Renderer;
@@ -39,6 +40,7 @@ use crate::view::View as ViewState;
 use super::gpu::GpuBackend;
 use super::icon;
 use super::menu::{self, MenuEntry};
+use super::profile_icon;
 use super::scrollbar as bar;
 use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
@@ -50,8 +52,10 @@ const INITIAL_COLUMNS: i32 = 120;
 const INITIAL_ROWS: i32 = 30;
 /// The drop-down's width in DIPs, so its overlay can hang under it.
 const MENU_WIDTH: f64 = 240.0;
-/// The drop-down button's width in DIPs.
+/// The drop-down's button width in DIPs.
 const DROP_DOWN_WIDTH: f64 = 32.0;
+/// A profile's icon edge in DIPs.
+const TAB_ICON: f64 = 16.0;
 /// The tab row's fill: behind an inactive tab, and between the last tab and
 /// the caption buttons.
 const TITLEBAR: Color = Color::rgb(32, 32, 36);
@@ -75,6 +79,8 @@ struct Tab {
     control: Control,
     view: ViewState,
     title: String,
+    /// The program the tab started, so the strip can show its icon.
+    program: String,
     /// The find bar's query, matches and current match.
     find: FindBar,
 }
@@ -262,6 +268,7 @@ impl Component for Shell {
             control,
             view: ViewState::new(),
             title: template.title.clone(),
+            program: template.command.program().to_string_lossy().into_owned(),
             find: FindBar::default(),
         };
 
@@ -475,10 +482,27 @@ impl Component for Shell {
                 .on_click(move || {
                     let _ = close.send(Message::CloseTab(id));
                 });
+
+            // The shell's own icon, as Windows Terminal shows it (ADR 066).
+            let mut body: Vec<View> = Vec::new();
+            if let Some(icon) = profile_icon::png_for(&tab.program) {
+                body.push(
+                    Image::new()
+                        .source_data(EncodedImage::new(icon))
+                        .width(TAB_ICON)
+                        .height(TAB_ICON)
+                        .stretch(Stretch::Uniform)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .into(),
+                );
+            }
+            body.push(title.into());
+            body.push(close_button.into());
+
             let body = StackPanel::new()
                 .orientation(Orientation::Horizontal)
                 .spacing(6.0)
-                .children((title, close_button));
+                .children(body);
 
             let item = Border::new()
                 .background(background)
@@ -1143,6 +1167,7 @@ impl Shell {
             control,
             view: ViewState::new(),
             title: terminal.title,
+            program: terminal.command.program().to_string_lossy().into_owned(),
             find: FindBar::default(),
         });
         let _ = self.focus.request_focus();
@@ -2072,7 +2097,19 @@ fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox
 fn profile_menu(profiles: &[settings::Profile], sender: &LocalSender<Message>, left: f64) -> View {
     let rows: Vec<View> = menu::entries(profiles)
         .into_iter()
-        .map(|entry| menu_row(entry, sender))
+        .map(|entry| {
+            // A profile's row carries the icon of the program it starts, so the
+            // menu reads like a list of shells rather than a list of names
+            // (ADR 066).
+            let icon = match &entry {
+                MenuEntry::Profile(name) => profiles
+                    .iter()
+                    .find(|profile| &profile.name == name)
+                    .and_then(|profile| profile_icon::png_for(&profile.command)),
+                MenuEntry::Settings | MenuEntry::About => None,
+            };
+            menu_row(entry, sender, icon)
+        })
         .collect();
 
     Border::new()
@@ -2099,23 +2136,23 @@ fn menu_left(shell: &Shell) -> f64 {
 }
 
 /// One clickable row of the drop-down.
-fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>) -> View {
+fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>, icon: Option<Arc<[u8]>>) -> View {
     let button = match entry {
         MenuEntry::Profile(name) => {
             let sender = sender.clone();
-            menu_button(name.clone()).on_click(move || {
+            menu_button(name.clone(), icon.clone()).on_click(move || {
                 let _ = sender.send(Message::MenuProfile(name.clone()));
             })
         }
         MenuEntry::Settings => {
             let sender = sender.clone();
-            menu_button("Settings".to_string()).on_click(move || {
+            menu_button("Settings".to_string(), icon).on_click(move || {
                 let _ = sender.send(Message::MenuSettings);
             })
         }
         MenuEntry::About => {
             let sender = sender.clone();
-            menu_button("About Winter".to_string()).on_click(move || {
+            menu_button("About Winter".to_string(), icon).on_click(move || {
                 let _ = sender.send(Message::MenuAbout);
             })
         }
@@ -2123,10 +2160,29 @@ fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>) -> View {
     button.into()
 }
 
-/// A flat, left-aligned row sized to the menu.
-fn menu_button(label: String) -> Button {
+/// A flat, left-aligned row sized to the menu, with the icon when it has one.
+fn menu_button(label: String, icon: Option<Arc<[u8]>>) -> Button {
+    let content: View = match icon {
+        Some(icon) => StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                Image::new()
+                    .source_data(EncodedImage::new(icon))
+                    .width(TAB_ICON)
+                    .height(TAB_ICON)
+                    .stretch(Stretch::Uniform)
+                    .vertical_alignment(VerticalAlignment::Center),
+                TextBlock::new()
+                    .text(label)
+                    .vertical_alignment(VerticalAlignment::Center),
+            ))
+            .into(),
+        None => TextBlock::new().text(label).into(),
+    };
+
     Button::new()
-        .content(label)
+        .content(content)
         .style(ButtonStyle::Subtle)
         .horizontal_content_alignment(HorizontalAlignment::Left)
         .width(232.0)
