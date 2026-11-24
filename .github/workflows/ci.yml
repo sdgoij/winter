@@ -58,6 +58,25 @@ jobs:
           tool: cargo-deny@0.20.2
       - name: Run the gate
         run: just gate
+      # The macOS release carries both architectures. The Intel runner links the
+      # arm64 slice from the SDK, so no arm64 macOS runner is required; this
+      # check keeps the cross path from rotting between releases.
+      - name: Cross-check the other macOS slice
+        if: runner.os == 'macOS'
+        run: |
+          set -eu
+          if [ "$(uname -m)" = arm64 ]; then
+            target=x86_64-apple-darwin
+          else
+            target=aarch64-apple-darwin
+          fi
+          rustup target add "$target"
+          cargo check -p winter --target "$target"
+      # The bundle is otherwise only built by a tag, so a broken plist, iconset
+      # or layout would first surface during a release.
+      - name: Build the app bundle
+        if: runner.os == 'macOS'
+        run: just app
 
   # The gate leaves out the `#[ignore]`d cases: they read the host's fonts and
   # are slow, which is the wrong trade for every contributor's `just gate`.
@@ -134,6 +153,11 @@ jobs:
       # the pinned toolchain.
       - name: Install the pinned toolchain
         run: rustup show
+      # `just package` builds both macOS architectures; the Intel label links
+      # the arm64 one from the SDK rather than waiting for an arm64 runner.
+      - name: Add the macOS cross target
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
         with:

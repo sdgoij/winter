@@ -3,7 +3,7 @@
 #
 #   just package
 #       dist/winter-<version>-<target>.tar.gz            Linux
-#       dist/winter-<version>-<target>/Winter.app         macOS, inside the tar
+#       dist/winter-<version>-<target>.tar.gz            macOS, one per arch
 #       dist/winter-<version>-<target>.zip                Windows
 #
 #   just app
@@ -17,11 +17,16 @@
 # Windows also gets the console host and the licences it travels with
 # (ADR 055); elsewhere the host is the system's own. macOS gets an app bundle,
 # because a bare executable opened from Finder starts under a Terminal window
-# (ADR 074).
+# (ADR 074), and both architectures, because the Intel runner cross-builds the
+# Apple silicon archive instead of waiting for an arm64 macOS runner.
+#
+# `WINTER_TARGET=<target>` packages one target instead of the default set.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+
+platform=$(uname -s)
 
 version=${WINTER_VERSION:-}
 version=${version#v}
@@ -33,28 +38,27 @@ if [ -z "$version" ]; then
     fi
 fi
 
-target=$(rustc -vV | awk '/^host:/ { print $2 }')
+host=$(rustc -vV | awk '/^host:/ { print $2 }')
 # CFBundleVersion is a period-separated list of integers; the display string
 # keeps the prerelease suffix that `CFBundleShortVersionString` may hold.
 build_version=$(printf '%s' "$version" | sed 's/[^0-9.].*$//; s/\.$//')
 [ -n "$build_version" ] || build_version=0
-name="winter-$version-$target"
-stage="dist/$name"
-
-cargo build --release -p winter
 
 # The bundle Launch Services registers: the executable, the icon the binary
 # draws for itself, and the plist that names both. The document type is an
 # application, so a double-click starts the shell rather than a terminal.
+# `icon_binary` is a host build, because a cross-compiled binary cannot run.
 build_app() {
     app=$1
+    binary=$2
+    icon_binary=$3
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-    cp target/release/winter "$app/Contents/MacOS/winter"
+    cp "$binary" "$app/Contents/MacOS/winter"
 
     iconset="$app/Contents/Resources/Winter.iconset"
-    WINTER_APPICON="$iconset" "$app/Contents/MacOS/winter"
+    WINTER_APPICON="$iconset" "$icon_binary"
     iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
     rm -rf "$iconset"
 
@@ -102,48 +106,84 @@ PLIST
     fi
 }
 
-case "$(uname -s)" in
-MINGW* | MSYS* | CYGWIN*)
-    if [ "${1:-}" = "--app" ]; then
+if [ "${1:-}" = "--app" ]; then
+    if [ "$platform" != Darwin ]; then
         echo "package: a .app is macOS only" >&2
         exit 1
     fi
-    rm -rf "$stage"
-    mkdir -p "$stage"
-    cp target/release/winter.exe "$stage/winter.exe"
-    cp LICENSE.md "$stage/LICENSE.md"
-    cp licenses/OpenConsole-MIT.txt "$stage/LICENSE-OpenConsole.txt"
-    cp README.md "$stage/README.md"
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1 -Destination "$stage"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command \
-        "Compress-Archive -LiteralPath '$(cygpath -m "$stage")' -DestinationPath '$(cygpath -m "$root/dist/$name.zip")' -Force"
-    echo "dist/$name.zip"
-    ;;
-Darwin)
-    if [ "${1:-}" = "--app" ]; then
-        build_app "dist/Winter.app"
-        echo "dist/Winter.app"
-        exit 0
-    fi
-    rm -rf "$stage"
-    mkdir -p "$stage"
-    build_app "$stage/Winter.app"
-    cp LICENSE.md "$stage/LICENSE.md"
-    cp README.md "$stage/README.md"
-    tar -czf "dist/$name.tar.gz" -C dist "$name"
-    echo "dist/$name.tar.gz"
-    ;;
-*)
-    if [ "${1:-}" = "--app" ]; then
-        echo "package: a .app is macOS only" >&2
+    cargo build --release -p winter
+    build_app "dist/Winter.app" "target/release/winter" "target/release/winter"
+    echo "dist/Winter.app"
+    exit 0
+fi
+
+# The targets this run packages.
+if [ -n "${WINTER_TARGET:-}" ]; then
+    targets=$WINTER_TARGET
+elif [ "$platform" = Darwin ]; then
+    # Both slices are in the SDK, so clang links either architecture from this
+    # host. Building the other one here is what keeps a release off the arm64
+    # macOS runner pool.
+    case "$host" in
+    aarch64-*) targets="$host x86_64-apple-darwin" ;;
+    *) targets="$host aarch64-apple-darwin" ;;
+    esac
+else
+    targets=$host
+fi
+
+check_target() {
+    if command -v rustup >/dev/null 2>&1 && ! rustup target list --installed | grep -qx "$1"; then
+        echo "package: $1 is not installed; run 'rustup target add $1'" >&2
         exit 1
     fi
+}
+
+cargo build --release -p winter
+icon_binary="$root/target/release/winter"
+
+for target in $targets; do
+    check_target "$target"
+
+    if [ "$target" = "$host" ]; then
+        binary="$root/target/release/winter"
+    else
+        cargo build --release -p winter --target "$target"
+        binary="$root/target/$target/release/winter"
+    fi
+    case "$target" in
+    *windows*) binary="$binary.exe" ;;
+    esac
+
+    name="winter-$version-$target"
+    stage="$root/dist/$name"
     rm -rf "$stage"
     mkdir -p "$stage"
-    cp target/release/winter "$stage/winter"
-    cp LICENSE.md "$stage/LICENSE.md"
-    cp README.md "$stage/README.md"
-    tar -czf "dist/$name.tar.gz" -C dist "$name"
-    echo "dist/$name.tar.gz"
-    ;;
-esac
+
+    case "$platform" in
+    MINGW* | MSYS* | CYGWIN*)
+        cp "$binary" "$stage/winter.exe"
+        cp LICENSE.md "$stage/LICENSE.md"
+        cp licenses/OpenConsole-MIT.txt "$stage/LICENSE-OpenConsole.txt"
+        cp README.md "$stage/README.md"
+        powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1 -Destination "$stage"
+        powershell -NoProfile -ExecutionPolicy Bypass -Command \
+            "Compress-Archive -LiteralPath '$(cygpath -m "$stage")' -DestinationPath '$(cygpath -m "$root/dist/$name.zip")' -Force"
+        echo "dist/$name.zip"
+        ;;
+    Darwin)
+        build_app "$stage/Winter.app" "$binary" "$icon_binary"
+        cp LICENSE.md "$stage/LICENSE.md"
+        cp README.md "$stage/README.md"
+        tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
+        echo "dist/$name.tar.gz"
+        ;;
+    *)
+        cp "$binary" "$stage/winter"
+        cp LICENSE.md "$stage/LICENSE.md"
+        cp README.md "$stage/README.md"
+        tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
+        echo "dist/$name.tar.gz"
+        ;;
+    esac
+done

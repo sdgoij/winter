@@ -197,7 +197,9 @@ release never share a file name.
 On macOS the archive holds `Winter.app`, and `just app` builds the bundle
 directly into `dist/Winter.app`: the binary, an `AppIcon.icns` drawn from the
 same mark as the window icon, and a plist Launch Services registers, so a
-double-click starts the shell instead of a Terminal window (ADR 074). The bundle
+double-click starts the shell instead of a Terminal window (ADR 074). A macOS
+package builds both `x86_64` and `aarch64` on the Intel runner — the SDK links
+either slice — so a release never waits for an arm64 macOS runner. The bundle
 is ad-hoc signed; a Developer ID, notarization and a disk image are release
 work.
 

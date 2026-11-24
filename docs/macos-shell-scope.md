@@ -54,8 +54,10 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   with the same reader startup uses before saving.
 - A `Winter.app` bundle with the drawn icon (ADR 074): `just app` builds
   `dist/Winter.app` and `just package` puts it in the release archive, so it
-  starts from Finder or the Dock instead of under Terminal.app. Launch Services
-  starts it at `/`, and the shell moves to `$HOME` before the first pty.
+  starts from Finder or the Dock instead of under Terminal.app. `just package`
+  builds both `x86_64` and `aarch64` on the Intel runner, so no arm64 macOS
+  runner is needed. Launch Services starts it at `/`, and the shell moves to
+  `$HOME` before the first pty.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
   `WINTER_OPEN_SETTINGS=1` opens the settings window at startup and

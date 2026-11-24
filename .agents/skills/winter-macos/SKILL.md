@@ -58,6 +58,14 @@ iconset PNGs, compiles them with `iconutil`, writes `Info.plist`, and ad-hoc
 signs the result. The icon is the same drawing as the window icon and the
 Windows resource (ADR 058); there is no checked-in image.
 
+`just package` on macOS builds **both** architectures — the host and the other
+`-apple-darwin` target — and writes one archive per target.
+`WINTER_TARGET=<target>` packages just one. The other slice must be installed
+(`rustup target add aarch64-apple-darwin`); CI's macOS gate cross-checks it with
+`cargo check` and runs `just app`, so the bundle path is exercised on every
+push. The Intel runner links the arm64 slice from the SDK, so no arm64 macOS
+runner is involved.
+
 - **Launch Services starts a bundle at `/`.** `start_in_home` moves the process
   to `$HOME` when the executable is inside `.app/Contents/MacOS/` and the cwd is
   `/`; the raw binary keeps its directory, which the live check relies on.

@@ -40,6 +40,12 @@ sizes.
    inside `.app/Contents/MacOS/` and the process was started at `/`, the shell
    changes to `$HOME` before the first pty. The raw binary keeps the directory it
    was started from, which is what a developer and `WINTER_SCREENSHOT` expect.
+6. **Both macOS architectures are built on the Intel runner.** A macOS package
+   builds the host target and the other `-apple-darwin` target; CI installs it
+   with `rustup target add`, and each archive keeps its own target name. The
+   Intel host links the arm64 slice out of the SDK, so a release never waits on
+   an arm64 macOS runner. `WINTER_TARGET=<target>` packages one target, and the
+   push gate cross-checks the other slice with `cargo check`.
 
 ## Rationale
 
@@ -59,6 +65,8 @@ Positive:
 
 - The macOS archive is an application a user can drag to `/Applications`,
   launch from Finder or the Dock, and recognise by its icon.
+- An Apple silicon archive exists without an arm64 macOS runner, and the gate
+  builds it on every push rather than discovering a break at a tag.
 - The first tab opens in the user's home rather than `/`.
 - `WINTER_APPICON` makes the icon reproducible and testable from the command
   line.
@@ -71,6 +79,13 @@ Negative:
 - **The icon's edges are hard rather than antialiased.** The drawing is the
   binary-coverage geometry ADR 058 fixed; at 1024 it is accurate per pixel, and
   a supersampled version would be a change to every consumer of that drawing.
+- **The other architecture is checked, not run.** CI's macOS tests execute the
+  Intel slice; the arm64 slice is cross-built and `cargo check`ed, and the Intel
+  runner cannot start it. A runtime failure specific to arm64 would surface for
+  users, not in the gate.
+- **A cross build needs its target installed.** `rustup target add` is a CI
+  step and a one-time step for a local `just package`; the script says which
+  target is missing.
 - **`iconutil` and `codesign` are part of packaging.** Both ship with the
   developer tools; a host without them cannot produce a bundle.
 
@@ -82,3 +97,4 @@ Negative:
 | Commit an `.icns` | A binary asset in the tree with no readable source, and a second copy of the drawing (ADR 058) |
 | A disk image now | DMG layout and Gatekeeper acceptance are release work; a directory with the bundle is the part a user needs |
 | A Developer ID signature in CI | No identity or notarization credentials are configured, and an unsigned-but-ad-hoc app is honest about what it is |
+| Wait for an arm64 macOS runner | The pool is frequently unavailable, and a release must not depend on one being free; the Intel host can link both slices |
