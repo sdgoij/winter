@@ -7,10 +7,11 @@
 //! path uses and lands in a one-channel atlas, and images are uploaded per
 //! revision.
 //!
-//! The frame is rendered into an offscreen `MTLTexture`, read back and handed
-//! to the existing `Frame` blit, so the screenshot path and the view stay
-//! unchanged. Presenting a drawable through a `CAMetalLayer` is the next step;
-//! it changes presentation, not the content path (ADR 072).
+//! A frame is drawn twice: into the layer's drawable, which is what the window
+//! shows, and into an offscreen `MTLTexture` that is read back and handed to the
+//! existing `Frame` blit. The readback is the screenshot path and the fallback
+//! when the layer cannot produce a drawable, so the view and the capture stay
+//! unchanged (ADRs 072, 073).
 //!
 //! Every `unsafe` call carries a `SAFETY:` note, as the rest of `macos` does.
 
@@ -25,10 +26,12 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
     MTLBlendFactor, MTLBuffer, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType,
-    MTLRegion, MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
-    MTLResourceOptions, MTLSize, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
+    MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable, MTLLibrary, MTLLoadAction, MTLOrigin, MTLPixelFormat,
+    MTLPrimitiveType, MTLRegion, MTLRenderCommandEncoder, MTLRenderPassDescriptor, MTLRenderPipelineDescriptor,
+    MTLRenderPipelineState, MTLResourceOptions, MTLSize, MTLStorageMode, MTLStoreAction, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage,
 };
+use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use renderer::atlas::common::{
     RenderingPayload, argb_from_colorref, baseline, cell_colors, cell_rect, glyph_origin, grid_line_rects,
 };
@@ -293,6 +296,14 @@ struct ImageDraw {
     bottom: i32,
 }
 
+/// One frame's quads, ready for either target.
+struct FrameData {
+    solids: Vec<SolidVertex>,
+    images: Vec<ImageDraw>,
+    glyphs: Vec<TextureVertex>,
+    overlays: Vec<SolidVertex>,
+}
+
 /// The device-side state one frame is drawn with.
 pub(crate) struct MetalBackend {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -304,6 +315,10 @@ pub(crate) struct MetalBackend {
     atlas: Atlas,
     images: HashMap<u64, Retained<ProtocolObject<dyn MTLTexture>>>,
     target: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
+    /// The layer the window presents through, when the controller attached one.
+    layer: Option<Retained<CAMetalLayer>>,
+    /// Whether the last frame reached the window through a drawable.
+    presented: bool,
     width: u32,
     height: u32,
     pixels: Vec<u32>,
@@ -374,6 +389,8 @@ impl MetalBackend {
             atlas,
             images: HashMap::new(),
             target: None,
+            layer: None,
+            presented: false,
             width: 0,
             height: 0,
             pixels: Vec::new(),
@@ -441,6 +458,26 @@ impl MetalBackend {
             return;
         }
 
+        let data = self.build(payload, cell_width, cell_height, width, height);
+        self.atlas.upload();
+
+        // The drawable is what the window shows; the offscreen target stays the
+        // screenshot path and the fallback, so both are drawn every frame.
+        self.present(payload, &data);
+        self.offscreen(payload, &data);
+    }
+
+    /// Turns the payload into the quads both targets draw.
+    fn build(
+        &mut self,
+        payload: &RenderingPayload,
+        cell_width: u32,
+        cell_height: u32,
+        width: u32,
+        height: u32,
+    ) -> FrameData {
+        let (columns, rows) = payload.settings.viewport_cell_count;
+
         let mut solids = Vec::new();
         for row in 0..rows {
             for column in 0..columns {
@@ -494,47 +531,82 @@ impl MetalBackend {
             );
         }
 
-        self.atlas.upload();
-        self.issue(payload, &solids, &images, &glyphs, &overlays);
+        FrameData {
+            solids,
+            images,
+            glyphs,
+            overlays,
+        }
     }
 
-    /// Encodes the frame, waits for it and reads the pixels back.
-    fn issue(
-        &mut self,
-        payload: &RenderingPayload,
-        solids: &[SolidVertex],
-        images: &[ImageDraw],
-        glyphs: &[TextureVertex],
-        overlays: &[SolidVertex],
-    ) {
-        let Some(target) = &self.target else {
+    /// Draws `data` into a drawable and presents it, or hides the layer.
+    fn present(&mut self, payload: &RenderingPayload, data: &FrameData) {
+        let Some(layer) = self.layer.clone() else {
+            self.presented = false;
             return;
         };
-        let Some(command) = self.queue.commandBuffer() else {
+        let Some(drawable) = layer.nextDrawable() else {
+            // A layer with no drawable (a zero-sized one, say) keeps the
+            // readback blit as the visible frame.
+            layer.setHidden(true);
+            self.presented = false;
             return;
+        };
+
+        let texture = drawable.texture();
+        if !self.draw_frame(payload, &texture, Some(&drawable), data) {
+            layer.setHidden(true);
+            self.presented = false;
+            return;
+        }
+        layer.setHidden(false);
+        self.presented = true;
+    }
+
+    /// Draws `data` into the offscreen target and reads it back.
+    fn offscreen(&mut self, payload: &RenderingPayload, data: &FrameData) {
+        let Some(target) = self.target.clone() else {
+            return;
+        };
+        if self.draw_frame(payload, &target, None, data) {
+            self.pixels = read_texture(&target, self.width, self.height);
+        }
+    }
+
+    /// Encodes `data` into `target`, presents `drawable` when there is one, and
+    /// waits for the GPU.
+    fn draw_frame(
+        &self,
+        payload: &RenderingPayload,
+        target: &ProtocolObject<dyn MTLTexture>,
+        drawable: Option<&ProtocolObject<dyn CAMetalDrawable>>,
+        data: &FrameData,
+    ) -> bool {
+        let Some(command) = self.queue.commandBuffer() else {
+            return false;
         };
         let pass = MTLRenderPassDescriptor::renderPassDescriptor();
         // SAFETY: attachment index zero is the one this pass declares and the
         // only one the pipelines target.
         let attachment = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
-        attachment.setTexture(Some(&**target));
+        attachment.setTexture(Some(target));
         attachment.setLoadAction(MTLLoadAction::Clear);
         attachment.setStoreAction(MTLStoreAction::Store);
         attachment.setClearColor(clear_color(payload));
         let Some(encoder) = command.renderCommandEncoderWithDescriptor(&pass) else {
-            return;
+            return false;
         };
 
         // The buffers are unretained by the encoder, so they live until the
         // command buffer has finished.
         let mut keep_alive = Vec::new();
-        if !solids.is_empty() {
+        if !data.solids.is_empty() {
             encoder.setRenderPipelineState(&self.solid);
-            draw_solid(&encoder, &self.device, solids, &mut keep_alive);
+            draw_solid(&encoder, &self.device, &data.solids, &mut keep_alive);
         }
-        if !images.is_empty() {
+        if !data.images.is_empty() {
             encoder.setRenderPipelineState(&self.image);
-            for image in images {
+            for image in &data.images {
                 let quad = textured_quad(
                     (image.left, image.top, image.right, image.bottom),
                     [0.0, 0.0, 1.0, 1.0],
@@ -545,52 +617,30 @@ impl MetalBackend {
                 draw_textured(&encoder, &self.device, &quad, &image.texture, &mut keep_alive);
             }
         }
-        if !glyphs.is_empty() {
+        if !data.glyphs.is_empty() {
             encoder.setRenderPipelineState(&self.glyph);
-            draw_textured(&encoder, &self.device, glyphs, &self.atlas.texture, &mut keep_alive);
+            draw_textured(
+                &encoder,
+                &self.device,
+                &data.glyphs,
+                &self.atlas.texture,
+                &mut keep_alive,
+            );
         }
-        if !overlays.is_empty() {
+        if !data.overlays.is_empty() {
             encoder.setRenderPipelineState(&self.solid);
-            draw_solid(&encoder, &self.device, overlays, &mut keep_alive);
+            draw_solid(&encoder, &self.device, &data.overlays, &mut keep_alive);
         }
 
         encoder.endEncoding();
+        if let Some(drawable) = drawable {
+            let drawable: &ProtocolObject<dyn MTLDrawable> = drawable.as_ref();
+            command.presentDrawable(drawable);
+        }
         command.commit();
         command.waitUntilCompleted();
         drop(keep_alive);
-        self.read_back();
-    }
-
-    fn read_back(&mut self) {
-        let Some(target) = &self.target else {
-            return;
-        };
-        let (width, height) = (self.width, self.height);
-        let mut bytes = vec![0u8; (width * height * 4) as usize];
-        let region = MTLRegion {
-            origin: MTLOrigin { x: 0, y: 0, z: 0 },
-            size: MTLSize {
-                width: width as NSUInteger,
-                height: height as NSUInteger,
-                depth: 1,
-            },
-        };
-        // SAFETY: the region is the whole target, and `bytes` holds a row of
-        // `width * 4` bytes for each of the target's `height` rows.
-        let Some(pointer) = NonNull::new(bytes.as_mut_ptr().cast::<c_void>()) else {
-            return;
-        };
-        unsafe {
-            target.getBytes_bytesPerRow_fromRegion_mipmapLevel(pointer, (width * 4) as NSUInteger, region, 0);
-        }
-        // A BGRA8Unorm texel is `B, G, R, A` in memory, which is exactly
-        // `0xAARRGGBB` read little-endian.
-        self.pixels = bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|pixel| u32::from_le_bytes(*pixel))
-            .collect();
+        true
     }
 
     /// Uploads every image band that is not cached, and evicts the rest.
@@ -701,6 +751,7 @@ impl MetalBackend {
         self.target = None;
         self.images.clear();
         self.pixels.clear();
+        self.presented = false;
         self.width = 0;
         self.height = 0;
     }
@@ -723,6 +774,33 @@ impl Metal {
     /// Gives the backend the glyph rasteriser the frame payload was shaped for.
     pub(crate) fn set_rasterizer(&self, rasterizer: Box<dyn GlyphRasterizer>) {
         self.inner.borrow_mut().set_rasterizer(rasterizer);
+    }
+
+    /// Gives the backend the layer the window presents through.
+    ///
+    /// The layer's geometry belongs to the controller; this wires the device and
+    /// the pixel format, so a backend rebuilt for a new scale can re-attach the
+    /// same layer.
+    pub(crate) fn set_layer(&self, layer: Retained<CAMetalLayer>) {
+        let mut inner = self.inner.borrow_mut();
+        layer.setDevice(Some(&*inner.device));
+        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        layer.setFramebufferOnly(true);
+        layer.setOpaque(true);
+        // The view's coordinate space is flipped, so the layer's top edge is
+        // the drawable's first row.
+        layer.setGeometryFlipped(true);
+        inner.layer = Some(layer);
+    }
+
+    /// Whether a layer is attached, which a rebuilt backend loses.
+    pub(crate) fn layer_attached(&self) -> bool {
+        self.inner.borrow().layer.is_some()
+    }
+
+    /// Whether the last frame reached the window through a drawable.
+    pub(crate) fn presented(&self) -> bool {
+        self.inner.borrow().presented
     }
 
     /// Runs `read` over the last frame's pixels, row-major `0xAARRGGBB`.
@@ -994,6 +1072,35 @@ fn image_texture(
     Some(texture)
 }
 
+/// Reads a BGRA8 texture back as row-major `0xAARRGGBB`.
+fn read_texture(target: &ProtocolObject<dyn MTLTexture>, width: u32, height: u32) -> Vec<u32> {
+    let mut bytes = vec![0u8; (width * height * 4) as usize];
+    let region = MTLRegion {
+        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+        size: MTLSize {
+            width: width as NSUInteger,
+            height: height as NSUInteger,
+            depth: 1,
+        },
+    };
+    // SAFETY: the region is the whole target, and `bytes` holds a row of
+    // `width * 4` bytes for each of the target's `height` rows.
+    let Some(pointer) = NonNull::new(bytes.as_mut_ptr().cast::<c_void>()) else {
+        return Vec::new();
+    };
+    unsafe {
+        target.getBytes_bytesPerRow_fromRegion_mipmapLevel(pointer, (width * 4) as NSUInteger, region, 0);
+    }
+    // A BGRA8Unorm texel is `B, G, R, A` in memory, which is exactly
+    // `0xAARRGGBB` read little-endian.
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|pixel| u32::from_le_bytes(*pixel))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1035,6 +1142,57 @@ mod tests {
         assert_eq!(quad[3].uv, [0.75, 0.5]);
         assert_eq!(quad[4].uv, [0.75, 1.0]);
         assert_eq!(quad[5].uv, [0.25, 1.0]);
+    }
+
+    #[test]
+    #[ignore = "needs a Metal device"]
+    fn a_layer_without_a_drawable_keeps_the_readback_frame() {
+        let Some(mut backend) = MetalBackend::create() else {
+            eprintln!("metal: no backend; skipping");
+            return;
+        };
+        // A zero-sized layer cannot hand out a drawable, which is the case the
+        // readback blit has to cover.
+        let layer = CAMetalLayer::new();
+        layer.setDevice(Some(&*backend.device));
+        backend.layer = Some(layer);
+
+        let mut payload = payload();
+        payload.rows.clear();
+        payload.cursor_rect = (1, 0, 2, 1);
+
+        backend.render(&mut payload);
+
+        assert!(!backend.presented);
+        assert_eq!(backend.pixel(0, 0), Some(0xFF00_0000));
+        assert_eq!(backend.pixel(8, 0), Some(0xFFFF_0000));
+    }
+
+    #[test]
+    #[ignore = "needs a Metal device and a drawable"]
+    fn a_drawable_presents_the_frame() {
+        let Some(mut backend) = MetalBackend::create() else {
+            eprintln!("metal: no backend; skipping");
+            return;
+        };
+        let layer = CAMetalLayer::new();
+        layer.setDevice(Some(&*backend.device));
+        layer.setPixelFormat(MTLPixelFormat::BGRA8Unorm);
+        layer.setFramebufferOnly(true);
+        layer.setDrawableSize(objc2_foundation::NSSize::new(16.0, 16.0));
+        backend.layer = Some(layer);
+
+        let mut payload = payload();
+
+        backend.render(&mut payload);
+
+        if !backend.presented {
+            eprintln!("metal: this host hands out no drawable; skipping");
+            return;
+        }
+        assert!(backend.presented);
+        // The offscreen path still ran, so the screenshot has a frame too.
+        assert_eq!(backend.pixel(0, 0), Some(0xFF00_0000));
     }
 
     /// A rasteriser that fills its whole glyph with coverage.

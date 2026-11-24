@@ -76,6 +76,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSWorkspace",
     "objc2-core-foundation",
     "objc2-core-graphics",
+    "objc2-quartz-core",
 ] }
 objc2-foundation = "0.3.2"
 # Only the Metal modules the content backend names; the default set also pulls
@@ -87,6 +88,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLCommandBuffer",
     "MTLCommandEncoder",
     "MTLCommandQueue",
+    "MTLDrawable",
     "MTLDevice",
     "MTLLibrary",
     "MTLPixelFormat",
@@ -96,6 +98,17 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLResource",
     "MTLTexture",
     "MTLTypes",
+] }
+# The layer that presents the drawable, and the plain layers the find panel and
+# bell overlay use.
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CALayer",
+    "CAMetalLayer",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-metal",
 ] }
 
 [target.'cfg(windows)'.dependencies]

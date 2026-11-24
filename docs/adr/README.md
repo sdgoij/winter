@@ -102,4 +102,4 @@ Rules:
 | [071](071-settings-dialog-buttons.md) | The settings dialog's Save and Revert are its primary and secondary buttons, not the last two rows of its content | Accepted |
 | [072](072-macos-appkit-shell.md) | The macOS shell is AppKit for the host and `renderer`'s pixels for the strip and grid; `unsafe` is confined to `macos` | Accepted |
 | [072](072-win32-record-character.md) | A Win32 input record carries the character a key types, so Enter, Tab, Backspace and Escape reach a character-reading client | Accepted |
-| [073](073-macos-metal-content.md) | The macOS content path is Metal, rendered offscreen and read back, with the software backend as the fallback | Accepted |
+| [073](073-macos-metal-content.md) | The macOS content path is Metal, presented through a `CAMetalLayer` drawable and read back only for screenshots and the fallback; the software backend is the fallback | Accepted |

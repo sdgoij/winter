@@ -38,6 +38,12 @@ pub struct Ivars {
     marked: RefCell<String>,
     /// `insertText:` committed a composition during the current key press.
     committed: Cell<bool>,
+    /// The window draws the content and its overlays as layers, so the view
+    /// leaves them to them.
+    layered: Cell<bool>,
+    /// `WINTER_SCREENSHOT` is capturing, so the content is painted here even
+    /// when the layers would otherwise have it.
+    capturing: Cell<bool>,
 }
 
 define_class!(
@@ -110,6 +116,8 @@ define_class!(
             let programs = shell.programs();
             let (background, _) = shell.active_colors();
             let (scroll, document, visible) = shell.scroll_facts();
+            let layered = self.ivars().layered.get();
+            let capturing = self.ivars().capturing.get();
             let state = ChromeState {
                 strip: shell.strip(),
                 active: shell.active_index(),
@@ -121,7 +129,12 @@ define_class!(
                 hovered_menu: shell.hovered_menu(),
                 colors: shell.strip_colors(),
                 pane: chrome::rgb(background),
-                frame: Some(shell.frame()),
+                frame: if layered && shell.layer_presented() && !capturing {
+                    None
+                } else {
+                    Some(shell.frame())
+                },
+                overlays: !layered || capturing,
                 scale: f64::from(shell.scale()),
                 grid: shell.grid(),
                 cell: shell.cell(),
@@ -440,10 +453,25 @@ impl TerminalView {
             tracking: RefCell::new(None),
             marked: RefCell::new(String::new()),
             committed: Cell::new(false),
+            layered: Cell::new(false),
+            capturing: Cell::new(false),
         });
         // SAFETY: NSView's designated initializer, called on the main thread
         // with an allocated instance of this subclass.
         unsafe { msg_send![super(this), initWithFrame: frame] }
+    }
+
+    /// Tells the view that the content and its overlays are layers above it.
+    pub(crate) fn set_layered(&self, layered: bool) {
+        self.ivars().layered.set(layered);
+        self.setNeedsDisplay(true);
+    }
+
+    /// Makes the next `drawRect:` paint the content the layers normally show,
+    /// which is what the screenshot path needs once it hides them.
+    pub(crate) fn set_capturing(&self, capturing: bool) {
+        self.ivars().capturing.set(capturing);
+        self.setNeedsDisplay(true);
     }
 
     /// The point an event names, in this view's flipped coordinates.

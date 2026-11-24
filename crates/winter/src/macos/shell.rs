@@ -256,6 +256,20 @@ impl Shell {
         &self.frame
     }
 
+    /// The Metal content backend, when the GPU path is the one painting.
+    pub(crate) fn metal(&self) -> Option<metal::Metal> {
+        match &self.shared {
+            Content::Metal(backend) => Some(backend.clone()),
+            Content::Software(_) => None,
+        }
+    }
+
+    /// Whether the last frame reached the window through a drawable, so the
+    /// view does not blit it again.
+    pub(crate) fn layer_presented(&self) -> bool {
+        self.shared.layer_presented()
+    }
+
     /// Shows or clears the input method's marked text.
     pub(crate) fn set_composition(&mut self, text: &str, selected_utf16: usize) {
         self.composition = composition(text, selected_utf16);
@@ -1522,6 +1536,13 @@ impl Content {
         match self {
             Self::Software(backend) => backend.with_pixels(read),
             Self::Metal(backend) => backend.with_pixels(read),
+        }
+    }
+
+    fn layer_presented(&self) -> bool {
+        match self {
+            Self::Software(_) => false,
+            Self::Metal(backend) => backend.presented(),
         }
     }
 }

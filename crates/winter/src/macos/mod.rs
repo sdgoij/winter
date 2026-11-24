@@ -36,6 +36,7 @@ use objc2_foundation::{
     NSDictionary, NSNotification, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString,
     NSTimer,
 };
+use objc2_quartz_core::{CALayer, CAMetalLayer, CATransaction};
 
 use self::chrome::STRIP_HEIGHT;
 use self::shell::Shell;
@@ -129,6 +130,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     set_appearance(&window, shell.borrow().prefers_dark());
 
+    let layers = Layers::install(&view, &shell.borrow());
     let controller = Controller::new(
         Rc::clone(&shell),
         window.clone(),
@@ -137,6 +139,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         previous.clone(),
         next.clone(),
         count.clone(),
+        layers,
         mtm,
     );
 
@@ -185,6 +188,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             .borrow_mut()
             .resize((bounds.size.width, bounds.size.height), scale as f32);
     }
+    controller.sync_layers();
 
     window.makeKeyAndOrderFront(None);
     window.makeFirstResponder(Some(&view));
@@ -242,6 +246,91 @@ fn find_face() -> Option<renderer::FontFace> {
         })
 }
 
+/// The layers above the AppKit paint: the Metal content, and the find panel
+/// and bell the content would otherwise cover.
+struct Layers {
+    content: Retained<CAMetalLayer>,
+    find: Retained<CALayer>,
+    bell: Retained<CALayer>,
+}
+
+impl Layers {
+    /// Adds the layers to the view and wires the content layer to the backend.
+    ///
+    /// `None` means the software backend paints: the view blits the frame and
+    /// `chrome` paints the overlays, exactly as before the GPU path.
+    fn install(view: &TerminalView, shell: &Shell) -> Option<Self> {
+        let metal = shell.metal()?;
+        view.setWantsLayer(true);
+        let Some(root) = view.layer() else {
+            eprintln!("winter: the view has no layer; blitting the Metal frame");
+            return None;
+        };
+
+        // The controls' layers are AppKit's; ours go under all of them and
+        // above the view's own drawing. Inserting at the bottom in reverse
+        // order lands them content, find, bell.
+        let content = CAMetalLayer::new();
+        let find = CALayer::new();
+        find.setCornerRadius(6.0);
+        find.setHidden(true);
+        let bell = CALayer::new();
+        bell.setHidden(true);
+        root.insertSublayer_below(&bell, None);
+        root.insertSublayer_below(&find, None);
+        root.insertSublayer_below(&content, None);
+
+        metal.set_layer(content.clone());
+        view.set_layered(true);
+        Some(Self { content, find, bell })
+    }
+
+    /// Fits the layers to the view and the shell's current frame.
+    fn layout(&self, view: &TerminalView, shell: &Shell) {
+        let bounds = view.bounds();
+        let scale = f64::from(shell.scale());
+        let rect = chrome::grid_rect(bounds, scale, shell.cell(), shell.grid());
+        let colors = shell.strip_colors();
+        let (red, green, blue) = colors.row.unwrap_or(colors.active);
+        let channel = |value: u8| f64::from(value) / 255.0;
+        let find_open = shell.find_open();
+        let alpha = shell.bell_alpha(Instant::now()).unwrap_or(0.0);
+
+        // A layer animates its properties by default; a window resize would
+        // slide the content behind the frame instead of moving with it.
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+
+        self.content.setContentsScale(scale);
+        self.content.setFrame(rect);
+        self.content
+            .setDrawableSize(NSSize::new(rect.size.width * scale, rect.size.height * scale));
+
+        self.find.setFrame(chrome::find_backdrop_rect(bounds));
+        let find_color =
+            NSColor::colorWithSRGBRed_green_blue_alpha(channel(red), channel(green), channel(blue), 1.0).CGColor();
+        self.find.setBackgroundColor(Some(&find_color));
+        self.find.setHidden(!find_open);
+
+        self.bell.setFrame(chrome::pane_rect(bounds));
+        let bell_color = NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, f64::from(alpha) * 0.12).CGColor();
+        self.bell.setBackgroundColor(Some(&bell_color));
+        self.bell.setHidden(alpha <= 0.0);
+
+        CATransaction::commit();
+    }
+
+    /// Hides every layer, for the view's own capture.
+    fn set_hidden(&self, hidden: bool) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.content.setHidden(hidden);
+        self.find.setHidden(hidden);
+        self.bell.setHidden(hidden);
+        CATransaction::commit();
+    }
+}
+
 /// The window's controller: the timer, the menus and the find bar.
 ///
 /// It owns the shell and the AppKit objects the shell's requests need; the view
@@ -257,6 +346,8 @@ struct ControllerIvars {
     settings_window: RefCell<Option<Retained<settings::SettingsWindow>>>,
     timer: RefCell<Option<Retained<NSTimer>>>,
     find_shown: Cell<bool>,
+    /// The Metal content and its overlays, when the GPU path paints.
+    layers: Option<Layers>,
     /// The appearance last applied to the window.
     dark: Cell<bool>,
     /// Whether a tick is already running; a menu's tracking loop can fire the
@@ -285,6 +376,7 @@ define_class!(
             if self.ivars().busy.replace(true) {
                 return;
             }
+            self.sync_layers();
             let tick = {
                 let mut shell = self.ivars().shell.borrow_mut();
                 shell.tick(Instant::now(), mtm)
@@ -450,6 +542,7 @@ define_class!(
                 .borrow_mut()
                 .resize((bounds.size.width, bounds.size.height), window.backingScaleFactor() as f32);
             self.layout_find();
+            self.sync_layers();
             self.ivars().view.setNeedsDisplay(true);
         }
 
@@ -499,6 +592,7 @@ impl Controller {
         previous: Retained<NSButton>,
         next: Retained<NSButton>,
         count: Retained<NSTextField>,
+        layers: Option<Layers>,
         mtm: MainThreadMarker,
     ) -> Retained<Self> {
         let dark = shell.borrow().prefers_dark();
@@ -513,6 +607,7 @@ impl Controller {
             settings_window: RefCell::new(None),
             timer: RefCell::new(None),
             find_shown: Cell::new(false),
+            layers,
             dark: Cell::new(dark),
             busy: Cell::new(false),
             screenshot: std::env::var_os("WINTER_SCREENSHOT").map(PathBuf::from),
@@ -520,6 +615,24 @@ impl Controller {
         });
         // SAFETY: NSObject's designated initializer, on the main thread.
         unsafe { msg_send![super(this), init] }
+    }
+
+    /// Re-attaches a content backend rebuilt for a new scale, and fits the
+    /// layers to the view and the shell's overlays.
+    fn sync_layers(&self) {
+        let Some(layers) = self.ivars().layers.as_ref() else {
+            return;
+        };
+        let shell = self.ivars().shell.borrow();
+        if let Some(metal) = shell.metal()
+            && !metal.layer_attached()
+        {
+            // A font-size change or a new backing scale replaces the content
+            // backend, and the layer is a property of the window, not of the
+            // backend that happened to create it.
+            metal.set_layer(layers.content.clone());
+        }
+        layers.layout(&self.ivars().view, &shell);
     }
 
     /// Shows, moves or hides the find controls to match the shell.
@@ -644,7 +757,20 @@ impl Controller {
     /// Writes the window's content view as a PNG, and the settings window too
     /// when it is open.
     fn write_screenshot(&self, path: &Path) {
-        if capture_view(&self.ivars().view, path) {
+        // A layer is not part of a view's cached display, so the capture sees
+        // only what the view paints. Hide the layers for the one draw and let
+        // the view paint the readback frame and the overlays itself.
+        if let Some(layers) = self.ivars().layers.as_ref() {
+            layers.set_hidden(true);
+            self.ivars().view.set_capturing(true);
+        }
+        let captured = capture_view(&self.ivars().view, path);
+        if let Some(layers) = self.ivars().layers.as_ref() {
+            self.ivars().view.set_capturing(false);
+            layers.set_hidden(false);
+        }
+
+        if captured {
             println!("winter: wrote {}", path.display());
         } else {
             eprintln!("winter: cannot write {}", path.display());

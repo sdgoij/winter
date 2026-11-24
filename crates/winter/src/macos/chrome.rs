@@ -230,6 +230,19 @@ pub(crate) fn grid_rect(_bounds: NSRect, scale: f64, cell: (u16, u16), grid: (i3
     NSRect::new(NSPoint::new(PANE_LEFT, STRIP_HEIGHT), NSSize::new(width, height))
 }
 
+/// The find bar's backdrop, behind the field, buttons and count.
+///
+/// The controls are subviews; this is the panel behind them, so the terminal's
+/// text does not show through the count or beside the field. The overlay layer
+/// the Metal path draws above its content uses the same geometry.
+pub(crate) fn find_backdrop_rect(bounds: NSRect) -> NSRect {
+    let width = (bounds.size.width - 16.0).clamp(0.0, 342.0);
+    NSRect::new(
+        NSPoint::new(bounds.size.width - width - 8.0, STRIP_HEIGHT + 4.0),
+        NSSize::new(width, 32.0),
+    )
+}
+
 /// What the chrome paints from.
 pub(crate) struct ChromeState<'a> {
     /// The strip's layout.
@@ -254,6 +267,9 @@ pub(crate) struct ChromeState<'a> {
     pub(crate) pane: (u8, u8, u8),
     /// The terminal's pixels.
     pub(crate) frame: Option<&'a crate::macos::frame::Frame>,
+    /// Whether to paint the find backdrop and the bell. The Metal path draws
+    /// them as layers above its content instead.
+    pub(crate) overlays: bool,
     /// The scale the frame was painted at.
     pub(crate) scale: f64,
     /// The grid in cells.
@@ -302,12 +318,14 @@ pub(crate) fn paint(bounds: NSRect, state: &ChromeState<'_>, mtm: MainThreadMark
         ));
     }
 
-    if state.find_open {
+    if state.overlays && state.find_open {
         draw_find_backdrop(bounds, state);
     }
 
     draw_scrollbar(bounds, state);
-    draw_bell(pane, state);
+    if state.overlays {
+        draw_bell(pane, state);
+    }
 }
 
 fn draw_tabs(bounds: NSRect, state: &ChromeState<'_>, mtm: MainThreadMarker) {
@@ -441,13 +459,7 @@ fn draw_bell(pane: NSRect, state: &ChromeState<'_>) {
 }
 
 fn draw_find_backdrop(bounds: NSRect, state: &ChromeState<'_>) {
-    // The controls are subviews; this is the panel behind them, so the
-    // terminal's text does not show through the count or beside the field.
-    let width = (bounds.size.width - 16.0).clamp(0.0, 342.0);
-    let rect = NSRect::new(
-        NSPoint::new(bounds.size.width - width - 8.0, STRIP_HEIGHT + 4.0),
-        NSSize::new(width, 32.0),
-    );
+    let rect = find_backdrop_rect(bounds);
     let fill_color = state.colors.row.unwrap_or(state.colors.active);
     let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 6.0, 6.0);
     color(fill_color).setFill();
@@ -775,5 +787,23 @@ mod tests {
     fn the_viewport_covers_the_whole_grid() {
         assert_eq!(viewport((80, 24)), InclusiveRect::new(0, 0, 79, 23));
         assert_eq!(viewport((1, 1)), InclusiveRect::new(0, 0, 0, 0));
+    }
+
+    #[test]
+    fn the_find_backdrop_is_a_panel_below_the_strip() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(900.0, 600.0));
+        let rect = find_backdrop_rect(bounds);
+
+        assert_eq!(rect.origin, NSPoint::new(900.0 - 342.0 - 8.0, STRIP_HEIGHT + 4.0));
+        assert_eq!(rect.size, NSSize::new(342.0, 32.0));
+    }
+
+    #[test]
+    fn a_narrow_window_shrinks_the_find_backdrop() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(200.0, 100.0));
+        let rect = find_backdrop_rect(bounds);
+
+        assert_eq!(rect.origin, NSPoint::new(8.0, STRIP_HEIGHT + 4.0));
+        assert_eq!(rect.size, NSSize::new(184.0, 32.0));
     }
 }

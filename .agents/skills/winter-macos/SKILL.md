@@ -21,7 +21,7 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 | `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state; no AppKit except the `Frame` |
 | `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
-| `metal.rs` | The Metal content backend, its glyph atlas and the offscreen readback |
+| `metal.rs` | The Metal content backend: drawable presentation, its glyph atlas and the offscreen readback |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
 | `settings.rs` | Native settings window over the whole TOML document |
 | `keys.rs` | Virtual-key codes and layout-character selection |
@@ -36,8 +36,9 @@ boundary (ADRs 072, 073). `keys.rs` and `shell.rs` contain none. Do not add
 cargo build -p winter --offline
 ```
 
-The dependencies are `objc2` 0.6.5, `objc2-app-kit` 0.3.2 and
-`objc2-foundation` 0.3.2, all target-specific. `eframe` and `winit` also carry
+The dependencies are `objc2` 0.6.5, `objc2-app-kit`, `objc2-foundation`,
+`objc2-metal` and `objc2-quartz-core` 0.3.2, all target-specific. `eframe` and
+`winit` also carry
 `objc2` on this host: **`winit` 0.30 uses `objc2` 0.5 / `objc2-app-kit` 0.2**.
 A class defined against the wrong copy fails with “the trait `NSObjectProtocol`
 is not satisfied” and a diagnostic listing both versions. Import protocols from
@@ -75,9 +76,33 @@ second.
   transparent image; the pane looks white over the window. Use
   `(pixel | 0xFF00_0000).to_be_bytes()` and `SourceOver`.
 - **Metal's vertex buffers are unretained by the encoder.** Keep them alive
-  until `waitUntilCompleted`. Use `packed_float` in MSL so the vertex structs
-  match the Rust `#[repr(C)]` layout, and read a BGRA8 target back as
-  little-endian `u32` (`0xAARRGGBB`) for `Frame::copy`.
+  until `waitUntilCompleted`. Do not use `packed_float` in MSL: the shader
+  compiler rejected it here, so the shaders use plain `float2`/`float4` and the
+  Rust `SolidVertex` carries `_padding: [f32; 2]` so `color` lands at offset
+  16. Read a BGRA8 target back as little-endian `u32` (`0xAARRGGBB`) for
+  `Frame::copy`.
+- **A layer never appears in `cacheDisplayInRect`.** The content and its two
+  overlay layers are not part of the view's cached display. `write_screenshot`
+  hides them, marks the view as capturing so `drawRect:` paints the readback
+  frame and `chrome`'s overlays for that one draw, then restores them. A
+  drawable is also invisible to `cacheDisplayInRect`, so the capture is the
+  readback, not what the window presented.
+- **The content layer is `geometryFlipped`.** The view is flipped and the
+  drawable's first row is the grid's first row; without the flip the pane is
+  upside down.
+- **A layer animates its properties by default.** Every frame resize, find
+  backdrop or bell change is wrapped in a `CATransaction` with actions
+  disabled, or the content slides and the overlays fade instead of keeping
+  time with the window.
+- **A layer-backed view's own drawing is a sublayer.** AppKit inserts the
+  view's `drawRect:` content at index 0 and the controls' layers after it. The
+  content and its overlays are inserted at the bottom (`insertSublayerBelow:`
+  with a nil sibling, in reverse order), so the find field and its buttons are
+  above the find backdrop rather than hidden by it.
+- **The content layer covers the grid, not the pane.** The scrollbar and the
+  strip sit outside its frame, so AppKit still paints them and they stay
+  visible above the layer's left/right edges; the find backdrop and the bell
+  cross the grid, which is why they are layers too.
 - **`WINTER_SOFTWARE=1` selects the software backend.** Use it to A/B a frame;
   the two renderers match for opaque glyphs, and antialiased text differs by at
   most one 8-bit step from the GPU's rounding.

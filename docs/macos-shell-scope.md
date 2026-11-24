@@ -20,9 +20,11 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   pane's palette. A theme's four fills are honoured.
 - The grid, cursor, selection, find highlights and prompt ticks from the shared
   renderer: cell quads, glyphs from a coverage atlas, images, grid lines and the
-  cursor are drawn by Metal and read back into an `NSBitmapImageRep` (ADR 073).
-  The software backend is the fallback when no device is available or
-  `WINTER_SOFTWARE=1` is set.
+  cursor are drawn by Metal into a `CAMetalLayer` drawable, so the window shows
+  the GPU's frame without a copy (ADR 073). The frame is also read back into an
+  `NSBitmapImageRep` for `WINTER_SCREENSHOT` and as the fallback when the layer
+  cannot produce a drawable. The software backend is the fallback when no device
+  is available or `WINTER_SOFTWARE=1` is set.
 - A real menu bar: About, Settings… (⌘,), Quit (⌘Q), New Tab (⌘T), Close Tab
   (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), and the standard Edit menu
   whose `copy:`/`paste:` go to the terminal or the focused text field.
@@ -62,8 +64,6 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
   as one value; character- and line-level navigation through the
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
-- A `CAMetalLayer` presentation: the content is GPU-rendered but its frame is
-  read back for the existing blit (ADR 073).
 - Panes and the command palette.
 
 ## Architecture
@@ -75,7 +75,7 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
 | `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the IME composition. No AppKit except the `Frame` it owns |
 | `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
-| `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures and the offscreen readback (ADR 073) |
+| `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures, drawable presentation and the offscreen readback (ADR 073) |
 | `icon.rs` | A tab's program icon from Launch Services, and the drawn application mark (ADR 058), both cached |
 | `settings.rs` | The native settings window and its action methods |
 | `keys.rs` | Virtual-key codes and layout-character selection |
@@ -119,13 +119,31 @@ below `winter` sees AppKit.
 - **Metal's vertex buffers are unretained.** A buffer bound with
   `setVertexBuffer:offset:atIndex:` must outlive the command buffer; keep it
   alive until `waitUntilCompleted` or the draw silently reads freed memory.
-- **MSL `packed_float` matches Rust `[f32; N]`.** A plain `float2`/`float4`
-  struct aligns its fields differently from `#[repr(C)]`, which shifts every
-  colour and UV. The shader uses packed types so the CPU's layout is the
-  device's.
+- **MSL vertex structs need the Rust layout's padding.** The shader uses plain
+  `float2`/`float4`, whose alignment differs from a bare `#[repr(C)]` struct
+  with two `f32`s before a colour; the Rust `SolidVertex` carries
+  `_padding: [f32; 2]` so `color` lands at offset 16. `packed_float` was tried
+  and the shader compiler rejected it here.
+- **A layer never appears in `cacheDisplayInRect`.** The screenshot path is a
+  cached display of the content view, which draws the view and not its
+  sublayers. Hide the content and overlay layers, mark the view as capturing so
+  it paints the readback frame and `chrome`'s overlays for that one draw, then
+  restore them.
 - **A BGRA8 readback is already `0xAARRGGBB`.** The bytes are `B, G, R, A`;
   read little-endian and hand the `u32` to `Frame::copy`, which applies the
   `AlphaFirst` byte order (ADR 072's bitmap trap).
+- **A layer-backed view's own drawing is a sublayer.** After `setWantsLayer(true)`
+  AppKit inserts a layer for the view's `drawRect:` content at index 0 and adds
+  each control's layer after it. The content and its two overlay layers are
+  inserted at the bottom too, so the find field, its buttons and the count stay
+  above the find backdrop instead of being covered by it.
+- **A layer animates its properties by default.** Setting a frame or a
+  background colour starts a 0.25-second action; a window resize would slide
+  the content instead of fitting it. The controller wraps every change in a
+  `CATransaction` with actions disabled.
+- **The content layer's drawable is top-down.** The view is flipped and its
+  drawable's first row is the grid's first row, so the `CAMetalLayer` is
+  `geometryFlipped`; without it the pane is upside down.
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
   content under them; `chrome::LEFT_INSET` is the gap.
 
