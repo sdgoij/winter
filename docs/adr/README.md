@@ -100,4 +100,5 @@ Rules:
 | [069](069-tab-grid-and-header-alignment.md) | A tab's icon, title and close are grid columns; the close button hovers; the header sits at the slot's bottom | Accepted |
 | [070](070-profile-icons-and-menu-groups.md) | A profile with no icon wears the shell's own; the drop-down groups its commands behind a hairline with gear and help glyphs; the About dialog links the repository | Accepted |
 | [071](071-settings-dialog-buttons.md) | The settings dialog's Save and Revert are its primary and secondary buttons, not the last two rows of its content | Accepted |
+| [072](072-macos-appkit-shell.md) | The macOS shell is AppKit for the host and `renderer`'s pixels for the strip and grid; `unsafe` is confined to `macos` | Accepted |
 | [072](072-win32-record-character.md) | A Win32 input record carries the character a key types, so Enter, Tab, Backspace and Escape reach a character-reading client | Accepted |

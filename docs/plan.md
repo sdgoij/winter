@@ -5,9 +5,10 @@ at `.design/refs/terminal/`. It is the oracle: where this code and upstream
 disagree, upstream wins (CONTRIBUTING.md §Porting).
 **Goal:** Port the core terminal emulator to a cross-platform Rust codebase targeting Windows, Linux (Wayland/X11), and macOS.
 
-## Status (2026-11-22)
+## Status (2026-11-24)
 
-Verified by running the gate, not by reading the previous status:
+Verified by running the gate, not by reading the previous status; `cargo-deny`
+is not installed on the host and is left to CI:
 
 | Crate | Lines | Tests | State |
 |---|---|---|---|
@@ -22,17 +23,20 @@ Verified by running the gate, not by reading the previous status:
 | `server` | ~1.0k | 17 + 1 ignored | Phase 7 — `ConsoleShimPolicy` (ADR 015), the `DeviceComm` trait, and the pty layer: ConPTY and `openpty` behind two `#[allow(unsafe_code)]` modules (ADR 016), with a headless `OpenConsole.exe` host that forwards image sequences (ADR 055). The driver protocol is deliberately not ported |
 | `settings` | ~3.0k | 86 | Phase 10 (ADRs 022–032, 034, 035, 047): the TOML file's path and schema version, the named-profile schema, keybindings with their own chord syntax and action names (including the scrolling six), colour schemes applied to the adapter's table, window themes the tab strip paints, the font size, the normalization that makes a partial file usable, typed warnings for what it had to decide, a load report that says why a file was not used, a writer, a stamp the application polls to reload a save, the default file a first start is given, the migration from the earlier JSON file, and the table that names a scheme's colours |
 | `audio` | ~0.4k | 7 | Phase 11 — sound without a device (ADR 033): the DECPS arithmetic from `MidiAudio.cpp` (note to frequency, the wave rate DirectSound was given, the General MIDI 2 gain law), a note-to-tone map, and the console host's bell tone. The Windows sink is in the app |
-| `winter` | ~8.6k | 222 + 1 ignored | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053, 064–068), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs its own tab strip in the title bar whose tabs each own a terminal, carry their program's own icon, share the row equally and ellipsise rather than pushing the buttons under the caption, and whose selected tab takes the terminal's own fill and paints down to the pane, offers one profile per installed WSL distribution beside a split new-tab and drop-down control, with each row's program icon, the shell's own icon where a program has none, a hairline before the gear and question-mark commands, and an About dialog that links the repository (ADRs 065–067, 070), insets its text from the pane's edges so it wraps before the scrollbar (ADR 068), matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, paints a retransmitted image once per batch (ADR 057), keeps a held key down through Win32 input records (ADR 056), and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
-for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab |
+| `winter` | ~13k | 192 + 1 ignored on macOS; more on Windows | Phase 8's shell (ADRs 018, 019, 020), Phase 9's tabs (ADR 021) and panes, and the settings consumers: `session`, `shell_integration`, `term_connection`, `term_control`, `term_events`, `term_settings`, `grid`, `input`, `terminal_render`, `view`, `blink`, `tabs`, `layout`, `app`, `terminal_widget`, `config`, `window` and `icon` (egui on winit/wgpu; ADR 038), plus `winui` on Windows (WinUI 3, ADRs 040–053, 064–068), whose pane fits the window's cells and its DPI, starts from the settings file's profile, font size and scheme, runs its own tab strip in the title bar whose tabs each own a terminal, carry their program's own icon, share the row equally and ellipsise rather than pushing the buttons under the caption, and whose selected tab takes the terminal's own fill and paints down to the pane, offers one profile per installed WSL distribution beside a split new-tab and drop-down control, with each row's program icon, the shell's own icon where a program has none, a hairline before the gear and question-mark commands, and an About dialog that links the repository (ADRs 065–067, 070), insets its text from the pane's edges so it wraps before the scrollbar (ADR 068), matches the file's chords before the terminal sees them (copy, paste, tabs, scrolling; copy declines with no selection so Ctrl+C still interrupts), reads the wheel from a low-level hook and forwards it to a mouse-tracking program unless Shift is held, reloads a saved settings file within a second, opens a settings dialog and a find bar, offers a profile menu beside the new-tab button, paints a retransmitted image once per batch (ADR 057), keeps a held key down through Win32 input records (ADR 056), and selects with the pointer. Mouse selection and forwarding, copy/paste across history, scrollback, drag-to-scroll selection, OSC titles, bell attention, cursor shapes, text decorations, reverse video, intense brightening, faint text, italics from the host's monospace face (ADR 029), tabs, splittable panes whose dividers drag, a shell chosen per tab from the profile menu, a command palette over the profiles and the window's actions, an in-terminal find bar, a scrollbar with prompt marks, a PowerShell hook that reports each command's exit code so a failed one shows red (ADRs 059, 060), desktop notifications
+for a program's OSC 777, a settings window that reports the file, lists what it adjusted, edits every setting it holds — profiles, keybindings, schemes, themes, font size and defaults — and previews the document a save writes, a bell that rings the console host's tone and flashes the pane, and DECPS notes played on a thread of their own. The terminal itself is a `Control` over a `Connection` trait, with the viewport and the selection in the widget (ADR 036), and a shell that exits closes its tab; and `macos` (AppKit through `objc2`, ADR 072), a native window whose title bar is the tab strip, a real menu bar and profile drop-down, a native find field and settings window, the shared input, pointer and scrollback rules, and the renderer's frame blitted into the pane, with `WINTER_SCREENSHOT` as its live check; IME composition, accessibility, program icons on tabs and drag-reorder are named follow-ups |
 
-`just gate` is green: `cargo fmt --all --check`, `clippy -D warnings`, `cargo-deny`,
-1732 tests, doc tests. Phases 1–7 are complete. Phase 8 has the last of
+`just fmt`, `just clippy`, `just test`, `just doc` and `just test-long` are
+green; `cargo-deny` is a CI gate and was not installed on the host that wrote
+this row. Phases 1–7 are complete. Phase 8 has the last of
 `Terminal.cpp`'s input surface and a runnable egui shell with mouse selection,
 copy/paste and scrollback; its keyboard, mouse and kitty rows are retired into
 `term` (ADR 017), and native window backends are deferred (ADR 018); ADR 040
 takes the Windows shell to WinUI 3, and the first WinUI shell (ADRs 041, 042)
-runs a shell and paints it through `renderer`, with egui kept for Linux and
-macOS until their own shells land; the pane now fits the panel's cells and its
+runs a shell and paints it through `renderer`, and ADR 072 takes macOS to
+its own AppKit shell — the native window, menu bar, find field and settings
+window, with the tab strip, scrollbar and grid still `renderer`'s pixels —
+while Linux keeps egui (ADR 062); the pane now fits the panel's cells and its
 composition scale (ADR 043), starts from the settings file's profile, font
 size and scheme (ADR 044), runs a tab strip of tabs that each own a terminal,
 matches the file's chords before the terminal sees them (ADR 046), and reaches
@@ -1169,8 +1173,8 @@ everywhere. A native backend replaces those five without touching `session.rs` o
 `grid.rs`. ADR 040 replaces the Windows shell with WinUI 3; `src/winui/app.rs`
 and `surface.rs` are the first one — a window, one pane, the pty, keys and the
 renderer's pixels on a `SwapChainPanel` (ADRs 041, 042). Tabs, the palette and
-the settings editor are still to come, and egui keeps Linux and macOS until
-their native shells land.
+the settings editor are still to come there. ADR 072 gives macOS the same step
+with AppKit, while Linux keeps egui (ADR 062).
 
 - [x] ~~`winter/crates/ui/src/platform/win32_window.rs`~~ — Win32 backend
   - Retired: winit supplies the window, event loop, DPI and clipboard (ADR 018).
@@ -1800,17 +1804,17 @@ case enforces is not a target.
 | **Text reflow algorithm** | Core functionality | Property tests: character preservation, width constraints; snapshot tests at several widths |
 | **Glyph atlas management** | Performance + correctness | Property tests: non-overlapping packed rects; snapshot tests per backend |
 | **VT escape sequence conformance** | Compatibility | Cases from ECMA-48, DEC, xterm and upstream's `ut_*`; `generate.rs` feeds arbitrary bytes and asserts survival |
-| **IME/Composition input** | Non-Latin input quality | Windows IME through the host; egui's text input on Linux and macOS |
+| **IME/Composition input** | Non-Latin input quality | Windows IME through the host; the macOS shell accepts composed `characters` but its marked-text preview and candidate anchor are follow-ups (ADR 072); egui's text input on Linux |
 | **Clipboard formatting** | User expectations | Round-trip tests for plain, HTML and RTF through the buffer's copy path |
-| **DPI awareness** | Multi-monitor quality | The WinUI pane fits its composition scale (ADR 043); egui's scale factor covers the other shells |
+| **DPI awareness** | Multi-monitor quality | The WinUI pane fits its composition scale (ADR 043); the macOS shell rebuilds the face at `backingScaleFactor` (ADR 072); egui's scale factor covers Linux |
 | **Sixel/image rendering** | Advanced features | Conformance cases with known sixel images; band layout in the buffer (ADR 005) |
-| **Cross-platform windowing** | Platform parity | The two shells share `input`, `view`, `tabs` and `term_control`; CI runs the gate on every supported host |
+| **Cross-platform windowing** | Platform parity | The three desktop shells share `input`, `view`, `tabs` and `term_control`; CI runs the gate on every supported host |
 
 ## Historical proposal
 
 The original plan named a `WindowBackend` trait and a `crates/ui` with Win32,
 X11, Wayland and Cocoa backends. ADR 018 replaced it with egui on winit and
-wgpu for Linux and macOS, and ADR 040 replaced the Windows shell with WinUI 3.
-No `crates/ui` exists; the two shells share the portable crates through
-`input`, `view`, `tabs` and `term_control`. The proposal is recorded in the
-ADRs, not here.
+wgpu for Linux, ADR 040 replaced the Windows shell with WinUI 3, and ADR 072
+gave macOS an AppKit shell. No `crates/ui` exists; the three shells share the
+portable crates through `input`, `view`, `tabs` and `term_control`. The proposal
+is recorded in the ADRs, not here.

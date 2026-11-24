@@ -6,7 +6,7 @@
 //! own bar and the WinUI pane draws a `TextBox`, but both ask the same questions.
 
 use buffer::TextMatch;
-#[cfg(any(windows, feature = "gtk", test))]
+#[cfg(any(windows, target_os = "macos", feature = "gtk", test))]
 use utils::{Point, PointSpan};
 
 use crate::term_control::Control;
@@ -90,9 +90,9 @@ pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> O
 /// names the match whose span is reported as the focused one.
 ///
 /// Only the shells that hand these spans to a renderer call this: the WinUI
-/// pane and the GTK pane. The egui pane paints its own rows. On the other
-/// platforms the function exists for its tests.
-#[cfg(any(windows, feature = "gtk", test))]
+/// pane, the macOS pane and the GTK pane. The egui pane paints its own rows. On
+/// the other platforms the function exists for its tests.
+#[cfg(any(windows, target_os = "macos", feature = "gtk", test))]
 pub(crate) fn highlight_spans(
     matches: &[TextMatch],
     current: Option<usize>,

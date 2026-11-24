@@ -6,8 +6,9 @@ description: Build, run and live-check the WinUI 3 shell in crates/winter/src/wi
 # The WinUI 3 shell
 
 `crates/winter/src/winui/` is the Windows shell; `main.rs` chooses it under
-`cfg(windows)` and the egui shell everywhere else. The decisions are ADRs
-040–052. This is how to change it without rediscovering the traps.
+`cfg(windows)`, the AppKit shell under `cfg(target_os = "macos")` (ADR 072),
+and the egui shell on Linux. The decisions are ADRs 040–052. This is how to
+change it without rediscovering the traps.
 
 ## Shape
 

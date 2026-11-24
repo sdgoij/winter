@@ -30,6 +30,48 @@ gtk4 = { version = "0.11", optional = true, features = ["v4_8"] }
 # runs the egui shell and the gate must build without `gtk4-devel`.
 gtk = ["dep:gtk4"]
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The macOS shell is AppKit, through the same objc2 crates eframe already uses on
+# this host (ADR 072). Named only inside `src/macos/`.
+objc2 = "0.6.5"
+# Only the AppKit modules this shell names: the default feature set also pulls
+# CloudKit, CoreData, CoreVideo and the rest of the bindings.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAlert",
+    "NSAppearance",
+    "NSApplication",
+    "NSAttributedString",
+    "NSBezierPath",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSButtonCell",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSEvent",
+    "NSFont",
+    "NSGraphics",
+    "NSImage",
+    "NSImageRep",
+    "NSMenu",
+    "NSMenuItem",
+    "NSParagraphStyle",
+    "NSPopUpButton",
+    "NSResponder",
+    "NSSearchField",
+    "NSStringDrawing",
+    "NSText",
+    "NSTextField",
+    "NSTextView",
+    "NSTrackingArea",
+    "NSView",
+    "NSWindow",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+] }
+objc2-foundation = "0.3.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 windows-core = "0.100"

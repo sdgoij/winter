@@ -167,10 +167,12 @@ tests pass.
   incidental: `utils` opts out at its root because it owns the lock-free
   primitives; `server`'s two pty backends carry a module-level
   `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
-  `winter`'s `sound` sink does the same for `Beep` (ADR 033), and its
+  `winter`'s `sound` sink does the same for `Beep` (ADR 033), its
   `winui::surface`, `winui::wheel`, `winui::icon` and `winui::profile_icon`
   modules do for Direct2D, the wheel hook, the window icon and a program's icon
-  (ADRs 041, 047, 058, 066). The two self-referential buffer iterators carry an
+  (ADRs 041, 047, 058, 066), and `macos` declares one allowance for the AppKit
+  boundary — its window, menu and bitmap calls (ADR 072). The two
+  self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
 - **No new dependency without a reason in the commit.** Prefer what the
@@ -198,7 +200,7 @@ Do not add call sites under an allowance.
 |---|---|
 | `docs/plan.md` | The porting plan, milestone status, and what to build next |
 | `docs/adr/` | Decisions that constrain future code |
-| `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI shell, commit messages |
+| `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI shell, the macOS shell, commit messages |
 | `.design/refs/terminal/` | A local checkout of the upstream C++, gitignored, because it is the oracle and not source |
 | `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
@@ -211,7 +213,7 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
-| `crates/winter` | The application: the egui shell, and `winui/` on Windows |
+| `crates/winter` | The application: the egui shell on Linux, `winui/` on Windows, and `macos/` on macOS |
 
 ## Where the port stands
 

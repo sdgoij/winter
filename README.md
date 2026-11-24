@@ -14,9 +14,10 @@ Early but coherent. The terminal core — parsing, the buffer, dispatch, the
 renderer, the input encoders, the console host, a working pty layer — is
 written and tested. On Windows the shell is native WinUI 3, with tabs in the
 title bar, chords, pointer selection, scrollback, the wheel, live settings
-reload, a settings dialog and a find bar (ADRs 040–051, 025); Linux and macOS
-run the egui shell (ADR 018). The native shells for those two platforms come
-after the behaviour is right.
+reload, a settings dialog and a find bar (ADRs 040–051, 025). On macOS it is a
+native AppKit shell — the window, menu bar, find field and settings window are
+the platform's, while the tab strip, scrollbar and grid stay `renderer`'s
+pixels (ADR 072). Linux runs the egui shell (ADRs 018, 062).
 
 | Crate | What it is | State |
 |---|---|---|
@@ -31,9 +32,10 @@ after the behaviour is right.
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
-| [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053, 064–068), including our own tab strip in the title bar, its tabs equal-width and ellipsising so they never push the controls under the caption buttons, the selected tab in the terminal's colour and painting down to the pane, a profile menu beside a split new-tab/▾ control, one row per installed WSL distribution and each program's own icon on its row and its tab, a pane whose text is inset from its edges and wraps before the scrollbar, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar |
+| [`crates/winter`](crates/winter) | The application: a `Control` over a `Connection` trait, `app.rs` for the window and its tabs, `terminal_widget.rs` for the pane, `config.rs` for the settings window, a drawn icon, pty sessions, document snapshots and scroll/selection views; `winui/` is the WinUI 3 shell on Windows and `macos/` the AppKit shell on macOS | Phase 9 complete (ADRs 018–022, 036, 038); WinUI 3 on Windows (ADRs 040–053, 064–068), including our own tab strip in the title bar, its tabs equal-width and ellipsising so they never push the controls under the caption buttons, the selected tab in the terminal's colour and painting down to the pane, a profile menu beside a split new-tab/▾ control, one row per installed WSL distribution and each program's own icon on its row and its tab, a pane whose text is inset from its edges and wraps before the scrollbar, Ctrl+C copy that still interrupts when nothing is selected, a saved settings file picked up within a second (ADR 025), a settings dialog and a find bar. On macOS, an AppKit shell (ADR 072) hosts the window, menu bar, profile drop-down, find field, settings window and clipboard, with the same painted strip and `renderer`'s grid |
 
-1732 tests pass, clippy is clean at `-D warnings`, and `cargo-deny` passes. The
+The workspace suite passes and clippy is clean at `-D warnings`; CI runs
+`cargo-deny` and the three-platform gate. The
 fourteen-phase plan, the milestone table, and the next module are in
 [`docs/plan.md`](docs/plan.md).
 
