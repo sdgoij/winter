@@ -831,7 +831,10 @@ impl Loader {
         // symbol tables.
         unsafe {
             if let Some(glx) = self.glx {
-                let address = glx(cname.as_ptr() as *const u8);
+                // `c_char` is `i8` on x86_64 and `u8` on aarch64, so naming the
+                // target type is the only spelling both accept: `as` is a cast
+                // to the same type on one of them, which clippy refuses.
+                let address = glx(cname.as_ptr().cast::<u8>());
                 if !address.is_null() {
                     return address;
                 }
