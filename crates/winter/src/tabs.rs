@@ -242,6 +242,23 @@ impl<T> Tabs<T> {
         self.active = active;
         true
     }
+
+    /// Moves the tab at `from` to sit at `to`, keeping the active tab active.
+    ///
+    /// Returns whether the order changed, so a drag that stays over its own tab
+    /// is a no-op. Both indices are positions before the move; the active tab is
+    /// looked up again after it, which is what `reorder` already does.
+    pub fn move_to(&mut self, from: usize, to: usize) -> bool {
+        let count = self.items.len();
+        if from >= count || to >= count || from == to {
+            return false;
+        }
+
+        let mut order: Vec<usize> = (0..count).collect();
+        let moved = order.remove(from);
+        order.insert(to, moved);
+        self.reorder(&order)
+    }
 }
 
 #[cfg(test)]
@@ -336,6 +353,36 @@ mod tests {
         assert!(!tabs.reorder(&[0, 1, 3]));
         assert_eq!(titles(&tabs), vec!["a", "b", "c"]);
         assert_eq!(tabs.active(), Some(&"c"));
+    }
+
+    #[test]
+    fn moving_a_tab_reorders_the_list_and_keeps_it_active() {
+        let mut tabs = Tabs::new("a");
+        tabs.add("b");
+        tabs.add("c");
+        tabs.select(1);
+
+        assert!(tabs.move_to(0, 2));
+        assert_eq!(titles(&tabs), vec!["b", "c", "a"]);
+        // The tab that was active is still the one shown.
+        assert_eq!(tabs.active(), Some(&"b"));
+        assert_eq!(tabs.index(), 0);
+
+        assert!(tabs.move_to(2, 0));
+        assert_eq!(titles(&tabs), vec!["a", "b", "c"]);
+        assert_eq!(tabs.active(), Some(&"b"));
+        assert_eq!(tabs.index(), 1);
+    }
+
+    #[test]
+    fn moving_a_tab_onto_itself_or_off_the_end_changes_nothing() {
+        let mut tabs = Tabs::new("a");
+        tabs.add("b");
+
+        assert!(!tabs.move_to(0, 0));
+        assert!(!tabs.move_to(0, 2));
+        assert!(!tabs.move_to(2, 0));
+        assert_eq!(titles(&tabs), vec!["a", "b"]);
     }
 
     #[test]

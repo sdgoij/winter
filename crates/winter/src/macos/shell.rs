@@ -104,6 +104,8 @@ pub(crate) struct Shell {
     last_mouse_cell: Option<(i32, i32)>,
     /// The cell a press started on, so the first move starts a selection.
     press: Option<((i32, i32), bool)>,
+    /// The tab a press grabbed, until the drag ends.
+    tab_drag: Option<usize>,
     /// The cell the pointer is over, so a wheel can be aimed at a program.
     pointer_cell: Option<(i32, i32)>,
     /// Fractional trackpad scrolling waiting to make a row.
@@ -182,6 +184,7 @@ impl Shell {
             hovered_close: None,
             last_mouse_cell: None,
             press: None,
+            tab_drag: None,
             pointer_cell: None,
             wheel_pixels: 0.0,
             menu_requested: false,
@@ -599,6 +602,9 @@ impl Shell {
         match chrome::strip_hit(&layout, point.0) {
             Some(StripHit::Tab(index)) => {
                 self.tabs.select(index);
+                // A press on a tab body also arms a reorder; the close box, the
+                // buttons and the empty strip do not, so a close never drags.
+                self.tab_drag = Some(index);
                 true
             }
             Some(StripHit::Close(index)) => {
@@ -998,6 +1004,22 @@ impl Shell {
 
     /// Handles a pointer move while `buttons` are held.
     pub(crate) fn pointer_moved(&mut self, point: (f64, f64), buttons: MouseButtons, modifiers: input::Modifiers) {
+        if let Some(from) = self.tab_drag {
+            if !buttons.left {
+                self.tab_drag = None;
+                return;
+            }
+            let layout = self.strip();
+            if let Some(target) = chrome::drag_target(&layout, from, point.0)
+                && self.tabs.move_to(from, target)
+            {
+                self.tab_drag = Some(target);
+            }
+            // A tab drag owns the pointer wherever it goes vertically, so the
+            // pane beneath it never starts a selection.
+            return;
+        }
+
         if self.scrollbar_press {
             if buttons.left {
                 self.scrollbar_dragged(point.1);
@@ -1096,6 +1118,10 @@ impl Shell {
         buttons: MouseButtons,
         modifiers: input::Modifiers,
     ) {
+        if self.tab_drag.take().is_some() {
+            return;
+        }
+
         if self.scrollbar_press {
             self.scrollbar_press = false;
             self.scrollbar.release();

@@ -27,6 +27,9 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 - Pointer selection with click/drag, double-click word, triple-click line, the
   scrollbar with its prompt ticks, the wheel into history (or to a tracking
   program unless Shift is held), copy/paste, right-click paste.
+- Drag-reorder of tabs: a press on a tab body arms a drag, a move past a
+  neighbour's midpoint swaps the two, and the close box and the buttons never
+  start a drag.
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
   OSC 777 notifications through `notify-rust`.
 - The shell's drawn icon (ADR 058) as the application icon.
@@ -48,8 +51,7 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   it; this is the same gap the WinUI shell has with UIA.
 - A program's own icon on its tab (WinUI's ADR 066). macOS has no equivalent of
   GDI's icon extraction; a bundle's icon comes from Launch Services.
-- Drag-reorder of tabs, panes, the command palette, DECPS tones and a GPU
-  content path.
+- Panes, the command palette, DECPS tones and a GPU content path.
 - The settings editor edits four values; profile, keybinding, scheme and theme
   rows stay file-only here.
 

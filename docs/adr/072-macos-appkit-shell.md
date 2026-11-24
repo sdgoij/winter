@@ -62,6 +62,11 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
    previous tab and Find; the Edit menu carries the standard `copy:`/`paste:`
    selectors with a nil target, so the responder chain gives them to the terminal
    view or to the find field's editor, whichever has focus.
+9. **A tab drag reorders the strip.** The press arms a drag on the tab body
+   (not its close box), a move maps the pointer to a slot by the neighbours'
+   midpoints, and `tabs::Tabs::move_to` applies the permutation. The rule is
+   shared with a future drag on another toolkit; the close box, the `+` button
+   and the empty strip never start a drag.
 
 ## Rationale
 
@@ -95,9 +100,8 @@ Negative:
 - **IME composition and accessibility are not implemented.** The view handles
   key events and composed `characters`; an input method's marked text and the
   accessibility tree are follow-ups. They are named, not silently absent.
-- **No program icons on tabs, no drag reorder, no panes, no command palette.**
-  The first three are parity gaps with WinUI; the latter two are unported there
-  as well.
+- **No program icons on tabs, no panes, no command palette.** The first is a
+  parity gap with WinUI; the latter two are unported there as well.
 - **A preview crate.** `objc2` 0.6 is a stable release of the family, but the
   AppKit surface is generated and some generated APIs are deprecated; pin the
   versions and treat a move as deliberate.
