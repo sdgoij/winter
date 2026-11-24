@@ -217,6 +217,12 @@ settings window and the writer work from the parsed file.
 - The settings dialog's `ScrollViewer` is capped with `max_height`, never given a
   fixed `height`: a `ContentDialog` decides how tall its content may be, and a
   fixed 480 DIP pushed the Apply row under its Close button (ADR 070).
+- Save and Revert are the dialog's **primary and secondary buttons** (ADR 071).
+  The binding has no per-button click event, so `on_closed` reads the
+  `ContentDialogResult`: `command_for` maps Primary to Save and Secondary to
+  Revert, and sends the command *before* `SettingsMessage::Close` — Save reads
+  the draft Close discards. Enablement comes from `dirty`/`valid` computed in
+  `view`.
 
 ## Scrollbar
 

@@ -231,6 +231,8 @@ impl SettingsWindow {
             );
         }
 
+        let mut valid = false;
+        let mut dirty = false;
         if let Some(draft) = &self.draft {
             children.push(heading("Defaults").into());
             children.push(
@@ -509,19 +511,9 @@ impl SettingsWindow {
                 ),
             }
 
-            children.push(heading("Apply").into());
-            let valid = draft.document(settings).is_some();
-            let dirty = draft.differs_from(settings);
-            children.push(
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(8.0)
-                    .children((
-                        action_button("Save", sender, SettingsMessage::Save).is_enabled(dirty && valid),
-                        action_button("Revert", sender, SettingsMessage::Revert).is_enabled(dirty),
-                    ))
-                    .into(),
-            );
+            // What the dialog's own buttons will do, and why they may be off.
+            valid = draft.document(settings).is_some();
+            dirty = draft.differs_from(settings);
             if self.conflict {
                 children.push(
                     TextBlock::new()
@@ -551,15 +543,40 @@ impl SettingsWindow {
 
         ContentDialog::new()
             .title("Settings")
+            // Save and Revert are the dialog's own commands, beside Close. They
+            // used to sit at the bottom of the scrolling list, where reaching
+            // them meant scrolling past every setting (ADR 071).
+            .primary_button_text("Save")
+            .secondary_button_text("Revert")
             .close_button_text("Close")
             .is_open(self.open)
+            .is_primary_button_enabled(self.open && dirty && valid)
+            .is_secondary_button_enabled(self.open && dirty)
             .content(content)
             .on_closed({
                 let sender = sender.clone();
-                move |_| {
+                move |result: ContentDialogResult| {
+                    // The command first: Save reads the draft that Close
+                    // discards, and the result already means the dialog is gone.
+                    if let Some(command) = command_for(result) {
+                        let _ = sender.send(Message::Settings(command));
+                    }
                     let _ = sender.send(Message::Settings(SettingsMessage::Close));
                 }
             })
+    }
+}
+
+/// The command a closed dialog's result asks for, if it asks for one.
+///
+/// The dialog's own command area is where Save and Revert live (ADR 071), so a
+/// result is the only thing that distinguishes them; every other way of closing
+/// it — the Close button, Escape — only closes.
+fn command_for(result: ContentDialogResult) -> Option<SettingsMessage> {
+    match result {
+        ContentDialogResult::Primary => Some(SettingsMessage::Save),
+        ContentDialogResult::Secondary => Some(SettingsMessage::Revert),
+        _ => None,
     }
 }
 
@@ -875,6 +892,20 @@ mod tests {
         });
 
         assert!(window.document(&settings).is_none());
+    }
+
+    #[test]
+    fn the_dialogs_result_names_its_command() {
+        assert!(matches!(
+            command_for(ContentDialogResult::Primary),
+            Some(SettingsMessage::Save)
+        ));
+        assert!(matches!(
+            command_for(ContentDialogResult::Secondary),
+            Some(SettingsMessage::Revert)
+        ));
+        // Close, Escape and anything else the control may return only close.
+        assert!(command_for(ContentDialogResult::None).is_none());
     }
 
     #[test]
