@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 publish.workspace = true
-description = "The Winter terminal application"
+description = "The Winter terminal's shell-independent core"
 
 [dependencies]
 audio.workspace = true
@@ -17,124 +17,11 @@ settings.workspace = true
 term.workspace = true
 types.workspace = true
 utils.workspace = true
-arboard.workspace = true
 notify-rust.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
-# The GTK 4 shell's host toolkit (ADRs 061, 075). GTK 4.10 is the floor the
-# accessible-property API needs, so Linux always builds the shell.
-gtk4 = { version = "0.11", features = ["v4_8", "v4_10"] }
-# The OpenGL content path (ADR 076): safe bindings over the context GTK makes
-# current, the dynamic loader for libGL/libEGL, and the cast for vertex bytes.
-# All three are already in the lock through wgpu.
-glow = "0.17"
-libloading = "0.8"
-bytemuck = "1.25"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# The macOS shell is AppKit, through the same objc2 crates it already used on
-# this host (ADR 072). Named only inside `src/macos/`.
-objc2 = "0.6.5"
-# Only the AppKit modules this shell names: the default feature set also pulls
-# CloudKit, CoreData, CoreVideo and the rest of the bindings.
-objc2-app-kit = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "NSAlert",
-    "NSAccessibilityConstants",
-    "NSAppearance",
-    "NSApplication",
-    "NSAttributedString",
-    "NSBezierPath",
-    "NSBitmapImageRep",
-    "NSButton",
-    "NSButtonCell",
-    "NSCell",
-    "NSColor",
-    "NSControl",
-    "NSEvent",
-    "NSFont",
-    "NSGraphics",
-    "NSImage",
-    "NSImageRep",
-    "NSMenu",
-    "NSMenuItem",
-    "NSParagraphStyle",
-    "NSPopUpButton",
-    "NSResponder",
-    "NSScreen",
-    "NSScrollView",
-    "NSClipView",
-    "NSSearchField",
-    "NSStringDrawing",
-    "NSText",
-    "NSTextContainer",
-    "NSTextField",
-    "NSTextInputClient",
-    "NSTextView",
-    "NSTrackingArea",
-    "NSView",
-    "NSWindow",
-    "NSWorkspace",
-    "objc2-core-foundation",
-    "objc2-core-graphics",
-    "objc2-quartz-core",
-] }
-objc2-foundation = "0.3.2"
-# Only the Metal modules the content backend names; the default set also pulls
-# in the whole MTL4, ray-tracing and machine-learning surface.
-objc2-metal = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "MTLAllocation",
-    "MTLBuffer",
-    "MTLBlitCommandEncoder",
-    "MTLCommandBuffer",
-    "MTLCommandEncoder",
-    "MTLCommandQueue",
-    "MTLDrawable",
-    "MTLDevice",
-    "MTLLibrary",
-    "MTLPixelFormat",
-    "MTLRenderCommandEncoder",
-    "MTLRenderPass",
-    "MTLRenderPipeline",
-    "MTLResource",
-    "MTLTexture",
-    "MTLTypes",
-] }
-# The layer that presents the drawable, and the plain layers the find panel and
-# bell overlay use.
-objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
-    "std",
-    "CALayer",
-    "CAMetalLayer",
-    "CATransaction",
-    "objc2-core-foundation",
-    "objc2-core-graphics",
-    "objc2-metal",
-] }
-
 [target.'cfg(windows)'.dependencies]
+# The bell's Windows sink calls `Beep` directly (ADR 033).
 windows-sys.workspace = true
-windows-core = "0.100"
-windows-numerics = "0.3.1"
-windows-reactor = { package = "windows-reactor-pre", version = "0.108" }
-windows = { version = "0.62", features = [
-    "Foundation_Numerics",
-    "Win32_Foundation",
-    "Win32_Graphics_Direct2D",
-    "Win32_Graphics_Direct2D_Common",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_DirectWrite",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_System_Threading",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
-[target.'cfg(windows)'.build-dependencies]
-embed-resource.workspace = true
 
 [dev-dependencies]
 # The `write-icon` example encodes the drawn icon as the PNG the Linux package

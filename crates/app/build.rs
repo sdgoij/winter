@@ -1,16 +1,17 @@
 //! Embeds the window icon in the Windows executable.
 //!
-//! The pixels come from `src/icon_draw.rs`, the same drawing the egui shell
-//! hands its window manager, so the file Explorer shows and the window icon
-//! cannot drift (ADR 058). The ICO is generated into `OUT_DIR` and compiled
-//! with the rest of the resources.
+//! The pixels come from `crates/winter/src/icon_draw.rs`, the same drawing the
+//! shells hand their window manager and the macOS bundle draws its iconset
+//! from, so the file Explorer shows and the shell's icon cannot drift
+//! (ADR 058). The ICO is generated into `OUT_DIR` and compiled with the rest of
+//! the resources.
 
-#[path = "src/icon_draw.rs"]
+#[path = "../winter/src/icon_draw.rs"]
 #[allow(dead_code)]
 mod icon_draw;
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/icon_draw.rs");
+    println!("cargo:rerun-if-changed=../winter/src/icon_draw.rs");
     println!("cargo:rerun-if-changed=build.rs");
 
     #[cfg(windows)]

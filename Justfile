@@ -73,7 +73,7 @@ console-host:
 
 # Assemble a runnable Windows release folder: binary, console host, licences (ADR 055).
 dist:
-    cargo build --release -p winter
+    cargo build --release -p app
     rm -rf dist
     mkdir -p dist
     cp target/release/winter.exe dist/winter.exe

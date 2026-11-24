@@ -15,41 +15,41 @@ use crate::view::View;
 
 /// The find bar's state.
 #[derive(Debug, Default)]
-pub(crate) struct FindBar {
+pub struct FindBar {
     /// Whether the bar is showing.
-    pub(crate) open: bool,
+    pub open: bool,
     /// What the user is looking for.
-    pub(crate) query: String,
+    pub query: String,
     /// The query `matches` were computed for.
-    pub(crate) searched: String,
+    pub searched: String,
     /// Every match in the document, in reading order.
-    pub(crate) matches: Vec<TextMatch>,
+    pub matches: Vec<TextMatch>,
     /// The match Enter moved to, if any.
-    pub(crate) current: Option<usize>,
+    pub current: Option<usize>,
     /// The document height when the matches were computed.
-    pub(crate) document_height: i32,
+    pub document_height: i32,
     /// Whether the field still needs the keyboard focus.
-    pub(crate) focus: bool,
+    pub focus: bool,
 }
 
 impl FindBar {
-    pub(crate) fn show(&mut self) {
+    pub fn show(&mut self) {
         self.open = true;
         self.focus = true;
     }
 
-    pub(crate) fn hide(&mut self) {
+    pub fn hide(&mut self) {
         self.open = false;
         self.focus = false;
         self.current = None;
     }
 
-    pub(crate) fn toggle(&mut self) {
+    pub fn toggle(&mut self) {
         if self.open { self.hide() } else { self.show() }
     }
 
     /// Recomputes the matches after the query changed and selects the first.
-    pub(crate) fn refresh(&mut self, control: &mut Control) {
+    pub fn refresh(&mut self, control: &mut Control) {
         let (matches, document_height) = control.find_matches(&self.query);
         self.matches = matches;
         self.document_height = document_height;
@@ -58,12 +58,12 @@ impl FindBar {
     }
 
     /// Moves to the next (or previous) match, wrapping at both ends.
-    pub(crate) fn step(&mut self, forward: bool) {
+    pub fn step(&mut self, forward: bool) {
         self.current = next_match(self.current, self.matches.len(), forward);
     }
 
     /// Brings the current match into the middle of the view.
-    pub(crate) fn scroll_to(&self, control: &Control, view: &mut View) {
+    pub fn scroll_to(&self, control: &Control, view: &mut View) {
         let Some(found) = self.current.and_then(|index| self.matches.get(index)) else {
             return;
         };
@@ -72,7 +72,7 @@ impl FindBar {
 }
 
 /// The match Enter moves to, wrapping at both ends.
-pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
+pub fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
     if len == 0 {
         return None;
     }
@@ -94,7 +94,7 @@ pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> O
 /// pane, the macOS pane and the GTK pane. On the other platforms the function
 /// exists for its tests.
 #[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
-pub(crate) fn highlight_spans(
+pub fn highlight_spans(
     matches: &[TextMatch],
     current: Option<usize>,
     history: i32,

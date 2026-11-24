@@ -76,7 +76,7 @@ jobs:
             target=aarch64-apple-darwin
           fi
           rustup target add "$target"
-          cargo check -p winter --target "$target"
+          cargo check -p app --target "$target"
       # The bundle is otherwise only built by a tag, so a broken plist, iconset
       # or layout would first surface during a release.
       - name: Build the app bundle

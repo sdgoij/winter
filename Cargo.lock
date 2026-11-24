@@ -35,6 +35,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+ "winter-cocoa",
+ "winter-gtk4",
+ "winter-winui",
+]
+
+[[package]]
 name = "arboard"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2445,22 +2455,61 @@ dependencies = [
 name = "winter"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "audio",
  "buffer",
- "bytemuck",
- "embed-resource",
- "glow",
- "gtk4",
  "host",
- "libloading",
  "notify-rust",
+ "png",
+ "renderer",
+ "server",
+ "settings",
+ "term",
+ "types",
+ "utils",
+ "windows-sys",
+]
+
+[[package]]
+name = "winter-cocoa"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "audio",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-metal",
  "objc2-quartz-core",
- "png",
+ "renderer",
+ "server",
+ "settings",
+ "term",
+ "types",
+ "utils",
+ "winter",
+]
+
+[[package]]
+name = "winter-gtk4"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glow",
+ "gtk4",
+ "libloading",
+ "renderer",
+ "server",
+ "settings",
+ "term",
+ "utils",
+ "winter",
+]
+
+[[package]]
+name = "winter-winui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
  "renderer",
  "server",
  "settings",
@@ -2472,6 +2521,7 @@ dependencies = [
  "windows-numerics",
  "windows-reactor-pre",
  "windows-sys",
+ "winter",
 ]
 
 [[package]]

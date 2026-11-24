@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! The macOS shell: AppKit hosts the window, `renderer` paints the terminal.
 //!
 //! The split is the one ADR 061 describes for Linux: the window, its menus, its
@@ -5,9 +6,10 @@
 //! grid are pixels this shell draws, so the terminal looks the same as it does
 //! on Windows and a colour scheme reaches the chrome unchanged.
 //!
-//! `main.rs` selects this shell under `cfg(target_os = "macos")`. The crate's
-//! toolkit-free modules — `session`, `term_control`, `view`, `tabs`, `input`,
-//! `find`, `scrollbar`, `terminal_render` — are shared unchanged.
+//! `crates/app`'s `main` selects this shell under `cfg(target_os = "macos")`.
+//! The toolkit-free modules it shares — `session`, `term_control`, `view`,
+//! `tabs`, `input`, `find`, `scrollbar`, `terminal_render` — live in the
+//! `winter` crate and are used unchanged.
 //!
 //! `unsafe` is confined to the AppKit and Metal boundary: this module declares
 //! the allowance for its own calls and for `view`, `chrome`, `frame`, `icon`,
@@ -265,7 +267,7 @@ fn set_appearance(window: &NSWindow, dark: bool) {
 
 /// The host's monospaced face, preferring one with an italic.
 fn find_face() -> Option<renderer::FontFace> {
-    let directories = crate::fonts::font_directories();
+    let directories = winter::fonts::font_directories();
     let paths: Vec<&std::path::Path> = directories.iter().map(PathBuf::as_path).collect();
     let collection = renderer::FontCollection::from_directories(paths);
     collection
@@ -423,7 +425,7 @@ define_class!(
             }
 
             for (title, body) in &tick.notifications {
-                crate::notifications::show(title, body);
+                winter::notifications::show(title, body);
             }
 
             if tick.close_window {

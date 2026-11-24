@@ -20,17 +20,17 @@ use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WH
 use types::text_color::ColorType;
 use utils::Size;
 
-use crate::find::FindBar;
-use crate::input;
-use crate::scrollbar::{self, Press, Scrollbar};
-use crate::session::Session;
-use crate::sound::Sound;
-use crate::tabs::Tabs;
-use crate::term_control::Control;
-use crate::term_events::TerminalEvent;
-use crate::term_settings::TerminalSettings;
-use crate::terminal_render::TerminalData;
-use crate::view::View as ViewState;
+use winter::find::FindBar;
+use winter::input;
+use winter::scrollbar::{self, Press, Scrollbar};
+use winter::session::Session;
+use winter::sound::Sound;
+use winter::tabs::Tabs;
+use winter::term_control::Control;
+use winter::term_events::TerminalEvent;
+use winter::term_settings::TerminalSettings;
+use winter::terminal_render::TerminalData;
+use winter::view::View as ViewState;
 
 use super::chrome::{self, STRIP_HEIGHT, Strip, StripColors, StripHit};
 use super::frame::Frame;
@@ -271,7 +271,7 @@ impl Shell {
 
     /// Shows or clears the input method's marked text.
     pub(crate) fn set_composition(&mut self, text: &str, selected_utf16: usize) {
-        self.composition = crate::terminal_render::composition(text, selected_utf16);
+        self.composition = winter::terminal_render::composition(text, selected_utf16);
     }
 
     fn clear_composition(&mut self) {
@@ -373,7 +373,7 @@ impl Shell {
         (tab.view.scroll(), document, tab.control.size().1)
     }
 
-    pub(crate) fn marks(&self) -> &[crate::grid::MarkTick] {
+    pub(crate) fn marks(&self) -> &[winter::grid::MarkTick] {
         self.renderer.data().marks()
     }
 

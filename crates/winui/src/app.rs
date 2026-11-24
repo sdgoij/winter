@@ -26,16 +26,16 @@ use types::text_color::ColorType;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
-use crate::find::FindBar;
-use crate::input;
-use crate::scrollbar;
-use crate::session::Session;
-use crate::tabs::Tabs;
-use crate::term_control::Control;
-use crate::term_events::TerminalEvent;
-use crate::term_settings::TerminalSettings;
-use crate::terminal_render::TerminalData;
-use crate::view::View as ViewState;
+use winter::find::FindBar;
+use winter::input;
+use winter::scrollbar;
+use winter::session::Session;
+use winter::tabs::Tabs;
+use winter::term_control::Control;
+use winter::term_events::TerminalEvent;
+use winter::term_settings::TerminalSettings;
+use winter::terminal_render::TerminalData;
+use winter::view::View as ViewState;
 
 use super::gpu::GpuBackend;
 use super::icon;
@@ -46,7 +46,7 @@ use super::settings::{SettingsCommand, SettingsMessage, SettingsWindow};
 use super::surface::Surface;
 use super::wheel::{self, Wheel};
 use super::wsl;
-use crate::trace;
+use winter::trace;
 
 /// The size the window opens at, before the panel reports its own.
 const INITIAL_COLUMNS: i32 = 120;
@@ -2605,7 +2605,7 @@ mod tests {
 
     #[test]
     fn a_scheme_reaches_the_pane_and_survives_a_resize() {
-        use crate::term_connection::tests::Buffer;
+        use winter::term_connection::tests::Buffer;
 
         let text = r##"
             version = 1
@@ -2636,7 +2636,7 @@ mod tests {
 
     #[test]
     fn the_renderer_is_handed_the_panes_palette() {
-        use crate::term_connection::tests::Buffer;
+        use winter::term_connection::tests::Buffer;
 
         let file = settings::parse(
             r##"
@@ -2703,7 +2703,7 @@ mod tests {
     #[test]
     fn an_id_names_its_tab_and_nothing_once_it_closes() {
         fn tab(id: u64) -> Tab {
-            use crate::term_connection::tests::Buffer;
+            use winter::term_connection::tests::Buffer;
 
             Tab {
                 id,

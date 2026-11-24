@@ -1,0 +1,29 @@
+[package]
+name = "winter-gtk4"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "The GTK 4 shell of the Winter terminal"
+
+[dependencies]
+winter = { path = "../winter" }
+renderer.workspace = true
+server.workspace = true
+settings.workspace = true
+term.workspace = true
+utils.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The shell's host toolkit (ADRs 061, 075). GTK 4.10 is the floor the
+# accessible-property API needs.
+gtk4 = { version = "0.11", features = ["v4_8", "v4_10"] }
+# The OpenGL content path (ADR 076): safe bindings over the context GTK makes
+# current, the dynamic loader for libGL/libEGL, and the cast for vertex bytes.
+glow = "0.17"
+libloading = "0.8"
+bytemuck = "1.25"
+
+[lints]
+workspace = true

@@ -1,11 +1,11 @@
 ---
 name: winter-macos
-description: Build, run and live-check the AppKit shell in crates/winter/src/macos. Use when changing the macOS window, tab strip, menu bar, find field, settings window, pointer or keyboard input, or the NSBitmapImageRep blit, or when a macOS build or a headless screenshot behaves differently.
+description: Build, run and live-check the AppKit shell in crates/cocoa/src. Use when changing the macOS window, tab strip, menu bar, find field, settings window, pointer or keyboard input, or the NSBitmapImageRep blit, or when a macOS build or a headless screenshot behaves differently.
 ---
 
 # The macOS shell
 
-`crates/winter/src/macos/` is the macOS shell; `main.rs` chooses it under
+`crates/cocoa/src/` is the macOS shell; `main.rs` chooses it under
 `cfg(target_os = "macos")`. AppKit owns the window, menu bar, text fields,
 dialogs and pasteboard; the tab strip, scrollbar and grid are our pixels, the
 split ADR 072 takes from ADR 061. `winui`, `linux` and this module share
@@ -16,7 +16,7 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 
 | File | Owns |
 |---|---|
-| `mod.rs` | `run()`, `Controller` (timer, menus, find field, window delegate), the application menu, the app icon, the screenshot path |
+| `lib.rs` | `run()`, `Controller` (timer, menus, find field, window delegate), the application menu, the app icon, the screenshot path |
 | `view.rs` | `TerminalView`: flipped content view, key/mouse/wheel events, tracking area, `copy:`/`paste:` for the responder chain, `drawRect:` |
 | `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state; no AppKit except the `Frame` |
 | `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |

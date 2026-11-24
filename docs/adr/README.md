@@ -109,3 +109,4 @@ Rules:
 | [077](077-linux-package-is-an-app.md) | The Linux archive is an app tree — desktop entry named after the GTK application id, a generated icon and a rootless installer — with AppImage, Flatpak and deb left in the plan | Accepted |
 | [078](078-linux-appimage.md) | The Linux release also builds an AppImage, from the same tree, when `appimagetool` is available; the tag job downloads one and runs it extracted | Accepted |
 | [079](079-native-shells-only.md) | The native shells are the only shells: egui and `eframe` are deleted, the `gtk` feature goes, and the settings draft and font directories become toolkit-free public modules | Accepted |
+| [080](080-shells-are-crates.md) | Each shell is its own crate — `winter` is the shell-independent core, `gtk4`/`cocoa`/`winui` the shells, `app` the binary — and a package cycle is why they cannot stay together | Accepted |

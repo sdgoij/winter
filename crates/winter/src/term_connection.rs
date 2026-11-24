@@ -60,15 +60,19 @@ impl Connection for Session {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// A connection with no pty behind it, for the tests of this crate and of the
+/// shells built on it.
+///
+/// It is not gated on `test` because a shell's tests are a different crate's:
+/// the double has to be part of the library to be reachable from them.
+pub mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
 
     /// What a [`Buffer`] connection has seen, shared with the test that built it.
     #[derive(Debug, Default)]
-    pub(crate) struct Seen {
+    pub struct Seen {
         /// What the backend produces on the next drain.
         pub output: Vec<u8>,
         /// Whether the stream has ended.
@@ -84,7 +88,7 @@ pub(crate) mod tests {
     /// Cloning shares the state, so a test keeps a handle after the control has
     /// taken the box.
     #[derive(Debug, Clone, Default)]
-    pub(crate) struct Buffer {
+    pub struct Buffer {
         seen: Arc<Mutex<Seen>>,
     }
 

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! The GTK 4 shell: a native window over the renderer's pixels (ADR 061).
 //!
 //! A `GtkHeaderBar` holds the tab strip, which this module paints itself; below
@@ -42,17 +43,17 @@ use server::pty::PtySize;
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
 use utils::{InclusiveRect, Size};
 
-use crate::find::FindBar;
-use crate::input::{self, Event as InputEvent, ModifierSides, Modifiers};
-use crate::notifications;
-use crate::scrollbar::{self, Press, Scrollbar};
-use crate::session::Session;
-use crate::tabs::{self, StripHit, TabBox, Tabs};
-use crate::term_control::Control;
-use crate::term_events::TerminalEvent;
-use crate::term_settings::TerminalSettings;
-use crate::terminal_render::TerminalData;
-use crate::view::View;
+use winter::find::FindBar;
+use winter::input::{self, Event as InputEvent, ModifierSides, Modifiers};
+use winter::notifications;
+use winter::scrollbar::{self, Press, Scrollbar};
+use winter::session::Session;
+use winter::tabs::{self, StripHit, TabBox, Tabs};
+use winter::term_control::Control;
+use winter::term_events::TerminalEvent;
+use winter::term_settings::TerminalSettings;
+use winter::terminal_render::TerminalData;
+use winter::view::View;
 
 mod gl;
 
@@ -1066,7 +1067,7 @@ impl Shell {
 
     /// Shows or clears the input method's marked text.
     fn set_composition(&mut self, text: &str, selected_utf16: usize) {
-        self.composition = crate::terminal_render::composition(text, selected_utf16);
+        self.composition = winter::terminal_render::composition(text, selected_utf16);
     }
 
     /// The caret's box in the pane's coordinates, for the candidate window.
@@ -2542,7 +2543,7 @@ fn open_settings_window(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) 
         move || {
             let shell = shell.borrow();
             editor.buffer().set_text(&settings::to_toml(shell.settings()));
-            status.set_text(&crate::config::status_text(
+            status.set_text(&winter::config::status_text(
                 shell.settings_path(),
                 shell.migrated_from(),
                 shell.settings_error(),
@@ -2727,7 +2728,7 @@ struct Fonts {
 
 /// Finds the host's monospace face and measures it at `size`.
 fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
-    let directories = crate::fonts::font_directories();
+    let directories = winter::fonts::font_directories();
     if directories.is_empty() {
         return None;
     }

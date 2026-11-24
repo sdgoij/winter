@@ -1,11 +1,11 @@
 ---
 name: winter-winui
-description: Build, run and live-check the WinUI 3 shell in crates/winter/src/winui. Use when changing the Windows window, tabs, pointer or keyboard input, the Direct2D swap-chain surface, or the mouse-wheel hook, or when a Windows build or synthetic input behaves differently from the egui shell.
+description: Build, run and live-check the WinUI 3 shell in crates/winui/src. Use when changing the Windows window, tabs, pointer or keyboard input, the Direct2D swap-chain surface, or the mouse-wheel hook, or when a Windows build or synthetic input behaves differently from the egui shell.
 ---
 
 # The WinUI 3 shell
 
-`crates/winter/src/winui/` is the Windows shell; `main.rs` chooses it under
+`crates/winui/src/` is the Windows shell; `main.rs` chooses it under
 `cfg(windows)`, the AppKit shell under `cfg(target_os = "macos")` (ADR 072),
 and the GTK 4 shell on Linux (ADR 075). The decisions are ADRs 040–052. This is how to
 change it without rediscovering the traps.
@@ -21,7 +21,7 @@ change it without rediscovering the traps.
 | `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
 | `../find.rs` | The query, matches and screen spans, shared with the other shells |
 | `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
-| `mod.rs` | Module boundary and `run()` |
+| `lib.rs` | Module boundary and `run()` |
 
 `app.rs` owns the only `Renderer` and swap chain. Both shells share `input.rs`,
 `tabs.rs`, `view.rs`, `term_control.rs` and `term_connection.rs`; a rule that is

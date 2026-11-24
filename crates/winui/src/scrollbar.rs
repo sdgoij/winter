@@ -9,8 +9,8 @@
 
 use windows_reactor::{Canvas, Color, HorizontalAlignment, Rectangle, VerticalAlignment, View};
 
-use crate::scrollbar;
-use crate::terminal_render::TerminalData;
+use winter::scrollbar;
+use winter::terminal_render::TerminalData;
 
 /// The track's width in DIPs, matching the GTK shell's strip.
 pub(super) const WIDTH: f64 = scrollbar::WIDTH as f64;

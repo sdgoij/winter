@@ -1,6 +1,7 @@
 //! # winter
 //!
-//! The application: a shell on a pseudo terminal, painted in a window.
+//! The terminal's shell-independent core: a control over a pseudo terminal, the
+//! state a shell paints, and nothing that names a toolkit.
 //!
 //! The crate is split so a toolkit never reaches the terminal (ADR 038):
 //!
@@ -19,26 +20,20 @@
 //! - [`config`] holds the settings draft every editor edits, and [`fonts`] the
 //!   directories a face is composed from.
 //!
-//! The native shells own the window and the toolkit: `linux` is the GTK 4
-//! shell (ADR 075), where GTK hosts the menus, the find bar and the settings
-//! window while the tab strip, the scrollbar and the grid stay `renderer`'s
-//! pixels, drawn through GTK's OpenGL context with the software blit as the
-//! fallback (ADR 076); `macos` is the AppKit shell (ADR 072); `winui` is the
-//! WinUI 3 shell (ADR 040).
+//! The shells are crates of their own and depend on this one (ADR 080):
+//! `winter-gtk4` is the GTK 4 shell (ADRs 075, 076), `winter-cocoa` the AppKit
+//! one (ADRs 072, 073) and `winter-winui` the WinUI 3 one (ADR 040). `app` is
+//! the binary that picks between them.
 //!
 //! The emulation and console crates are portable and are tested without a
 //! window.
 
 pub mod config;
-pub(crate) mod find;
+pub mod find;
 pub mod fonts;
 pub mod grid;
 pub mod icon;
 pub mod input;
-#[cfg(target_os = "linux")]
-pub mod linux;
-#[cfg(target_os = "macos")]
-pub mod macos;
 pub mod notifications;
 pub mod scrollbar;
 pub mod session;
@@ -54,5 +49,3 @@ pub mod terminal_render;
 pub mod trace;
 pub mod view;
 pub mod visual_bell;
-#[cfg(windows)]
-pub mod winui;

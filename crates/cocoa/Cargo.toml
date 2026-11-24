@@ -1,0 +1,101 @@
+[package]
+name = "winter-cocoa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "The AppKit shell of the Winter terminal"
+
+[dependencies]
+winter = { path = "../winter" }
+audio.workspace = true
+renderer.workspace = true
+server.workspace = true
+settings.workspace = true
+term.workspace = true
+types.workspace = true
+utils.workspace = true
+arboard.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# AppKit through `objc2` (ADR 072). Only the modules this shell names: the
+# default feature sets also pull CloudKit, CoreData, CoreVideo and the whole
+# MTL4 surface.
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSAlert",
+    "NSAccessibilityConstants",
+    "NSAppearance",
+    "NSApplication",
+    "NSAttributedString",
+    "NSBezierPath",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSButtonCell",
+    "NSCell",
+    "NSColor",
+    "NSControl",
+    "NSEvent",
+    "NSFont",
+    "NSGraphics",
+    "NSImage",
+    "NSImageRep",
+    "NSMenu",
+    "NSMenuItem",
+    "NSParagraphStyle",
+    "NSPopUpButton",
+    "NSResponder",
+    "NSScreen",
+    "NSScrollView",
+    "NSClipView",
+    "NSSearchField",
+    "NSStringDrawing",
+    "NSText",
+    "NSTextContainer",
+    "NSTextField",
+    "NSTextInputClient",
+    "NSTextView",
+    "NSTrackingArea",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-quartz-core",
+] }
+objc2-foundation = "0.3.2"
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLBlitCommandEncoder",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLDrawable",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLPixelFormat",
+    "MTLRenderCommandEncoder",
+    "MTLRenderPass",
+    "MTLRenderPipeline",
+    "MTLResource",
+    "MTLTexture",
+    "MTLTypes",
+] }
+# The layer that presents the drawable, and the plain layers the find panel and
+# the bell overlay use.
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CALayer",
+    "CAMetalLayer",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-metal",
+] }
+
+[lints]
+workspace = true

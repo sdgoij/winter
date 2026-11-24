@@ -7,7 +7,7 @@ accessibility element. Panes and the command palette are named follow-ups
 below, not hidden gaps.
 Related: ADRs 072 and 073 (the decisions), ADR 062 (macOS is the next native
 shell), ADR 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split),
-ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
+ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 
 ## What ships
 

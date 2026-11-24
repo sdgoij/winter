@@ -158,7 +158,7 @@ if [ "${1:-}" = "--app" ]; then
         echo "package: a .app is macOS only" >&2
         exit 1
     fi
-    cargo build --release -p winter
+    cargo build --release -p app
     build_app "dist/Winter.app" "$target_dir/release/winter" "$target_dir/release/winter"
     echo "dist/Winter.app"
     exit 0
@@ -186,7 +186,7 @@ check_target() {
     fi
 }
 
-cargo build --release -p winter
+cargo build --release -p app
 icon_binary="$target_dir/release/winter"
 
 for target in $targets; do
@@ -195,7 +195,7 @@ for target in $targets; do
     if [ "$target" = "$host" ]; then
         binary="$target_dir/release/winter"
     else
-        cargo build --release -p winter --target "$target"
+        cargo build --release -p app --target "$target"
         binary="$target_dir/$target/release/winter"
     fi
     case "$target" in

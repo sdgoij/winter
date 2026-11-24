@@ -2,7 +2,7 @@
 //!
 //! AppKit owns the window, the menus and the dialogs; the chrome next to the
 //! terminal is ours, as it is in the WinUI and GTK shells (ADRs 061, 064). The
-//! strip is painted here from `crate::tabs`'s geometry, and the terminal's
+//! strip is painted here from `winter::tabs`'s geometry, and the terminal's
 //! pixels are drawn by [`Shell::frame`]. No AppKit control paints the tab row,
 //! so a theme's fills reach it exactly as they do on Windows.
 
@@ -16,8 +16,8 @@ use objc2_foundation::{
 };
 use utils::InclusiveRect;
 
-use crate::scrollbar;
-use crate::tabs::{self, TabBox};
+use winter::scrollbar;
+use winter::tabs::{self, TabBox};
 
 use super::icon;
 
@@ -255,7 +255,7 @@ pub(crate) struct ChromeState<'a> {
     /// The pane's own fill.
     pub(crate) pane: (u8, u8, u8),
     /// The terminal's pixels.
-    pub(crate) frame: Option<&'a crate::macos::frame::Frame>,
+    pub(crate) frame: Option<&'a crate::frame::Frame>,
     /// Whether to paint the find backdrop and the bell. The Metal path draws
     /// them as layers above its content instead.
     pub(crate) overlays: bool,
@@ -268,7 +268,7 @@ pub(crate) struct ChromeState<'a> {
     /// The scrollbar's scroll, document height and visible rows.
     pub(crate) scroll: (i32, i32, i32),
     /// The prompt ticks.
-    pub(crate) marks: &'a [crate::grid::MarkTick],
+    pub(crate) marks: &'a [winter::grid::MarkTick],
     /// The bell's opacity, while it flashes.
     pub(crate) bell_alpha: Option<f32>,
     /// Whether the find bar's controls are showing.

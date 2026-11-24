@@ -13,6 +13,10 @@ members = [
     "crates/settings",
     "crates/audio",
     "crates/winter",
+    "crates/gtk4",
+    "crates/cocoa",
+    "crates/winui",
+    "crates/app",
 ]
 
 [workspace.package]
@@ -32,8 +36,9 @@ publish = false
 # sits on `host` and exposes the console's API surface. `settings` is the
 # user's TOML settings file and needs no workspace crate. `audio` is sound without a
 # device and sees no workspace crate either (ADR 033). `winter` is the
-# application: it sees everything and is the only crate allowed to (ADR 018).
-# Its shells are GTK 4 on Linux, WinUI 3 on Windows and AppKit on macOS.
+# shell-independent core: it sees everything and is the only crate allowed to
+# (ADR 018). `gtk4`, `cocoa` and `winui` are the shells on top of it, one per
+# platform, and `app` is the binary that selects between them (ADR 080).
 # A crate that needs something from a crate to its right is a design error, not
 # a manifest to edit; see docs/adr/001-workspace-layering.md.
 [workspace.dependencies]

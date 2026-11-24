@@ -171,13 +171,13 @@ tests pass.
   incidental: `utils` opts out at its root because it owns the lock-free
   primitives; `server`'s two pty backends carry a module-level
   `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
-  `winter`'s `sound` sink does the same for `Beep` (ADR 033), its
-  `winui::surface`, `winui::wheel`, `winui::icon` and `winui::profile_icon`
-  modules do for Direct2D, the wheel hook, the window icon and a program's icon
-  (ADRs 041, 047, 058, 066), and `macos` declares one allowance for the AppKit
-  and Metal boundary — its window, menu, bitmap, layer and device calls (ADRs
-  072, 073); `linux::gl` declares one for resolving libGL/libEGL's entry points
-  and the OpenGL calls over GTK's context (ADR 076). The two
+  `winter`'s `sound` sink does the same for `Beep` (ADR 033); the `winui`
+  shell's `surface`, `wheel`, `icon` and `profile_icon` modules do for Direct2D,
+  the wheel hook, the window icon and a program's icon (ADRs 041, 047, 058,
+  066); `cocoa` declares one for the AppKit and Metal boundary — its window,
+  menu, bitmap, layer and device calls (ADRs 072, 073); and `gtk4`'s `gl`
+  module declares one for resolving libGL/libEGL's entry points and the OpenGL
+  calls over GTK's context (ADR 076). The two
   self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
@@ -219,7 +219,11 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
-| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 075) and its OpenGL content path (ADR 076), `winui/` on Windows, and `macos/` on macOS |
+| `crates/winter` | The shell-independent core: the pty session, the grid, the input rules, the control and its connection, the settings draft, the fonts list and the drawn icon (ADR 080) |
+| `crates/gtk4` | The GTK 4 shell on Linux: the window, strip, find bar, settings editor and the OpenGL content path (ADRs 075, 076) |
+| `crates/cocoa` | The AppKit shell on macOS, through `objc2`, with the Metal content path (ADRs 072, 073) |
+| `crates/winui` | The WinUI 3 shell on Windows, through `windows-reactor` (ADR 040) |
+| `crates/app` | The binary: `main` picks the shell by target, and the Windows icon resource lives here (ADR 080) |
 | `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 077) |
 
 ## Where the port stands

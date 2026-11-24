@@ -1,0 +1,27 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "The Winter terminal application"
+
+# The runnable application. The name stays `winter` so the artefacts do, while
+# `crates/winter` is the library the shells are built on (ADR 080).
+[[bin]]
+name = "winter"
+path = "src/main.rs"
+
+[dependencies]
+# Each shell is empty on the platforms it does not serve, so all three are named
+# unconditionally and `main` selects by `cfg`.
+winter-gtk4 = { path = "../gtk4" }
+winter-cocoa = { path = "../cocoa" }
+winter-winui = { path = "../winui" }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+
+[lints]
+workspace = true

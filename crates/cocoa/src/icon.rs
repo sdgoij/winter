@@ -106,11 +106,11 @@ fn resolve(program: &str) -> Option<PathBuf> {
 
 /// Writes the mark at `size` as a straight-RGBA PNG.
 fn write_png(path: &Path, size: usize) -> Result<(), String> {
-    let rgba = crate::icon::rgba(size);
+    let rgba = winter::icon::rgba(size);
     let side = isize::try_from(size).map_err(|_| format!("icon size {size} does not fit"))?;
     let bytes_per_row = side.checked_mul(4).ok_or("the icon row overflows")?;
     // SAFETY: null planes ask AppKit to allocate the buffer; the remaining
-    // arguments describe the straight RGBA `crate::icon::rgba` produces.
+    // arguments describe the straight RGBA `winter::icon::rgba` produces.
     let rep = unsafe {
         NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
             NSBitmapImageRep::alloc(),
@@ -149,8 +149,8 @@ fn write_png(path: &Path, size: usize) -> Result<(), String> {
 }
 
 fn build_own() -> Option<Retained<NSImage>> {
-    let size = crate::icon::SIZE;
-    let rgba = crate::icon::rgba(size);
+    let size = winter::icon::SIZE;
+    let rgba = winter::icon::rgba(size);
     let side = isize::try_from(size).ok()?;
     let bytes_per_row = side.checked_mul(4)?;
 

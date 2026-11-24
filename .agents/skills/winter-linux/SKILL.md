@@ -1,11 +1,11 @@
 ---
 name: winter-linux
-description: Build, run, live-check and package the GTK 4 shell in crates/winter/src/linux. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar, the OpenGL content path, the Cairo blit or the Linux package, or when a Linux build or headless screenshot behaves differently.
+description: Build, run, live-check and package the GTK 4 shell in crates/gtk4/src. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar, the OpenGL content path, the Cairo blit or the Linux package, or when a Linux build or headless screenshot behaves differently.
 ---
 
 # The Linux shell
 
-`crates/winter/src/linux/mod.rs` is the Linux shell; `main.rs` chooses it when
+`crates/gtk4/src/lib.rs` is the Linux shell; `main.rs` chooses it when
 the `gtk` feature is on, which it is by default (ADR 075). GTK owns the window,
 the profile menu, the find bar and the settings editor; the tab strip, scrollbar
 and grid are our pixels, the split ADR 061 takes. `winui`, `macos` and this
@@ -183,7 +183,7 @@ a neighbour's midpoint.
   `OpenGL ES 3.1`, so both shader variants matter; `gl.version().is_embedded`
   selects `#version 300 es` (or a desktop 330 core). A desktop context older
   than 3.3 or GLES older than 3.0 falls back.
-- **GDK exposes no entry-point resolver.** `linux::gl`'s loader tries
+- **GDK exposes no entry-point resolver.** `gl.rs`'s loader tries
   `glXGetProcAddressARB`, then `eglGetProcAddress`, then the libraries' own
   symbol tables; core 1.1 names are not guaranteed by the proc lookups.
 - **The atlas is `R8`/`RED` with `UNPACK_ALIGNMENT` 1.** Image bands arrive as
@@ -243,7 +243,7 @@ a neighbour's midpoint.
 
 ## Do not
 
-- Add `unsafe` outside `linux::gl`: gtk-rs is safe, and the GL loader's
+- Add `unsafe` outside `crates/gtk4`: gtk-rs is safe, and the GL loader's
   exemption is the only one the shell names (ADR 076).
 - Add a second renderer, pty pump or timer. The connection is not `Send`; the
   timer polls every pty on the UI thread.

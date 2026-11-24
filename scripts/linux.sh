@@ -24,7 +24,7 @@ run() {
     /mnt/*) CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$HOME/winterm-target"} ;;
     esac
     export CARGO_TARGET_DIR
-    cargo run -p winter "$@"
+    cargo run -p app "$@"
 }
 
 case "$(uname -s)" in

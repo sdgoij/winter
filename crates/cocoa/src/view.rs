@@ -3,7 +3,7 @@
 //! The view is the window's content view. It is flipped, so the strip is at
 //! `y = 0` and the pane below it; AppKit reports pointer positions in the same
 //! space once converted from the window. Every event is translated into a
-//! [`crate::input`] record or one of [`Shell`]'s pointer methods, which are the
+//! [`winter::input`] record or one of [`Shell`]'s pointer methods, which are the
 //! same rules the WinUI shell uses.
 
 use std::cell::{Cell, RefCell};
@@ -21,8 +21,8 @@ use objc2_foundation::{
     NSUInteger,
 };
 
-use crate::input::{self, Modifiers};
 use term::input::Key;
+use winter::input::{self, Modifiers};
 
 use super::chrome::{self, ChromeState, STRIP_HEIGHT};
 use super::keys;
@@ -581,7 +581,7 @@ fn modifiers(flags: NSEventModifierFlags) -> Modifiers {
 /// away and resizing the pty after the shell has started.
 pub(crate) fn default_size(cell: (u16, u16), scale: f64) -> NSSize {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
-    let insets = chrome::PANE_LEFT + f64::from(crate::scrollbar::WIDTH);
+    let insets = chrome::PANE_LEFT + f64::from(winter::scrollbar::WIDTH);
     NSSize::new(
         f64::from(cell.0) * f64::from(INITIAL_GRID.0) / scale + insets + 0.5,
         f64::from(cell.1) * f64::from(INITIAL_GRID.1) / scale + STRIP_HEIGHT + 0.5,

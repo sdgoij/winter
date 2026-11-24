@@ -64,7 +64,7 @@ impl TerminalData {
     }
 
     /// Refreshes the copy, the cursor, the selection and the find highlights.
-    pub(crate) fn refresh(&mut self, control: &mut Control, view: &View, cursor_on: bool, find: Option<&FindBar>) {
+    pub fn refresh(&mut self, control: &mut Control, view: &View, cursor_on: bool, find: Option<&FindBar>) {
         let screen = control.snapshot(view);
         let (columns, rows) = (screen.width.max(1), screen.height.max(1));
 
@@ -147,13 +147,13 @@ impl TerminalData {
     /// [`RenderData::composition_origin`], which is the cursor's *visible* cell:
     /// a scrollback view shows the pane, not the document row. An empty
     /// composition removes the preview.
-    pub(crate) fn set_composition(&mut self, composition: Composition) {
+    pub fn set_composition(&mut self, composition: Composition) {
         self.composition_origin = (!composition.text.is_empty()).then_some(self.cursor_screen);
         self.tsf = composition;
     }
 
     /// The cursor's cell in the visible pane, for the candidate window.
-    pub(crate) const fn cursor_screen(&self) -> Point {
+    pub const fn cursor_screen(&self) -> Point {
         self.cursor_screen
     }
 
@@ -162,7 +162,7 @@ impl TerminalData {
     /// A row is padded to the screen's width by the buffer, so trailing spaces
     /// are dropped; trailing blank rows are dropped too, because they are the
     /// unused bottom of the pane rather than content.
-    pub(crate) fn visible_text(&self) -> String {
+    pub fn visible_text(&self) -> String {
         let mut text = String::new();
         for row in 0..self.buffer.screen_height() {
             let mut line = self
@@ -188,7 +188,7 @@ impl TerminalData {
 /// here: a selection in the middle of a surrogate pair names the character that
 /// contains it, which is the only cell it can sit on.
 #[cfg(any(target_os = "macos", target_os = "linux", test))]
-pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
+pub fn composition(text: &str, selected_utf16: usize) -> Composition {
     let mut attr = types::TextAttribute::default();
     attr.set_underline_style(types::UnderlineStyle::SinglyUnderlined);
     let len = text.chars().count();

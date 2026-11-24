@@ -12,7 +12,7 @@ use settings::Settings;
 use windows_reactor::*;
 
 use super::app::Message;
-use crate::config::{Draft, ProfileDraft, SchemeDraft, ThemeDraft};
+use winter::config::{Draft, ProfileDraft, SchemeDraft, ThemeDraft};
 
 /// One edit in the settings dialog.
 #[derive(Clone)]
@@ -617,7 +617,7 @@ fn apply_to_draft(draft: &mut Draft, message: SettingsMessage) {
                 binding.action = action;
             }
         }
-        SettingsMessage::AddBinding => draft.keybindings.push(crate::config::BindingDraft {
+        SettingsMessage::AddBinding => draft.keybindings.push(winter::config::BindingDraft {
             keys: String::new(),
             action: settings::Action::NewTab,
         }),

@@ -7,7 +7,7 @@ accessibility tree, tab program icons and a sound sink.
 Related: ADR 075 (the shipping decision), ADR 062 (the parking it supersedes),
 ADR 061 (the GTK decision it amends), ADR 018 (the egui shell), ADR 038 (crate
 split), ADRs 040–053 (the WinUI shell this mirrors),
-`crates/winter/src/linux/`.
+`crates/gtk4/src/`.
 
 ## Goal
 
@@ -27,7 +27,7 @@ primary selection and IME.
 |---|---|
 | 1. Rig | ✅ headless weston + `WINTER_SCREENSHOT` (see *Verification*) |
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
-| 3. Skeleton | ✅ `crates/winter/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
+| 3. Skeleton | ✅ `crates/gtk4/src/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
 | 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
 | 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
@@ -46,7 +46,7 @@ build from either host.
   shared. A rule that is not Linux-specific belongs there, never in the shell.
 - The emulation crates stay platform-independent. `cfg(target_os = "linux")`
   appears in `main.rs` and the shell module and nowhere else.
-- `unsafe` is confined to `linux::gl`, the OpenGL loader and its calls (ADR
+- `unsafe` is confined to `crates/gtk4`'s `gl`, the OpenGL loader and its calls (ADR
   075); gtk-rs stays safe to use, and the rest of the shell needs no exemption.
 
 ## What this machine can already do
@@ -100,7 +100,7 @@ second shell rather than as a rejected idea.
 
 ## Architecture
 
-One module, `crates/winter/src/linux/mod.rs`, chosen in `main.rs` the way
+One module, `crates/gtk4/src/lib.rs`, chosen in `main.rs` the way
 `winui` is (ADR 040). It owns:
 
 | Part | Owns |

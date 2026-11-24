@@ -276,7 +276,7 @@ fn button(
 }
 
 fn status_text(shell: &Shell) -> String {
-    crate::config::status_text(
+    winter::config::status_text(
         shell.settings_path(),
         shell.migrated_from(),
         shell.settings_error(),

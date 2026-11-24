@@ -1,3 +1,4 @@
+#![cfg(windows)]
 //! The WinUI 3 shell.
 //!
 //! Four modules carry `unsafe`: [`surface`] creates the D3D11 device, the
