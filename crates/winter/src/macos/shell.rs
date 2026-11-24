@@ -539,12 +539,25 @@ impl Shell {
             return;
         }
 
-        let width = self.shared.width();
-        let height = self.shared.height();
-        let frame = &mut self.frame;
-        self.shared.with_pixels(|pixels| {
-            frame.copy(pixels, width, height, mtm);
-        });
+        // A presented drawable is not the frame's reader; only the fallback and
+        // a capture copy the pixels into the bitmap.
+        if !self.shared.layer_presented() {
+            let width = self.shared.width();
+            let height = self.shared.height();
+            let frame = &mut self.frame;
+            self.shared.with_pixels(|pixels| {
+                frame.copy(pixels, width, height, mtm);
+            });
+        }
+    }
+
+    /// Repaints one frame into the frame buffer for `WINTER_SCREENSHOT`.
+    ///
+    /// The layer's drawable never appears in the view's cached display, so the
+    /// capture needs the offscreen pixels that a presenting frame skips.
+    pub(crate) fn prepare_capture(&mut self, mtm: objc2::MainThreadMarker) {
+        self.shared.force_readback();
+        self.paint(Instant::now(), mtm);
     }
 
     /// Reloads the settings file when a save changed its stamp.
@@ -1543,6 +1556,15 @@ impl Content {
         match self {
             Self::Software(_) => false,
             Self::Metal(backend) => backend.presented(),
+        }
+    }
+
+    fn force_readback(&self) {
+        match self {
+            // The software backend's pixels are the frame; there is no
+            // drawable to skip.
+            Self::Software(_) => {}
+            Self::Metal(backend) => backend.force_readback(),
         }
     }
 }

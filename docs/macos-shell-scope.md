@@ -21,10 +21,10 @@ ADRs 064, 068, 069 (the strip), `crates/winter/src/macos/`.
 - The grid, cursor, selection, find highlights and prompt ticks from the shared
   renderer: cell quads, glyphs from a coverage atlas, images, grid lines and the
   cursor are drawn by Metal into a `CAMetalLayer` drawable, so the window shows
-  the GPU's frame without a copy (ADR 073). The frame is also read back into an
-  `NSBitmapImageRep` for `WINTER_SCREENSHOT` and as the fallback when the layer
-  cannot produce a drawable. The software backend is the fallback when no device
-  is available or `WINTER_SOFTWARE=1` is set.
+  the GPU's frame without a copy (ADR 073). The offscreen readback runs only
+  when the layer has no drawable, or for the one frame `WINTER_SCREENSHOT`
+  forces before it captures the view; it is also the fallback. The software
+  backend paints when no device is available or `WINTER_SOFTWARE=1` is set.
 - A real menu bar: About, Settings… (⌘,), Quit (⌘Q), New Tab (⌘T), Close Tab
   (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), and the standard Edit menu
   whose `copy:`/`paste:` go to the terminal or the focused text field.
@@ -126,9 +126,9 @@ below `winter` sees AppKit.
   and the shader compiler rejected it here.
 - **A layer never appears in `cacheDisplayInRect`.** The screenshot path is a
   cached display of the content view, which draws the view and not its
-  sublayers. Hide the content and overlay layers, mark the view as capturing so
-  it paints the readback frame and `chrome`'s overlays for that one draw, then
-  restore them.
+  sublayers. Hide the content and overlay layers, force one offscreen frame so
+  the view has the readback pixels to paint, and restore the layers after the
+  capture.
 - **A BGRA8 readback is already `0xAARRGGBB`.** The bytes are `B, G, R, A`;
   read little-endian and hand the `u32` to `Frame::copy`, which applies the
   `AlphaFirst` byte order (ADR 072's bitmap trap).

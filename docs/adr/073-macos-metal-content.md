@@ -36,19 +36,20 @@ the content view, which cannot see a `CAMetalLayer` drawable.
    shelf-packed with a one-texel gutter. A glyph that does not fit waits for the
    next frame, which starts a fresh atlas, so a quad already emitted this frame
    never samples a cleared one.
-4. **Presentation is a `CAMetalLayer` drawable, with the offscreen readback as
-   the screenshot path and the fallback.** The controller adds a `CAMetalLayer`
-   above the view's own drawing, sizes it to the grid's whole cells and
-   attaches it to the content backend; each frame is encoded into the layer's
-   next drawable and presented. The same frame is also drawn into a shared
-   `BGRA8Unorm` texture and read back as `0xAARRGGBB` for the existing `Frame`
-   blit, because a drawable never appears in `cacheDisplayInRect`: that is how
-   `WINTER_SCREENSHOT` captures the shell, and a layer that cannot hand out a
-   drawable keeps a visible frame. The readback is also what makes the content
-   path testable: the ignored device tests compare pixels, and a real-font
-   glyph matches the software backend exactly when its colours are opaque.
-   Where antialiased text is blended over a fill, the GPU's round-to-nearest
-   differs from the software path's truncation by at most one 8-bit step.
+4. **Presentation is a `CAMetalLayer` drawable, with the offscreen readback for
+   captures and the fallback.** The controller adds a `CAMetalLayer` above the
+   view's own drawing, sizes it to the grid's whole cells and attaches it to the
+   content backend; each frame is encoded into the layer's next drawable and
+   presented, and nothing is copied back. When the layer cannot hand out a
+   drawable, the frame is drawn into a shared `BGRA8Unorm` texture instead and
+   read back as `0xAARRGGBB` for the existing `Frame` blit. A screenshot asks
+   for the same thing explicitly: a drawable never appears in
+   `cacheDisplayInRect`, so the controller forces one offscreen frame before it
+   captures the view. The readback is also what makes the content path testable:
+   the ignored device tests compare pixels, and a real-font glyph matches the
+   software backend exactly when its colours are opaque. Where antialiased text
+   is blended over a fill, the GPU's round-to-nearest differs from the software
+   path's truncation by at most one 8-bit step.
 5. **The two overlays that cross the content are layers too.** The find
    backdrop and the bell flash are drawn above the grid, so an opaque content
    layer would hide them. They are `CALayer`s above it, with the same geometry
@@ -70,10 +71,11 @@ the content view, which cannot see a `CAMetalLayer` drawable.
 - **It is ADR 063's shape on the platform's own API.** The payload, the draw
   order and the glyph atlas are already shared; the difference is Metal rather
   than Direct2D.
-- **The readback stays, as the screenshot path.** It costs a copy per frame,
-  but it makes the GPU path verifiable on a machine with no display session
-  and keeps one screenshot contract for both backends. The window itself is a
-  drawable, so nothing in the content code knows which target it is drawing.
+- **The readback is a capture path, not a per-frame cost.** A presenting frame
+  is drawn once and not copied. A fallback frame pays one copy, and a screenshot
+  pays one extra offscreen frame, which keeps the GPU path verifiable on a
+  machine with no display session and one screenshot contract for both backends.
+  Nothing in the content code knows which target it is drawing.
 - **The fallback is cheap.** The software path already existed; `Content` is a
   two-variant enum whose methods delegate.
 
@@ -90,19 +92,18 @@ Positive:
 
 Negative:
 
-- **A frame is drawn twice.** The drawable is what the window shows and the
-  offscreen target is the screenshot and the fallback, so the same quads are
-  encoded into both and the command buffers are waited on twice. Making the
-  readback conditional needs a way to tell the backend a capture is coming, and
-  is the next optimisation if the cost shows.
+- **A capture costs an extra frame.** The offscreen target is drawn only when
+  there is no drawable and when a screenshot is pending, so the presenting path
+  is one draw per frame; `prepare_capture` re-renders once before the view is
+  captured.
 - **The shaders compile at startup.** A few hundred milliseconds on the first
   frame; a precompiled `metallib` is the alternative if that ever matters.
 - **A second backend to keep in step.** A change to `RenderingPayload` or the
   pigment rules must be reflected in `metal.rs`; the pixel-equality tests and
   the shared payload are what constrain the drift.
 - **A layer is not part of a view's cached display.** The screenshot path hides
-  the content and overlay layers and forces the view to paint the readback
-  frame for that one draw.
+  the content and overlay layers, forces one offscreen frame so the view has
+  the readback pixels to paint, and restores the layers.
 - **Glyph colours and underline shapes follow the software path's model.** An
   explicit glyph colour and a retro shader are still not drawn on either
   backend.

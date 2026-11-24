@@ -19,9 +19,9 @@ native AppKit shell — the window, menu bar, find field and settings window are
 the platform's, while the tab strip, scrollbar and grid stay `renderer`'s
 pixels (ADR 072), with tab reordering, input-method composition, a program icon
 per tab, an accessibility value VoiceOver reads, and a Metal content path
-presented through a `CAMetalLayer` drawable, with a readback kept for
-screenshots and the fallback (ADR 073). Linux runs the egui shell
-(ADRs 018, 062).
+presented through a `CAMetalLayer` drawable, with the offscreen readback drawn
+only for a screenshot or when the layer has no drawable (ADR 073). Linux runs
+the egui shell (ADRs 018, 062).
 
 | Crate | What it is | State |
 |---|---|---|

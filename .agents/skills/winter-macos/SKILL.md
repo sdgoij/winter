@@ -83,10 +83,10 @@ second.
   `Frame::copy`.
 - **A layer never appears in `cacheDisplayInRect`.** The content and its two
   overlay layers are not part of the view's cached display. `write_screenshot`
-  hides them, marks the view as capturing so `drawRect:` paints the readback
-  frame and `chrome`'s overlays for that one draw, then restores them. A
-  drawable is also invisible to `cacheDisplayInRect`, so the capture is the
-  readback, not what the window presented.
+  hides them, marks the view as capturing and calls `Shell::prepare_capture`,
+  which forces one offscreen frame, so `drawRect:` paints the readback pixels
+  and `chrome`'s overlays for that one draw. A presenting frame never reads
+  back, so without the forced frame the capture would blit stale pixels.
 - **The content layer is `geometryFlipped`.** The view is flipped and the
   drawable's first row is the grid's first row; without the flip the pane is
   upside down.

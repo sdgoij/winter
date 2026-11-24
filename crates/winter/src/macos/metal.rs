@@ -319,6 +319,9 @@ pub(crate) struct MetalBackend {
     layer: Option<Retained<CAMetalLayer>>,
     /// Whether the last frame reached the window through a drawable.
     presented: bool,
+    /// Draw the offscreen target on the next frame even when a drawable is
+    /// available; the screenshot path asks for this.
+    force_readback: bool,
     width: u32,
     height: u32,
     pixels: Vec<u32>,
@@ -391,6 +394,7 @@ impl MetalBackend {
             target: None,
             layer: None,
             presented: false,
+            force_readback: false,
             width: 0,
             height: 0,
             pixels: Vec::new(),
@@ -461,10 +465,16 @@ impl MetalBackend {
         let data = self.build(payload, cell_width, cell_height, width, height);
         self.atlas.upload();
 
-        // The drawable is what the window shows; the offscreen target stays the
-        // screenshot path and the fallback, so both are drawn every frame.
-        self.present(payload, &data);
-        self.offscreen(payload, &data);
+        // The drawable is what the window shows. The offscreen target is only
+        // drawn when presentation fails, or when a capture is pending: it is a
+        // full-frame copy, and the screenshot path is the only reader.
+        if self.force_readback {
+            self.presented = false;
+            self.offscreen(payload, &data);
+        } else if !self.present(payload, &data) {
+            self.offscreen(payload, &data);
+        }
+        self.force_readback = false;
     }
 
     /// Turns the payload into the quads both targets draw.
@@ -540,27 +550,28 @@ impl MetalBackend {
     }
 
     /// Draws `data` into a drawable and presents it, or hides the layer.
-    fn present(&mut self, payload: &RenderingPayload, data: &FrameData) {
+    fn present(&mut self, payload: &RenderingPayload, data: &FrameData) -> bool {
         let Some(layer) = self.layer.clone() else {
             self.presented = false;
-            return;
+            return false;
         };
         let Some(drawable) = layer.nextDrawable() else {
             // A layer with no drawable (a zero-sized one, say) keeps the
             // readback blit as the visible frame.
             layer.setHidden(true);
             self.presented = false;
-            return;
+            return false;
         };
 
         let texture = drawable.texture();
         if !self.draw_frame(payload, &texture, Some(&drawable), data) {
             layer.setHidden(true);
             self.presented = false;
-            return;
+            return false;
         }
         layer.setHidden(false);
         self.presented = true;
+        true
     }
 
     /// Draws `data` into the offscreen target and reads it back.
@@ -801,6 +812,13 @@ impl Metal {
     /// Whether the last frame reached the window through a drawable.
     pub(crate) fn presented(&self) -> bool {
         self.inner.borrow().presented
+    }
+
+    /// Draws the offscreen target on the next frame, even when a drawable is
+    /// available. The controller does this before a screenshot, because a
+    /// drawable never appears in the view's cached display.
+    pub(crate) fn force_readback(&self) {
+        self.inner.borrow_mut().force_readback = true;
     }
 
     /// Runs `read` over the last frame's pixels, row-major `0xAARRGGBB`.
@@ -1183,6 +1201,8 @@ mod tests {
         backend.layer = Some(layer);
 
         let mut payload = payload();
+        payload.rows.clear();
+        payload.cursor_rect = (1, 0, 2, 1);
 
         backend.render(&mut payload);
 
@@ -1190,9 +1210,15 @@ mod tests {
             eprintln!("metal: this host hands out no drawable; skipping");
             return;
         }
-        assert!(backend.presented);
-        // The offscreen path still ran, so the screenshot has a frame too.
-        assert_eq!(backend.pixel(0, 0), Some(0xFF00_0000));
+        // The offscreen target was skipped, so it still holds the zeros it was
+        // allocated with rather than the cursor the drawable shows.
+        assert_eq!(backend.pixel(8, 0), Some(0));
+
+        // A capture forces the readback, and the offscreen frame arrives.
+        backend.force_readback = true;
+        backend.render(&mut payload);
+        assert!(!backend.presented);
+        assert_eq!(backend.pixel(8, 0), Some(0xFFFF_0000));
     }
 
     /// A rasteriser that fills its whole glyph with coverage.

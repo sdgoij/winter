@@ -424,7 +424,7 @@ define_class!(
             if let Some(path) = self.ivars().screenshot.clone()
                 && Instant::now() >= self.ivars().screenshot_at
             {
-                self.write_screenshot(&path);
+                self.write_screenshot(&path, mtm);
                 NSApplication::sharedApplication(mtm).terminate(None);
             }
 
@@ -756,13 +756,15 @@ impl Controller {
 
     /// Writes the window's content view as a PNG, and the settings window too
     /// when it is open.
-    fn write_screenshot(&self, path: &Path) {
+    fn write_screenshot(&self, path: &Path, mtm: MainThreadMarker) {
         // A layer is not part of a view's cached display, so the capture sees
-        // only what the view paints. Hide the layers for the one draw and let
-        // the view paint the readback frame and the overlays itself.
+        // only what the view paints. Hide the layers for the one draw, and
+        // repaint the frame the presenting path skipped, so the view has
+        // something to blit.
         if let Some(layers) = self.ivars().layers.as_ref() {
             layers.set_hidden(true);
             self.ivars().view.set_capturing(true);
+            self.ivars().shell.borrow_mut().prepare_capture(mtm);
         }
         let captured = capture_view(&self.ivars().view, path);
         if let Some(layers) = self.ivars().layers.as_ref() {
