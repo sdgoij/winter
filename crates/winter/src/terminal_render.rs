@@ -137,10 +137,9 @@ impl TerminalData {
     }
 }
 
-/// The macOS shell's view of a frame: the input method's composition, the
-/// candidate window's anchor and the accessibility value. The other shells do
-/// not present either, and the rules are still tested on every host.
-#[cfg(any(target_os = "macos", test))]
+/// What the shells that present an input method or an accessibility value
+/// share: the composition, the candidate window's anchor and the visible text.
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
 impl TerminalData {
     /// Places the input method's marked text at the cursor.
     ///
@@ -179,6 +178,42 @@ impl TerminalData {
         }
         text.trim_end().to_string()
     }
+}
+
+/// Builds the renderer's IME preview from marked text and a selection reported
+/// in UTF-16 units.
+///
+/// One underline run covers the whole preview, which is how a terminal marks
+/// uncommitted text. The caret counts characters, so the selection is converted
+/// here: a selection in the middle of a surrogate pair names the character that
+/// contains it, which is the only cell it can sit on.
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
+    let mut attr = types::TextAttribute::default();
+    attr.set_underline_style(types::UnderlineStyle::SinglyUnderlined);
+    let len = text.chars().count();
+    Composition {
+        text: text.to_string(),
+        attributes: if len == 0 {
+            Vec::new()
+        } else {
+            vec![renderer::CompositionRange { len, attr }]
+        },
+        cursor_pos: char_index(text, selected_utf16),
+    }
+}
+
+/// The character index `units` UTF-16 units into `text`, clamped to its end.
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+fn char_index(text: &str, units: usize) -> usize {
+    let mut seen = 0;
+    for (index, ch) in text.chars().enumerate() {
+        if seen >= units {
+            return index;
+        }
+        seen += ch.len_utf16();
+    }
+    text.chars().count()
 }
 
 impl RenderData for TerminalData {
@@ -295,6 +330,34 @@ mod tests {
     use utils::Size;
 
     use crate::term_connection::tests::Buffer;
+
+    #[test]
+    fn a_marked_selection_counts_characters_not_utf16_units() {
+        assert_eq!(composition("ni", 0).cursor_pos, 0);
+        assert_eq!(composition("ni", 1).cursor_pos, 1);
+        // A BMP CJK character is one UTF-16 unit.
+        assert_eq!(composition("日本語", 3).cursor_pos, 3);
+        assert_eq!(composition("日本語", 1).cursor_pos, 1);
+        // An emoji is two UTF-16 units but one character, even mid-pair.
+        assert_eq!(composition("😀", 2).cursor_pos, 1);
+        assert_eq!(composition("😀", 1).cursor_pos, 1);
+        assert_eq!(composition("😀日", 3).cursor_pos, 2);
+        // An out-of-range selection clamps to the end.
+        assert_eq!(composition("ni", 9).cursor_pos, 2);
+    }
+
+    #[test]
+    fn the_marked_text_is_one_underlined_run() {
+        let preview = composition("abc", 0);
+        assert_eq!(preview.text, "abc");
+        assert_eq!(preview.attributes.len(), 1);
+        assert_eq!(preview.attributes[0].len, 3);
+        assert_eq!(
+            preview.attributes[0].attr.get_underline_style(),
+            types::UnderlineStyle::SinglyUnderlined
+        );
+        assert!(composition("", 0).attributes.is_empty());
+    }
 
     /// A rasteriser that paints the whole cell, so any glyph is visible.
     struct SolidRasterizer;

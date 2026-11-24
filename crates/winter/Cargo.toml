@@ -21,13 +21,16 @@ utils.workspace = true
 arboard.workspace = true
 notify-rust.workspace = true
 
-# The GTK 4 shell's host toolkit; only built with the `gtk` feature, which is
-# parked (ADRs 061, 062).
-gtk4 = { version = "0.11", optional = true, features = ["v4_8"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+# The GTK 4 shell's host toolkit (ADRs 061, 074). GTK 4.10 is the floor the
+# accessible-property API needs.
+gtk4 = { version = "0.11", optional = true, features = ["v4_8", "v4_10"] }
 
 [features]
-# The GTK 4 shell (ADRs 061, 062): parked, not shipped. Off by default; Linux
-# runs the egui shell and the gate must build without `gtk4-devel`.
+# The GTK 4 shell is the Linux shell (ADRs 061, 074). It is on by default, so
+# the gate and the release build it; `--no-default-features` keeps the egui
+# shell as the fallback and needs no GTK headers.
+default = ["gtk"]
 gtk = ["dep:gtk4"]
 
 [target.'cfg(target_os = "macos")'.dependencies]

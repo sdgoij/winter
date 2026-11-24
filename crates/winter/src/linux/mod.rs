@@ -11,9 +11,10 @@
 //! client-side decorations and the tab strip included — and quits, which is how
 //! a machine with no display server photographs the shell.
 //!
-//! The profile menu, the find bar and the settings window were never built:
-//! ADR 062 parks this shell at its current state, and Linux ships the egui
-//! one. What is here is kept as a working reference for its traps.
+//! The profile menu is a native `GtkPopoverMenu`. A saved settings file is
+//! reloaded within a second, a bell flashes the pane and a program's OSC 777
+//! becomes a desktop notification. The egui shell is still what ships until
+//! this one reaches parity (ADR 074).
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -32,14 +33,17 @@ use gtk::{
 
 use renderer::renderer::Renderer;
 use renderer::{
-    AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontId, FontInfo, GlyphBitmap, GlyphRasterizer, RenderSettings,
-    Settings, SharedBackend, SoftwareBackend,
+    AtlasEngine, CellSizeInDIP, Composition, FontDueRasterizer, FontId, FontInfo, GlyphBitmap, GlyphRasterizer,
+    RenderSettings, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::PtySize;
-use term::input::{Key, MouseEvent, WHEEL_DELTA, WheelAxis};
+use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
 use utils::{InclusiveRect, Size};
 
+use crate::find::FindBar;
 use crate::input::{self, Event as InputEvent, ModifierSides, Modifiers};
+use crate::notifications;
+use crate::scrollbar::{self, Press, Scrollbar};
 use crate::session::Session;
 use crate::tabs::{self, StripHit, TabBox, Tabs};
 use crate::term_control::Control;
@@ -50,10 +54,12 @@ use crate::view::View;
 
 /// The window opens at this many cells, like the WinUI shell.
 const CELLS: (i32, i32) = (100, 28);
-/// The face's size in points before the surface scale is applied.
-const FONT_SIZE: f32 = 14.0;
+/// The terminal text's left inset, matching the WinUI and macOS panes (ADR 068).
+const PANE_LEFT: f64 = 8.0;
 /// How often the pty is polled, matching the WinUI shell's timer (ADR 006).
 const TICK: Duration = Duration::from_millis(16);
+/// The cursor's blink half-period, matching the egui and macOS shells.
+const BLINK: Duration = Duration::from_millis(500);
 /// The height the strip asks for; the header bar may give it more.
 const STRIP_HEIGHT: i32 = 34;
 /// The space between a tab's left edge and its title.
@@ -76,13 +82,21 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn activate(app: &Application) {
     let screenshot = std::env::var_os("WINTER_SCREENSHOT").map(PathBuf::from);
 
-    let Some(fonts) = fonts(FONT_SIZE, CELLS) else {
+    settings::ensure_file();
+    let loaded = settings::load_with_report();
+    let settings_path = loaded.path.clone();
+    let settings_stamp = settings_path.as_deref().and_then(settings::stamp);
+    let warnings: Vec<String> = loaded.warnings.iter().map(ToString::to_string).collect();
+    let migrated_from = loaded.migrated_from.clone();
+    let settings_error = loaded.error.as_ref().map(ToString::to_string);
+    let document = loaded.settings;
+    let font_size = document.font.size;
+
+    let Some(fonts) = fonts(font_size, CELLS) else {
         eprintln!("winter: no monospace face found in the usual font directories");
         app.quit();
         return;
     };
-
-    let document = settings::load();
     let template = TerminalSettings::resolve(&document);
     let first = match Tab::spawn(&template, CELLS) {
         Ok(tab) => tab,
@@ -107,7 +121,10 @@ fn activate(app: &Application) {
     let window = ApplicationWindow::builder()
         .application(app)
         .title(&template.title)
-        .default_width(i32::from(fonts.cell.0) * CELLS.0)
+        // The window is sized for whole cells inside the pane's inset and the
+        // scrollbar, so the first prompt is laid out at the size the pty opens
+        // with (ADR 072's macOS trap applies here too).
+        .default_width(PANE_LEFT as i32 + i32::from(fonts.cell.0) * CELLS.0 + scrollbar::WIDTH as i32)
         .default_height(i32::from(fonts.cell.1) * CELLS.1)
         .build();
 
@@ -131,10 +148,31 @@ fn activate(app: &Application) {
     window.set_titlebar(Some(&bar));
 
     let area = DrawingArea::new();
-    // The pane takes the keyboard, which is how a terminal behaves; a click
-    // asks for it back when a dialog or a menu took it away.
+    // The pane takes the keyboard and the free space below the find bar, which
+    // is how a terminal behaves; a click asks for the keyboard back when a
+    // dialog or a menu took it away.
     area.set_can_focus(true);
-    window.set_child(Some(&area));
+    area.set_vexpand(true);
+    area.set_hexpand(true);
+
+    // The find bar is GTK's own: a native search entry that reveals over the
+    // pane, so Escape and the match keys are the desktop's (ADR 074).
+    let search_entry = gtk::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Find"));
+    search_entry.set_hexpand(true);
+    let search_count = gtk::Label::new(None);
+    search_count.add_css_class("dim-label");
+    let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    search_row.append(&search_entry);
+    search_row.append(&search_count);
+    let search_bar = gtk::SearchBar::new();
+    search_bar.set_child(Some(&search_row));
+    search_bar.set_show_close_button(true);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    column.append(&search_bar);
+    column.append(&area);
+    window.set_child(Some(&column));
 
     let menu = gtk::PopoverMenu::from_model(Some(&profile_menu(&document)));
 
@@ -147,16 +185,37 @@ fn activate(app: &Application) {
         tabs: Tabs::new(first),
         template,
         document,
+        settings_path,
+        settings_stamp,
+        settings_at: Instant::now(),
+        warnings,
+        migrated_from,
+        settings_error,
+        font_size,
         bindings,
         menu,
         chrome: fonts.chrome,
         cell: fonts.cell,
         grid: CELLS,
         pointer: (0, 0),
+        last_mouse_cell: None,
+        press: None,
+        held: MouseButtons::default(),
+        tab_drag: None,
+        scrollbar: Scrollbar::default(),
+        scrollbar_press: false,
+        composition: Composition::default(),
+        paste_requested: false,
+        find_focus: false,
+        settings_requested: false,
+        blink_on: true,
+        blink_at: Instant::now(),
         wheel_pixels: 0.0,
         hover: None,
         window_title: String::new(),
+        accessible_text: String::new(),
         screenshot,
+        settings_window: None,
     }));
 
     {
@@ -166,8 +225,14 @@ fn activate(app: &Application) {
             let name = parameter.and_then(|value| value.str().map(str::to_string));
             open.borrow_mut().open_profile(name.as_deref());
         });
+        let settings = gtk::gio::SimpleAction::new("settings", None);
+        let editor = Rc::clone(&shell);
+        settings.connect_activate(move |_action, _parameter| {
+            editor.borrow_mut().request_settings();
+        });
         let group = gtk::gio::SimpleActionGroup::new();
         group.add_action(&action);
+        group.add_action(&settings);
         strip.insert_action_group("profiles", Some(&group));
 
         // The popover lives as long as the strip it hangs under.
@@ -195,21 +260,128 @@ fn activate(app: &Application) {
         });
     }
 
+    // The input method goes first on every key: it turns a composition into a
+    // commit and reports the marked text, and a key it consumed must not also
+    // reach the encoder (ADR 074).
+    let im = gtk::IMMulticontext::new();
+    im.set_client_widget(Some(&area));
     {
+        let focus = gtk::EventControllerFocus::new();
+        let context = im.clone();
+        focus.connect_enter(move |_controller| context.focus_in());
+        let context = im.clone();
+        focus.connect_leave(move |_controller| context.focus_out());
+        area.add_controller(focus);
+    }
+    {
+        let committed = Rc::clone(&shell);
+        im.connect_commit(move |_im, text| {
+            if let Ok(mut shell) = committed.try_borrow_mut() {
+                shell.text_input(text.to_string());
+            }
+        });
+        let marked = Rc::clone(&shell);
+        im.connect_preedit_changed(move |im| {
+            let (text, _attributes, cursor) = im.preedit_string();
+            let selected = utf16_offset(text.as_str(), usize::try_from(cursor.max(0)).unwrap_or(0));
+            let Ok(mut shell) = marked.try_borrow_mut() else {
+                return;
+            };
+            shell.set_composition(text.as_str(), selected);
+            let caret = shell.caret_rect();
+            drop(shell);
+            // The candidate window follows the caret, as AppKit's does.
+            im.set_cursor_location(&caret);
+        });
+        let ended = Rc::clone(&shell);
+        im.connect_preedit_end(move |_im| {
+            if let Ok(mut shell) = ended.try_borrow_mut() {
+                shell.set_composition("", 0);
+            }
+        });
+    }
+
+    {
+        let entry = search_entry.clone();
+        let context = im.clone();
         let keys = EventControllerKey::new();
         let pressed = Rc::clone(&shell);
-        keys.connect_key_pressed(move |_controller, key, _code, state| pressed.borrow_mut().key(key, state, true));
+        keys.connect_key_pressed(move |controller, key, _code, state| {
+            // The find field owns its keys: text, Enter, Escape and the match
+            // shortcuts are the widget's, not the terminal's.
+            if entry.has_focus() {
+                return glib::Propagation::Proceed;
+            }
+            if let Some(event) = controller.current_event()
+                && context.filter_keypress(&event)
+            {
+                return glib::Propagation::Stop;
+            }
+            pressed.borrow_mut().key(key, state, true)
+        });
+        let entry = search_entry.clone();
         let released = Rc::clone(&shell);
         keys.connect_key_released(move |_controller, key, _code, state| {
+            if entry.has_focus() {
+                return;
+            }
             released.borrow_mut().key(key, state, false);
         });
         window.add_controller(keys);
     }
 
     {
+        let changed = Rc::clone(&shell);
+        search_entry.connect_search_changed(move |entry| {
+            if let Ok(mut shell) = changed.try_borrow_mut() {
+                shell.find_query(entry.text().to_string());
+            }
+        });
+        let activated = Rc::clone(&shell);
+        search_entry.connect_activate(move |_entry| {
+            if let Ok(mut shell) = activated.try_borrow_mut() {
+                shell.find_step(true);
+            }
+        });
+        let next = Rc::clone(&shell);
+        search_entry.connect_next_match(move |_entry| {
+            if let Ok(mut shell) = next.try_borrow_mut() {
+                shell.find_step(true);
+            }
+        });
+        let previous = Rc::clone(&shell);
+        search_entry.connect_previous_match(move |_entry| {
+            if let Ok(mut shell) = previous.try_borrow_mut() {
+                shell.find_step(false);
+            }
+        });
+        let stopped = Rc::clone(&shell);
+        search_entry.connect_stop_search(move |_entry| {
+            if let Ok(mut shell) = stopped.try_borrow_mut() {
+                shell.close_find();
+            }
+        });
+        // The bar's own close button turns search mode off without a
+        // `stop-search`, so the tab's find state follows the widget.
+        let closed = Rc::clone(&shell);
+        search_bar.connect_search_mode_enabled_notify(move |bar| {
+            if !bar.is_search_mode()
+                && let Ok(mut shell) = closed.try_borrow_mut()
+            {
+                shell.close_find();
+            }
+        });
+    }
+
+    {
         let shell = Rc::clone(&shell);
         let motion = EventControllerMotion::new();
-        motion.connect_motion(move |_controller, x, y| shell.borrow_mut().motion(x, y));
+        motion.connect_motion(move |controller, x, y| {
+            let modifiers = controller
+                .current_event()
+                .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
+            shell.borrow_mut().pointer_moved((x, y), modifiers);
+        });
         area.add_controller(motion);
     }
 
@@ -227,14 +399,53 @@ fn activate(app: &Application) {
 
     {
         // A press on the pane takes the keyboard back from a tab, a menu or a
-        // dialog that had it.
+        // dialog that had it, and starts a selection or a program's press.
         let pane = area.clone();
         let click = GestureClick::new();
+        // Every button: a tracking program sees all three, and without one a
+        // non-primary press pastes.
         click.set_button(0);
-        click.connect_pressed(move |_gesture, _presses, _x, _y| {
+        let pressed = Rc::clone(&shell);
+        click.connect_pressed(move |gesture, _presses, x, y| {
             pane.grab_focus();
+            let button = mouse_button(gesture.current_button());
+            let modifiers = gesture
+                .current_event()
+                .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
+            let claimed = pressed.borrow_mut().pointer_pressed((x, y), button, modifiers);
+            gesture.set_state(if claimed {
+                EventSequenceState::Claimed
+            } else {
+                EventSequenceState::Denied
+            });
+        });
+        let released = Rc::clone(&shell);
+        click.connect_released(move |gesture, _presses, x, y| {
+            let button = mouse_button(gesture.current_button());
+            let modifiers = gesture
+                .current_event()
+                .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
+            released.borrow_mut().pointer_released((x, y), button, modifiers);
         });
         area.add_controller(click);
+    }
+
+    {
+        // A drag reports the pointer even after it leaves the pane, which is how
+        // a selection scrolls when it is held past the top or bottom edge.
+        let shell = Rc::clone(&shell);
+        let start = Cell::new((0.0f64, 0.0f64));
+        let drag = gtk::GestureDrag::new();
+        let begin = start.clone();
+        drag.connect_drag_begin(move |_gesture, x, y| begin.set((x, y)));
+        drag.connect_drag_update(move |gesture, dx, dy| {
+            let (x, y) = start.get();
+            let modifiers = gesture
+                .current_event()
+                .map_or_else(Modifiers::default, |event| modifiers(event.modifier_state()));
+            shell.borrow_mut().pointer_moved((x + dx, y + dy), modifiers);
+        });
+        area.add_controller(drag);
     }
 
     {
@@ -244,8 +455,9 @@ fn activate(app: &Application) {
         click.set_button(0);
         let menu = shell.borrow().menu.clone();
         let tall = strip.clone();
+        let pressed = Rc::clone(&shell);
         click.connect_pressed(move |gesture, _presses, x, _y| {
-            let (claimed, popup) = shell.borrow_mut().press_strip(x, gesture.current_button());
+            let (claimed, popup) = pressed.borrow_mut().press_strip(x, gesture.current_button());
             // Claiming is per gesture, not per event sequence: a mouse press has
             // no sequence, and GTK's `GtkWindowHandle` claims every primary
             // double press to toggle maximize, so a press the strip does not
@@ -264,18 +476,24 @@ fn activate(app: &Application) {
                 menu.popup();
             }
         });
+        let released = Rc::clone(&shell);
+        click.connect_released(move |_gesture, _presses, _x, _y| {
+            released.borrow_mut().drop_tab_drag();
+        });
         strip.add_controller(click);
     }
 
     {
-        // The strip shows what is under the pointer, so a tab or a button that
-        // is about to be pressed looks alive. A hover change the shell cannot
-        // take right now is a repaint that waits for the next motion.
+        // The strip reorders a tab while a press drags it past a neighbour.
+        let shell = Rc::clone(&shell);
         let motion = EventControllerMotion::new();
         let over = Rc::clone(&shell);
         motion.connect_motion(move |_controller, x, _y| {
             if let Ok(mut shell) = over.try_borrow_mut() {
                 shell.hover(Some(x));
+                if shell.tab_drag.is_some() {
+                    shell.drag_strip(x);
+                }
             }
         });
         let leave = Rc::clone(&shell);
@@ -296,14 +514,65 @@ fn activate(app: &Application) {
     {
         let shell = Rc::clone(&shell);
         let app = app.clone();
+        let bar = search_bar.clone();
+        let entry = search_entry.clone();
+        let count = search_count.clone();
+        let pane = area.clone();
+        let parent = window.clone();
         glib::timeout_add_local(TICK, move || {
-            shell.borrow_mut().pump(&app);
+            let mut borrowed = shell.borrow_mut();
+            borrowed.pump(&app);
+            let paste = borrowed.take_paste_request();
+            let focus = borrowed.take_find_focus();
+            let settings = borrowed.take_settings_request();
+            let (open, query, current, total) = borrowed.find_state();
+            drop(borrowed);
+
+            bar.set_search_mode(open);
+            if open && (focus || (!entry.has_focus() && entry.text().as_str() != query)) {
+                if entry.text().as_str() != query {
+                    entry.set_text(&query);
+                }
+                if focus {
+                    entry.grab_focus();
+                    entry.select_region(0, -1);
+                }
+            } else if !open && entry.has_focus() {
+                pane.grab_focus();
+            }
+
+            let text = if !open {
+                String::new()
+            } else if total == 0 {
+                "0/0".to_string()
+            } else {
+                format!("{current}/{total}")
+            };
+            if count.text().as_str() != text {
+                count.set_text(&text);
+            }
+
+            if paste {
+                paste_from_clipboard(&shell);
+            }
+            if settings {
+                let opened = open_settings_window(&shell, &parent);
+                shell.borrow_mut().settings_window = Some(opened);
+            }
             glib::ControlFlow::Continue
         });
     }
 
     window.present();
     area.grab_focus();
+
+    if std::env::var_os("WINTER_OPEN_SETTINGS").is_some() {
+        let opened = open_settings_window(&shell, &window);
+        shell.borrow_mut().settings_window = Some(opened);
+    }
+    if std::env::var_os("WINTER_OPEN_FIND").is_some() {
+        shell.borrow_mut().toggle_find();
+    }
 
     // `GtkWidgetPaintable` pictures the last frame GTK painted, and a queued
     // redraw has already dropped that frame's node, so the shot is taken at the
@@ -338,17 +607,22 @@ struct Tab {
     sides: ModifierSides,
     /// The program's OSC title, or the profile's name until it sets one.
     title: String,
+    /// The tab's own find bar, so switching tabs keeps its query.
+    find: FindBar,
 }
 
 impl Tab {
     /// Starts the profile's shell on a pty.
     fn spawn(template: &TerminalSettings, cells: (i32, i32)) -> std::io::Result<Self> {
         let session = Session::spawn(&template.command, pty_size(cells))?;
+        let mut control = Control::new(Box::new(session), cells);
+        control.apply_scheme(template.scheme.as_ref());
         Ok(Self {
-            control: Control::new(Box::new(session), cells),
+            control,
             view: View::new(),
             sides: ModifierSides::default(),
             title: template.title.clone(),
+            find: FindBar::default(),
         })
     }
 }
@@ -373,6 +647,20 @@ struct Shell {
     template: TerminalSettings,
     /// The settings file, for the strip's colours.
     document: settings::Settings,
+    /// Where the settings file lives, when the platform has a path.
+    settings_path: Option<PathBuf>,
+    /// The file's stamp when it was last read, so a save is noticed.
+    settings_stamp: Option<settings::Stamp>,
+    /// When the settings file was last checked.
+    settings_at: Instant,
+    /// What normalization had to decide for the file in force.
+    warnings: Vec<String>,
+    /// The earlier file these settings were migrated from.
+    migrated_from: Option<PathBuf>,
+    /// Why the file on disk was not used, if it was not.
+    settings_error: Option<String>,
+    /// The face's size in points.
+    font_size: f32,
     /// The chords the window matches before the terminal sees a key.
     bindings: Rc<[settings::Keybinding]>,
     /// The profile menu the strip's button pops up.
@@ -385,6 +673,30 @@ struct Shell {
     grid: (i32, i32),
     /// Where the pointer last was, in cells, for a tracking program's wheel.
     pointer: (i32, i32),
+    /// The cell a forwarded move last reported, so a still pointer is silent.
+    last_mouse_cell: Option<(i32, i32)>,
+    /// The cell a press started on, so the first move starts a selection.
+    press: Option<((i32, i32), bool)>,
+    /// The buttons a forwarded event reports as held.
+    held: MouseButtons,
+    /// The tab a strip press grabbed, until the drag ends.
+    tab_drag: Option<usize>,
+    /// The scrollbar's drag state.
+    scrollbar: Scrollbar,
+    /// Whether a press grabbed the scrollbar's thumb.
+    scrollbar_press: bool,
+    /// The input method's marked text, drawn at the cursor until it commits.
+    composition: Composition,
+    /// Whether GDK should read the clipboard on the next tick.
+    paste_requested: bool,
+    /// The find field needs the keyboard.
+    find_focus: bool,
+    /// The settings window the timer should open.
+    settings_requested: bool,
+    /// Whether the cursor is in the on half of its blink.
+    blink_on: bool,
+    /// When the cursor last changed halves.
+    blink_at: Instant,
     /// Wheel pixels that have not yet made a row: a touchpad reports pixels
     /// where a wheel reports whole detents.
     wheel_pixels: f64,
@@ -393,8 +705,12 @@ struct Shell {
     hover: Option<i32>,
     /// The title the window last showed, so it is not rewritten every tick.
     window_title: String,
+    /// The last visible screen published to the accessibility tree.
+    accessible_text: String,
     /// Where `WINTER_SCREENSHOT` asked for a picture, if it did.
     screenshot: Option<PathBuf>,
+    /// The settings editor, kept so a capture can include it.
+    settings_window: Option<gtk::Window>,
 }
 
 impl Shell {
@@ -407,6 +723,7 @@ impl Shell {
         let now = Instant::now();
         let mut exited = Vec::new();
         let mut titled = false;
+        let mut announced = Vec::new();
 
         for index in 0..self.tabs.len() {
             let Some(tab) = self.tabs.get_mut(index) else {
@@ -422,10 +739,23 @@ impl Shell {
             }
 
             for event in tab.control.take_events(now) {
-                if matches!(event, TerminalEvent::Exited) {
-                    exited.push(index);
+                match event {
+                    TerminalEvent::Exited => exited.push(index),
+                    TerminalEvent::Notification { title, body } => announced.push((title, body)),
+                    // The flash is read from the control while it paints, so a
+                    // bell needs no state of its own here.
+                    TerminalEvent::Bell => {}
                 }
             }
+        }
+
+        for (title, body) in announced {
+            notifications::show(&title, &body);
+        }
+
+        if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
+            self.settings_at = now;
+            self.poll_settings();
         }
 
         if !exited.is_empty() {
@@ -439,11 +769,106 @@ impl Shell {
             }
         }
 
+        if now.duration_since(self.blink_at) >= BLINK {
+            self.blink_on = !self.blink_on;
+            self.blink_at = now;
+        }
+
         if titled {
             self.after_select();
         } else {
             self.area.queue_draw();
         }
+    }
+
+    /// Reloads the settings file when a save changed its stamp.
+    fn poll_settings(&mut self) {
+        let Some(path) = &self.settings_path else {
+            return;
+        };
+        if settings::stamp(path) == self.settings_stamp {
+            return;
+        }
+        self.reload_settings();
+    }
+
+    /// Re-reads the settings and applies what a running session can.
+    ///
+    /// Chords, the strip's colours and the font size take effect at once; a
+    /// scheme repaints every tab, and a changed profile affects the next tab,
+    /// because a running shell keeps the command it started with.
+    fn reload_settings(&mut self) {
+        let loaded = settings::load_with_report();
+        self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
+        self.warnings = loaded.warnings.iter().map(ToString::to_string).collect();
+        self.migrated_from = loaded.migrated_from.clone();
+        if let Some(error) = loaded.error {
+            self.settings_error = Some(error.to_string());
+            return;
+        }
+
+        self.document = loaded.settings;
+        self.settings_path = loaded.path;
+        self.settings_error = None;
+        self.template = TerminalSettings::resolve(&self.document);
+        self.bindings = self.document.keybindings.clone().into();
+        // The menu is a snapshot of the profile list, so a reloaded file's
+        // profiles appear without a restart.
+        self.menu.set_menu_model(Some(&profile_menu(&self.document)));
+
+        let font_size = self.document.font.size;
+        if (font_size - self.font_size).abs() > f32::EPSILON {
+            self.font_size = font_size;
+            self.rebuild_fonts();
+            // A different cell means a different number of whole cells fits.
+            let (width, height) = (self.area.width(), self.area.height());
+            if width > 0 && height > 0 {
+                self.grid = (0, 0);
+                self.fit(width, height);
+            }
+        }
+
+        let scheme = self.template.scheme.clone();
+        for index in 0..self.tabs.len() {
+            if let Some(tab) = self.tabs.get_mut(index) {
+                tab.control.apply_scheme(scheme.as_ref());
+            }
+        }
+        self.after_select();
+    }
+
+    /// Replaces the face, the renderer and the cell with ones at `font_size`.
+    fn rebuild_fonts(&mut self) {
+        let Some(fonts) = fonts(self.font_size, self.grid) else {
+            return;
+        };
+        self.cell = fonts.cell;
+        self.chrome = fonts.chrome;
+
+        let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(fonts.rasterizer)));
+        let mut engine = AtlasEngine::with_settings(fonts.settings.clone(), Box::new(shared.clone()));
+        engine.set_shaping(Box::new(fonts.shaper));
+        let mut renderer = Renderer::new(
+            TerminalData::new(fonts.info, RenderSettings::new(), self.grid.0, self.grid.1),
+            RenderSettings::new(),
+        );
+        renderer.add_engine(Box::new(engine));
+
+        let (columns, rows) = self.grid;
+        let target = (
+            fonts
+                .cell
+                .0
+                .saturating_mul(u16::try_from(columns.max(1)).unwrap_or(u16::MAX)),
+            fonts
+                .cell
+                .1
+                .saturating_mul(u16::try_from(rows.max(1)).unwrap_or(u16::MAX)),
+        );
+        let _ = renderer.resize(target, InclusiveRect::new(0, 0, columns - 1, rows - 1));
+
+        self.renderer = renderer;
+        self.shared = shared;
     }
 
     /// Turns one toolkit key into a window command or what the terminal gets.
@@ -461,6 +886,13 @@ impl Shell {
             && let Some(action) = input::chord_action(&self.bindings, named, modifiers)
             && self.command(action)
         {
+            return glib::Propagation::Stop;
+        }
+
+        // A printable key's press reaches the shell as text, through the input
+        // method or the character path, and carries no key identity; its
+        // release would be a release without a press.
+        if !pressed && input::produces_text(named, modifiers) {
             return glib::Propagation::Stop;
         }
 
@@ -491,19 +923,49 @@ impl Shell {
             },
         };
 
+        self.send_input(&event);
+        glib::Propagation::Stop
+    }
+
+    /// Sends one portable event through the shared translation rules.
+    fn send_input(&mut self, event: &InputEvent) {
+        let win32 = self
+            .tabs
+            .active()
+            .is_some_and(|tab| tab.control.input_modes().win32_input);
         let Some(tab) = self.tabs.active_mut() else {
-            return glib::Propagation::Stop;
+            return;
         };
-        let win32 = tab.control.input_modes().win32_input;
-        let outcome = input::translate(&event, &mut tab.sides, win32);
-        for key in outcome.keys {
-            tab.control.send_key(&key);
-        }
+        let outcome = input::translate(event, &mut tab.sides, win32);
         if outcome.activity {
             tab.view.scroll_to_bottom();
         }
+        if let Some(text) = outcome.paste {
+            tab.control.paste(&text);
+        }
+        for key in outcome.keys {
+            tab.control.send_key(&key);
+        }
+    }
 
-        glib::Propagation::Stop
+    /// Sends composed text, from the keyboard or an input method.
+    fn text_input(&mut self, text: String) {
+        if !text.is_empty() {
+            self.send_input(&InputEvent::Text(text));
+        }
+    }
+
+    /// Shows or clears the input method's marked text.
+    fn set_composition(&mut self, text: &str, selected_utf16: usize) {
+        self.composition = crate::terminal_render::composition(text, selected_utf16);
+    }
+
+    /// The caret's box in the pane's coordinates, for the candidate window.
+    fn caret_rect(&self) -> gdk::Rectangle {
+        let point = self.renderer.data().cursor_screen();
+        let width = i32::from(self.cell.0).max(1);
+        let height = i32::from(self.cell.1).max(1);
+        gdk::Rectangle::new(PANE_LEFT as i32 + point.x() * width, point.y() * height, width, height)
     }
 
     /// Runs a window action the tab strip can perform; declines the rest.
@@ -519,9 +981,48 @@ impl Shell {
                 self.tabs.step(-1);
                 self.focus_active();
             }
+            settings::Action::Copy => return self.copy_selection(),
+            settings::Action::Paste => self.paste_clipboard(),
+            settings::Action::ScrollUp => self.scroll_active(1),
+            settings::Action::ScrollDown => self.scroll_active(-1),
+            settings::Action::ScrollUpPage => self.scroll_page(1),
+            settings::Action::ScrollDownPage => self.scroll_page(-1),
+            settings::Action::ScrollToTop => self.scroll_to(false),
+            settings::Action::ScrollToBottom => self.scroll_to(true),
+            settings::Action::Find => self.toggle_find(),
+            settings::Action::OpenSettings => self.request_settings(),
             _ => return false,
         }
         true
+    }
+
+    fn scroll_active(&mut self, rows: i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let max = tab.control.max_scroll();
+        tab.view.scroll_by(rows, max);
+    }
+
+    fn scroll_page(&mut self, direction: i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let rows = (tab.control.size().1 - 1).max(1) * direction.signum();
+        let max = tab.control.max_scroll();
+        tab.view.scroll_by(rows, max);
+    }
+
+    fn scroll_to(&mut self, bottom: bool) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if bottom {
+            tab.view.scroll_to_bottom();
+        } else {
+            let max = tab.control.max_scroll();
+            tab.view.set_scroll(max, max);
+        }
     }
 
     /// Opens the profile's shell in a new tab and activates it.
@@ -579,6 +1080,9 @@ impl Shell {
             StripHit::New if button == 1 => self.open_tab(None),
             StripHit::Tab(index) if button == 1 => {
                 self.tabs.select(index);
+                // A press on a tab body arms a reorder; the close box, the
+                // buttons and the empty strip do not, so a close never drags.
+                self.tab_drag = Some(index);
                 self.focus_active();
             }
             // Middle-click closes a tab, the way upstream's tabs do.
@@ -590,9 +1094,450 @@ impl Shell {
         (true, None)
     }
 
-    /// Remembers the pointer's cell for the wheel a tracking program receives.
-    fn motion(&mut self, x: f64, y: f64) {
-        self.pointer = (cell_index(x, self.cell.0), cell_index(y, self.cell.1));
+    /// Reorders the tabs while a strip press drags, once it has crossed a
+    /// neighbour's midpoint.
+    fn drag_strip(&mut self, x: f64) {
+        let Some(from) = self.tab_drag else {
+            return;
+        };
+        let (layout, _) = strip_and_menu(self.strip.width(), self.tabs.len());
+        if let Some(target) = tabs::drag_target(&layout.tabs, from, x as i32)
+            && self.tabs.move_to(from, target)
+        {
+            self.tab_drag = Some(target);
+            self.strip.queue_draw();
+        }
+    }
+
+    /// The cell a point in the pane names.
+    fn cell_at(&self, point: (f64, f64)) -> Option<(i32, i32)> {
+        let width = f64::from(self.cell.0);
+        let height = f64::from(self.cell.1);
+        if width <= 0.0 || height <= 0.0 {
+            return None;
+        }
+        let column = ((point.0 - PANE_LEFT) / width).floor() as i32;
+        let row = (point.1 / height).floor() as i32;
+        let (columns, rows) = self.grid;
+        (column >= 0 && row >= 0 && column < columns && row < rows).then_some((column, row))
+    }
+
+    /// Records the pointer's cell and forwards the move a tracking program
+    /// asked for.
+    fn pointer_motion(&mut self, point: (f64, f64), modifiers: Modifiers) {
+        if let Some(cell) = self.cell_at(point) {
+            self.pointer = cell;
+        }
+
+        if !input::forwards_to_application(self.active_tracking(), modifiers.shift) {
+            self.last_mouse_cell = None;
+            return;
+        }
+
+        let Some(position) = self.cell_at(point) else {
+            self.last_mouse_cell = None;
+            return;
+        };
+        if self.last_mouse_cell == Some(position) {
+            return;
+        }
+
+        let held = self.held;
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let chord = input::key_modifiers(modifiers, tab.sides.right_alt, tab.sides.right_ctrl);
+        tab.control.send_mouse(&MouseEvent {
+            position,
+            kind: MouseEventKind::Move,
+            buttons: held,
+            modifiers: chord,
+            delta: 0,
+        });
+        self.last_mouse_cell = Some(position);
+    }
+
+    /// Handles a pointer move, extending the selection a press started.
+    fn pointer_moved(&mut self, point: (f64, f64), modifiers: Modifiers) {
+        if self.scrollbar_press {
+            self.scrollbar_dragged(point.1);
+            return;
+        }
+        self.pointer_motion(point, modifiers);
+        if self.press.is_some() {
+            self.pointer_drag(point, modifiers);
+        }
+    }
+
+    /// Forgets the tab a strip press grabbed.
+    fn drop_tab_drag(&mut self) {
+        self.tab_drag = None;
+    }
+
+    /// Handles a press in the pane, returning whether it was consumed.
+    fn pointer_pressed(&mut self, point: (f64, f64), button: MouseButton, modifiers: Modifiers) -> bool {
+        // A press in the pane dismisses the find bar, the way it does upstream.
+        if self.find_open() {
+            self.close_find();
+        }
+
+        if button == MouseButton::Left
+            && point.0 >= f64::from(self.area.width()) - f64::from(scrollbar::WIDTH)
+            && self.scrollbar_pressed(point.1)
+        {
+            return true;
+        }
+
+        self.hold(button, true);
+        let forward = input::forwards_to_application(self.active_tracking(), modifiers.shift);
+        let cell = self.cell_at(point);
+        if let Some(cell) = cell {
+            self.pointer = cell;
+        }
+
+        // Without a tracking program, a non-primary press pastes: the pane's
+        // middle- and right-click rule in every shell.
+        if button != MouseButton::Left && !forward {
+            self.paste_clipboard();
+            return true;
+        }
+
+        let held = self.held;
+        let Some(tab) = self.tabs.active_mut() else {
+            return true;
+        };
+
+        if forward {
+            if let Some(position) = cell {
+                let chord = input::key_modifiers(modifiers, tab.sides.right_alt, tab.sides.right_ctrl);
+                tab.control.send_mouse(&MouseEvent {
+                    position,
+                    kind: MouseEventKind::Press(button),
+                    buttons: held,
+                    modifiers: chord,
+                    delta: 0,
+                });
+                self.last_mouse_cell = Some(position);
+            }
+            return true;
+        }
+
+        let Some((column, row)) = cell else {
+            return true;
+        };
+        let history = tab.control.max_scroll();
+        let position = (column, input::screen_to_document(history, tab.view.scroll(), row));
+
+        let count = tab.view.click(position, Instant::now());
+        if count >= 3 {
+            let width = tab.control.screen_width();
+            tab.view.select_line(position.1, width);
+            self.press = None;
+        } else if count == 2 {
+            let text = tab.control.row_text(position.1);
+            tab.view.select_word(&text, position);
+            self.press = None;
+        } else {
+            tab.view.clear_selection();
+            self.press = Some((position, modifiers.alt));
+        }
+        true
+    }
+
+    /// Extends the selection while the primary button is held, scrolling the
+    /// view when the drag leaves the pane.
+    fn pointer_drag(&mut self, point: (f64, f64), modifiers: Modifiers) {
+        if input::forwards_to_application(self.active_tracking(), modifiers.shift) {
+            return;
+        }
+
+        let (columns, rows) = self.grid;
+        let height = f64::from(self.cell.1) * f64::from(rows.max(0));
+        let outside = if point.1 < 0.0 {
+            -1
+        } else if height > 0.0 && point.1 >= height {
+            1
+        } else {
+            0
+        };
+        let column = cell_index(point.0 - PANE_LEFT, self.cell.0);
+
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let position = if outside != 0 {
+            let max = tab.control.max_scroll();
+            tab.view.drag_scroll(outside, max, Instant::now());
+            let row = if outside < 0 { 0 } else { rows.max(1) - 1 };
+            let column = column.clamp(0, columns.max(1) - 1);
+            Some((column, input::screen_to_document(max, tab.view.scroll(), row)))
+        } else {
+            let row = cell_index(point.1, self.cell.1);
+            (column >= 0 && row >= 0 && column < columns.max(1) && row < rows.max(1)).then(|| {
+                let history = tab.control.max_scroll();
+                (column, input::screen_to_document(history, tab.view.scroll(), row))
+            })
+        };
+
+        let Some(position) = position else {
+            return;
+        };
+        match self.press.take() {
+            Some((anchor, block)) if position != anchor => {
+                tab.view.select(anchor, block);
+                tab.view.extend(position);
+            }
+            Some(press) => self.press = Some(press),
+            None => tab.view.extend(position),
+        }
+    }
+
+    /// Finishes a press: ends a scrollbar grab or forwards a tracking program's
+    /// release.
+    fn pointer_released(&mut self, point: (f64, f64), button: MouseButton, modifiers: Modifiers) {
+        self.hold(button, false);
+
+        if self.scrollbar_press {
+            self.scrollbar_press = false;
+            self.scrollbar.release();
+            self.press = None;
+            self.last_mouse_cell = None;
+            return;
+        }
+
+        if self.tab_drag.take().is_some() {
+            return;
+        }
+
+        if !input::forwards_to_application(self.active_tracking(), modifiers.shift) {
+            self.press = None;
+            self.last_mouse_cell = None;
+            return;
+        }
+
+        let held = self.held;
+        let Some(position) = self.cell_at(point) else {
+            return;
+        };
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let chord = input::key_modifiers(modifiers, tab.sides.right_alt, tab.sides.right_ctrl);
+        tab.control.send_mouse(&MouseEvent {
+            position,
+            kind: MouseEventKind::Release(button),
+            buttons: held,
+            modifiers: chord,
+            delta: 0,
+        });
+        self.last_mouse_cell = None;
+    }
+
+    /// Records a button's state for the next forwarded event.
+    fn hold(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => self.held.left = pressed,
+            MouseButton::Middle => self.held.middle = pressed,
+            MouseButton::Right => self.held.right = pressed,
+        }
+    }
+
+    /// Whether the active program is tracking the mouse.
+    fn active_tracking(&self) -> bool {
+        self.tabs.active().is_some_and(|tab| tab.control.is_tracking_mouse())
+    }
+
+    /// The scrollbar's scroll, document height and visible rows.
+    fn scroll_facts(&mut self) -> (i32, i32, i32) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return (0, 0, 0);
+        };
+        let visible = tab.control.size().1;
+        let history = tab.control.max_scroll();
+        (tab.view.scroll(), history + visible, visible)
+    }
+
+    /// Takes a press on the scrollbar, jumping or grabbing the thumb.
+    fn scrollbar_pressed(&mut self, y: f64) -> bool {
+        let (scroll, document, visible) = self.scroll_facts();
+        let track = f64::from(self.area.height());
+        if document <= visible || track <= 0.0 {
+            return false;
+        }
+
+        let fraction = (y / track).clamp(0.0, 1.0) as f32;
+        match self.scrollbar.press(fraction, scroll, document, visible) {
+            Press::Jump(to) => {
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.view.set_scroll(to, document - visible);
+                }
+            }
+            Press::Grab => self.scrollbar_press = true,
+        }
+        true
+    }
+
+    /// Moves the view while the scrollbar's thumb is held.
+    fn scrollbar_dragged(&mut self, y: f64) {
+        let (_, document, visible) = self.scroll_facts();
+        let track = f64::from(self.area.height());
+        if track <= 0.0 {
+            return;
+        }
+
+        let fraction = (y / track).clamp(0.0, 1.0) as f32;
+        if let Some(to) = self.scrollbar.drag(fraction, document, visible)
+            && let Some(tab) = self.tabs.active_mut()
+        {
+            tab.view.set_scroll(to, document - visible);
+        }
+    }
+
+    /// Puts the selection on the clipboard, clearing it like upstream.
+    fn copy_selection(&mut self) -> bool {
+        let Some(tab) = self.tabs.active_mut() else {
+            return false;
+        };
+        let Some(selection) = tab.view.selection().copied() else {
+            return false;
+        };
+        let Some(text) = tab.control.selection_text(&selection) else {
+            return false;
+        };
+
+        let Some(display) = gdk::Display::default() else {
+            return false;
+        };
+        display.clipboard().set_text(&text);
+        tab.view.clear_selection();
+        true
+    }
+
+    /// Asks for the clipboard, which GDK delivers asynchronously.
+    fn paste_clipboard(&mut self) {
+        self.paste_requested = true;
+    }
+
+    /// Sends clipboard text through the terminal's bracketed-paste filter.
+    fn paste_text(&mut self, text: &str) {
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.control.paste(text);
+        }
+    }
+
+    /// Takes the deferred clipboard read, if one is waiting.
+    fn take_paste_request(&mut self) -> bool {
+        std::mem::take(&mut self.paste_requested)
+    }
+
+    /// Takes the find field's focus request, if one is waiting.
+    fn take_find_focus(&mut self) -> bool {
+        std::mem::take(&mut self.find_focus)
+    }
+
+    /// The document the settings window edits.
+    fn settings(&self) -> &settings::Settings {
+        &self.document
+    }
+
+    fn settings_path(&self) -> Option<&Path> {
+        self.settings_path.as_deref()
+    }
+
+    fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    fn migrated_from(&self) -> Option<&Path> {
+        self.migrated_from.as_deref()
+    }
+
+    fn settings_error(&self) -> Option<&str> {
+        self.settings_error.as_deref()
+    }
+
+    /// Asks the timer to show the settings editor.
+    fn request_settings(&mut self) {
+        self.settings_requested = true;
+    }
+
+    /// Takes the settings request, if one is waiting.
+    fn take_settings_request(&mut self) -> bool {
+        std::mem::take(&mut self.settings_requested)
+    }
+
+    /// Writes a document and reloads it, returning the writer's error.
+    fn save_document(&mut self, document: &settings::Settings) -> Result<(), String> {
+        match settings::save(document) {
+            Ok(()) => {
+                self.reload_settings();
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.settings_error = Some(message.clone());
+                Err(message)
+            }
+        }
+    }
+
+    /// Whether the active tab's find bar is showing.
+    fn find_open(&self) -> bool {
+        self.tabs.active().is_some_and(|tab| tab.find.open)
+    }
+
+    /// Shows or hides the active tab's find bar.
+    fn toggle_find(&mut self) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        tab.find.toggle();
+        if tab.find.open {
+            tab.find.refresh(&mut tab.control);
+            tab.find.scroll_to(&tab.control, &mut tab.view);
+            // The field takes the keyboard, so a half-composed terminal preview
+            // is no longer where the user is typing.
+            self.composition = Composition::default();
+            self.find_focus = true;
+        }
+    }
+
+    /// Sets the active tab's find query and recomputes the matches.
+    fn find_query(&mut self, query: String) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        tab.find.query = query;
+        tab.find.refresh(&mut tab.control);
+        tab.find.scroll_to(&tab.control, &mut tab.view);
+    }
+
+    /// Moves to the next (true) or previous match.
+    fn find_step(&mut self, forward: bool) {
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if tab.find.searched != tab.find.query {
+            tab.find.refresh(&mut tab.control);
+        }
+        tab.find.step(forward);
+        tab.find.scroll_to(&tab.control, &mut tab.view);
+    }
+
+    /// Closes the active tab's find bar.
+    fn close_find(&mut self) {
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.find.hide();
+        }
+    }
+
+    /// The find bar's query, current match and match count.
+    fn find_state(&self) -> (bool, String, usize, usize) {
+        let Some(tab) = self.tabs.active() else {
+            return (false, String::new(), 0, 0);
+        };
+        let current = tab.find.current.map_or(0, |index| index + 1);
+        (tab.find.open, tab.find.query.clone(), current, tab.find.matches.len())
     }
 
     /// Scrolls the viewport, or hands the wheel to a tracking program.
@@ -626,22 +1571,34 @@ impl Shell {
     fn paint(&mut self, context: &cairo::Context, width: i32, height: i32) {
         self.fit(width, height);
 
-        let Some(tab) = self.tabs.active_mut() else {
-            return;
-        };
-        self.renderer
-            .data_mut()
-            .refresh(&mut tab.control, &tab.view, true, None);
+        let blink_on = self.blink_on;
+        let painted = {
+            let Shell {
+                renderer,
+                tabs,
+                composition,
+                ..
+            } = self;
+            let Some(tab) = tabs.active_mut() else {
+                return;
+            };
+            renderer
+                .data_mut()
+                .refresh(&mut tab.control, &tab.view, blink_on, Some(&tab.find));
 
-        let (background, foreground) = tab.control.default_colors();
-        let _ = self.renderer.set_default_colors(background, foreground);
-        if let Ok(table) = tab.control.color_table().lock() {
-            self.renderer.settings_mut().set_color_table(table.clone());
-        }
-        self.renderer.invalidate_all();
-        if self.renderer.paint_frame().is_err() {
-            return;
-        }
+            let (background, foreground) = tab.control.default_colors();
+            let _ = renderer.set_default_colors(background, foreground);
+            if let Ok(table) = tab.control.color_table().lock() {
+                renderer.settings_mut().set_color_table(table.clone());
+            }
+            renderer.data_mut().set_composition(composition.clone());
+            renderer.invalidate_all();
+            if renderer.paint_frame().is_err() {
+                return;
+            }
+            (background, tab.control.bell_alpha(Instant::now()))
+        };
+        let (background, bell) = painted;
 
         // Whatever the whole-cell grid does not cover stays the pane's colour.
         let (red, green, blue) = channels(background);
@@ -649,30 +1606,97 @@ impl Shell {
         context.paint().ok();
 
         let (pixels_wide, pixels_high) = (self.shared.width(), self.shared.height());
-        if pixels_wide == 0 || pixels_high == 0 {
+        if pixels_wide > 0 && pixels_high > 0 {
+            let mut bytes = Vec::with_capacity(4 * pixels_wide as usize * pixels_high as usize);
+            self.shared.with_pixels(|pixels| {
+                for pixel in pixels.iter().take(pixels_wide as usize * pixels_high as usize) {
+                    bytes.extend_from_slice(&pixel.to_ne_bytes());
+                }
+            });
+
+            // `0xAARRGGBB` in a `u32` is BGRA in memory, which is `ARGB32` on a
+            // little-endian host -- Cairo's own layout, so no swizzle is needed.
+            if let Ok(surface) = cairo::ImageSurface::create_for_data(
+                bytes,
+                cairo::Format::ARgb32,
+                pixels_wide as i32,
+                pixels_high as i32,
+                4 * pixels_wide as i32,
+            ) && context.set_source_surface(&surface, PANE_LEFT, 0.0).is_ok()
+            {
+                context.paint().ok();
+            }
+        }
+
+        let grid_height = f64::from(self.cell.1) * f64::from(self.grid.1);
+        if let Some(alpha) = bell {
+            context.set_source_rgba(1.0, 1.0, 1.0, f64::from(alpha) * 0.12);
+            context.rectangle(PANE_LEFT, 0.0, f64::from(width) - PANE_LEFT, grid_height);
+            context.fill().ok();
+        }
+
+        self.paint_scrollbar(context, width, height);
+        self.announce_text();
+    }
+
+    /// Publishes the visible screen to the accessibility tree.
+    ///
+    /// A full `GtkAccessibleText` needs a custom widget class, which this shell
+    /// does not own yet, so the screen is the pane's description: a screen
+    /// reader can read the terminal even though it cannot address a cell. The
+    /// remaining gap is named in ADR 074.
+    fn announce_text(&mut self) {
+        let text = self.renderer.data().visible_text();
+        if text.is_empty() || text == self.accessible_text {
             return;
         }
 
-        let mut bytes = Vec::with_capacity(4 * pixels_wide as usize * pixels_high as usize);
-        self.shared.with_pixels(|pixels| {
-            for pixel in pixels.iter().take(pixels_wide as usize * pixels_high as usize) {
-                bytes.extend_from_slice(&pixel.to_ne_bytes());
-            }
-        });
+        let label = if self.window_title.is_empty() {
+            "Winter".to_string()
+        } else {
+            self.window_title.clone()
+        };
+        self.area.update_property(&[
+            gtk::accessible::Property::Label(&label),
+            gtk::accessible::Property::Description(&text),
+        ]);
+        self.accessible_text = text;
+    }
 
-        // `0xAARRGGBB` in a `u32` is BGRA in memory, which is `ARGB32` on a
-        // little-endian host -- Cairo's own layout, so no swizzle is needed.
-        let Ok(surface) = cairo::ImageSurface::create_for_data(
-            bytes,
-            cairo::Format::ARgb32,
-            pixels_wide as i32,
-            pixels_high as i32,
-            4 * pixels_wide as i32,
-        ) else {
+    /// Paints the scrollbar, its thumb and the prompt marks over the pane.
+    fn paint_scrollbar(&self, context: &cairo::Context, width: i32, height: i32) {
+        let Some(tab) = self.tabs.active() else {
             return;
         };
-        if context.set_source_surface(&surface, 0.0, 0.0).is_ok() {
-            context.paint().ok();
+        let visible = tab.control.size().1;
+        let document = self.renderer.data().document_height();
+        let track = f64::from(height);
+        if document <= visible || track <= 0.0 {
+            return;
+        }
+
+        let bar = f64::from(scrollbar::WIDTH);
+        let left = f64::from(width) - bar;
+        context.set_source_rgba(0.0, 0.0, 0.0, 0.35);
+        context.rectangle(left, 0.0, bar, track);
+        context.fill().ok();
+
+        let (top, thumb) = scrollbar::thumb_pixels(tab.view.scroll(), document, visible, track);
+        context.set_source_rgba(0.63, 0.63, 0.63, 0.8);
+        context.rectangle(left + 1.0, top, (bar - 2.0).max(1.0), thumb);
+        context.fill().ok();
+
+        // Marks come after the thumb, the way upstream declares its mark image
+        // above the scroll bar (ADR 059).
+        for mark in self.renderer.data().marks() {
+            let y = f64::from(scrollbar::position(mark.row, document)) * track - 0.75;
+            if mark.error {
+                context.set_source_rgba(0.92, 0.35, 0.35, 0.95);
+            } else {
+                context.set_source_rgba(0.43, 0.67, 1.0, 0.9);
+            }
+            context.rectangle(left, y, bar, 1.5);
+            context.fill().ok();
         }
     }
 
@@ -810,7 +1834,8 @@ impl Shell {
 
     /// Fits the terminal and the renderer to whole cells.
     fn fit(&mut self, width: i32, height: i32) {
-        let columns = (width / i32::from(self.cell.0)).max(1);
+        let usable = (width - PANE_LEFT as i32 - scrollbar::WIDTH as i32).max(0);
+        let columns = (usable / i32::from(self.cell.0)).max(1);
         let rows = (height / i32::from(self.cell.1)).max(1);
         if (columns, rows) == self.grid {
             return;
@@ -858,37 +1883,57 @@ impl Shell {
             return;
         };
 
-        let paintable = WidgetPaintable::new(Some(&self.window));
-        let width = f64::from(self.window.width());
-        let height = f64::from(self.window.height());
-        let snapshot = Snapshot::new();
-        paintable.snapshot(&snapshot, width, height);
-
-        let Some(node) = snapshot.to_node() else {
-            eprintln!("winter: the window produced no render node");
-            app.quit();
-            return;
-        };
-        let Some(native) = self.window.native() else {
-            eprintln!("winter: the window has no native surface");
-            app.quit();
-            return;
-        };
-
-        let viewport = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
-        let Some(renderer) = native.renderer() else {
-            eprintln!("winter: the surface has no renderer");
-            app.quit();
-            return;
-        };
-        let texture = renderer.render_texture(&node, Some(&viewport));
-
-        match texture.save_to_png(path) {
-            Ok(()) => println!("winter: wrote {}", path.display()),
-            Err(error) => eprintln!("winter: cannot write {}: {error}", path.display()),
+        capture_widget(&self.window, path);
+        if let Some(settings) = &self.settings_window {
+            capture_widget(settings, &with_suffix(path, "-settings"));
         }
         app.quit();
     }
+}
+
+/// Writes `widget` exactly as GTK last painted it.
+fn capture_widget(widget: &impl IsA<gtk::Widget>, path: &Path) -> bool {
+    let paintable = WidgetPaintable::new(Some(widget));
+    let width = f64::from(widget.width());
+    let height = f64::from(widget.height());
+    let snapshot = Snapshot::new();
+    paintable.snapshot(&snapshot, width, height);
+
+    let Some(node) = snapshot.to_node() else {
+        eprintln!("winter: the window produced no render node");
+        return false;
+    };
+    let Some(native) = widget.native() else {
+        eprintln!("winter: the window has no native surface");
+        return false;
+    };
+    let viewport = graphene::Rect::new(0.0, 0.0, width as f32, height as f32);
+    let Some(renderer) = native.renderer() else {
+        eprintln!("winter: the surface has no renderer");
+        return false;
+    };
+    let texture = renderer.render_texture(&node, Some(&viewport));
+
+    match texture.save_to_png(path) {
+        Ok(()) => {
+            println!("winter: wrote {}", path.display());
+            true
+        }
+        Err(error) => {
+            eprintln!("winter: cannot write {}: {error}", path.display());
+            false
+        }
+    }
+}
+
+/// A sibling of `path` with `suffix` before its extension.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("winter-shot");
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("png");
+    path.with_file_name(format!("{stem}{suffix}.{extension}"))
 }
 
 /// The strip's fills and the two label colours.
@@ -960,7 +2005,8 @@ fn centre(slots: TabBox) -> f64 {
     f64::from(slots.left) + f64::from(slots.width()) / 2.0
 }
 
-/// The profile list the strip's button pops up.
+/// The profile list the strip's button pops up, with the settings editor after
+/// a separator.
 fn profile_menu(document: &settings::Settings) -> gtk::gio::Menu {
     let menu = gtk::gio::Menu::new();
     for profile in &document.profiles {
@@ -968,6 +2014,10 @@ fn profile_menu(document: &settings::Settings) -> gtk::gio::Menu {
         item.set_action_and_target_value(Some("profiles.open"), Some(&profile.name.to_variant()));
         menu.append_item(&item);
     }
+
+    let trailing = gtk::gio::Menu::new();
+    trailing.append(Some("Settings…"), Some("profiles.settings"));
+    menu.append_section(None, &trailing);
     menu
 }
 
@@ -1182,6 +2232,175 @@ fn modifiers(state: gdk::ModifierType) -> Modifiers {
 /// not text, and reach the terminal through the key path.
 fn none_if_control(character: Option<char>) -> Option<char> {
     character.filter(|character| !character.is_control())
+}
+
+/// GDK's button number as the terminal's vocabulary.
+fn mouse_button(button: u32) -> MouseButton {
+    match button {
+        2 => MouseButton::Middle,
+        3 => MouseButton::Right,
+        _ => MouseButton::Left,
+    }
+}
+
+/// The UTF-16 offset of the character `chars` into `text`.
+///
+/// GTK counts the preedit caret in characters; the renderer's preview and
+/// AppKit's are both in UTF-16 units, so the shared builder takes the converted
+/// offset.
+fn utf16_offset(text: &str, chars: usize) -> usize {
+    text.chars().take(chars).map(char::len_utf16).sum()
+}
+
+/// Reads the clipboard and pastes it, which GDK delivers asynchronously.
+fn paste_from_clipboard(shell: &Rc<RefCell<Shell>>) {
+    let Some(display) = gdk::Display::default() else {
+        return;
+    };
+    let clipboard = display.clipboard();
+    let shell = Rc::clone(shell);
+    glib::spawn_future_local(async move {
+        if let Ok(Some(text)) = clipboard.read_text_future().await {
+            shell.borrow_mut().paste_text(text.as_str());
+        }
+    });
+}
+
+/// Opens the native settings editor over the shell's whole document.
+///
+/// Saving parses the text with the same reader startup uses and writes it
+/// through `settings::save`, so what is in force is always the normalized file
+/// (ADR 030's rule; ADR 074 records why the document is the editor).
+fn open_settings_window(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) -> gtk::Window {
+    let mut builder = gtk::Window::builder()
+        .title("Winter Settings")
+        .transient_for(parent)
+        .default_width(640)
+        .default_height(540);
+    if let Some(application) = parent.application() {
+        builder = builder.application(&application);
+    }
+    let window = builder.build();
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    root.set_margin_top(12);
+    root.set_margin_bottom(12);
+    root.set_margin_start(12);
+    root.set_margin_end(12);
+
+    let hint = gtk::Label::new(Some("Settings file — Save validates the TOML and writes it."));
+    hint.set_xalign(0.0);
+
+    let editor = gtk::TextView::new();
+    editor.set_monospace(true);
+    editor.set_wrap_mode(gtk::WrapMode::None);
+    editor.set_left_margin(8);
+    editor.set_right_margin(8);
+    editor.set_top_margin(8);
+    editor.set_bottom_margin(8);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&editor)
+        .vexpand(true)
+        .has_frame(true)
+        .build();
+
+    let status = gtk::Label::new(None);
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    status.add_css_class("dim-label");
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    buttons.set_halign(gtk::Align::End);
+    let close = gtk::Button::with_label("Close");
+    let revert = gtk::Button::with_label("Revert");
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    buttons.append(&close);
+    buttons.append(&revert);
+    buttons.append(&save);
+
+    root.append(&hint);
+    root.append(&scroll);
+    root.append(&status);
+    root.append(&buttons);
+    window.set_child(Some(&root));
+
+    let sync = Rc::new({
+        let shell = Rc::clone(shell);
+        let editor = editor.clone();
+        let status = status.clone();
+        move || {
+            let shell = shell.borrow();
+            editor.buffer().set_text(&settings::to_toml(shell.settings()));
+            status.set_text(&crate::config::status_text(
+                shell.settings_path(),
+                shell.migrated_from(),
+                shell.settings_error(),
+                shell.warnings(),
+            ));
+        }
+    });
+
+    {
+        let shell = Rc::clone(shell);
+        let editor = editor.clone();
+        let status = status.clone();
+        let sync = Rc::clone(&sync);
+        save.connect_clicked(move |_| {
+            let buffer = editor.buffer();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), true);
+            let document = match settings::parse(text.as_str()) {
+                Ok(document) => document,
+                Err(error) => {
+                    status.set_text(&format!("The document is not valid: {error}"));
+                    return;
+                }
+            };
+            let result = shell.borrow_mut().save_document(&document);
+            match result {
+                Ok(()) => {
+                    sync();
+                    status.set_text("Saved.");
+                }
+                Err(error) => status.set_text(&error),
+            }
+        });
+    }
+
+    {
+        let shell = Rc::clone(shell);
+        let status = status.clone();
+        let sync = Rc::clone(&sync);
+        revert.connect_clicked(move |_| {
+            shell.borrow_mut().reload_settings();
+            sync();
+            status.set_text("Reverted to the file on disk.");
+        });
+    }
+
+    {
+        let window = window.clone();
+        close.connect_clicked(move |_| window.close());
+    }
+
+    {
+        let closer = window.clone();
+        let keys = EventControllerKey::new();
+        keys.connect_key_pressed(move |_controller, key, _code, _state| {
+            if key == gdk::Key::Escape {
+                closer.close();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        window.add_controller(keys);
+    }
+
+    sync();
+    window.present();
+    window
 }
 
 /// The cell a pixel position falls in; a toolkit reports sub-pixel offsets and
@@ -1504,6 +2723,30 @@ mod tests {
     }
 
     #[test]
+    fn the_preedit_caret_counts_utf16_units() {
+        assert_eq!(utf16_offset("ni", 0), 0);
+        assert_eq!(utf16_offset("ni", 1), 1);
+        // GTK counts characters; an emoji is two UTF-16 units.
+        assert_eq!(utf16_offset("😀日", 0), 0);
+        assert_eq!(utf16_offset("😀日", 1), 2);
+        assert_eq!(utf16_offset("😀日", 2), 3);
+        // A caret past the end clamps.
+        assert_eq!(utf16_offset("ni", 9), 2);
+    }
+
+    #[test]
+    fn a_capture_name_keeps_its_folder_and_extension() {
+        assert_eq!(
+            with_suffix(Path::new("/tmp/winter-shot.png"), "-settings"),
+            PathBuf::from("/tmp/winter-shot-settings.png")
+        );
+        assert_eq!(
+            with_suffix(Path::new("shot"), "-settings"),
+            PathBuf::from("shot-settings.png")
+        );
+    }
+
+    #[test]
     fn the_menu_button_sits_after_the_new_tab_button() {
         let (layout, menu) = strip_and_menu(900, 2);
 
@@ -1520,7 +2763,7 @@ mod tests {
     }
 
     #[test]
-    fn the_profile_menu_names_every_profile() {
+    fn the_profile_menu_names_every_profile_and_offers_the_editor() {
         let document = settings::parse(
             r##"
                 [[profiles]]
@@ -1535,7 +2778,7 @@ mod tests {
         .expect("settings");
 
         let menu = profile_menu(&document);
-        assert_eq!(menu.n_items(), 2);
+        assert_eq!(menu.n_items(), 3);
 
         let label = menu.item_attribute_value(0, "label", None);
         assert_eq!(
@@ -1546,6 +2789,15 @@ mod tests {
         assert_eq!(
             parameter.and_then(|value| value.str().map(str::to_string)).as_deref(),
             Some("two")
+        );
+
+        // The settings editor sits after the profiles, inside a section so the
+        // popover draws a separator.
+        let section = menu.item_link(2, "section").expect("a trailing section");
+        let settings = section.item_attribute_value(0, "label", None);
+        assert_eq!(
+            settings.and_then(|value| value.str().map(str::to_string)).as_deref(),
+            Some("Settings…")
         );
     }
 }

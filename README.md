@@ -20,8 +20,13 @@ the platform's, while the tab strip, scrollbar and grid stay `renderer`'s
 pixels (ADR 072), with tab reordering, input-method composition, a program icon
 per tab, an accessibility value VoiceOver reads, and a Metal content path
 presented through a `CAMetalLayer` drawable, with the offscreen readback drawn
-only for a screenshot or when the layer has no drawable (ADR 073). Linux runs
-the egui shell (ADRs 018, 062).
+only for a screenshot or when the layer has no drawable (ADR 073). On Linux
+it is a native GTK 4 shell — the window, profile menu, find bar and settings
+editor are the platform's, while the tab strip, scrollbar and grid stay
+`renderer`'s pixels (ADR 074), with pointer selection and drag scrolling,
+copy/paste, scrollback with prompt marks, tab reordering, input-method
+composition, a bell flash, notifications and an accessibility value; egui
+remains the `--no-default-features` fallback (ADR 018).
 
 | Crate | What it is | State |
 |---|---|---|
@@ -212,24 +217,28 @@ leaves out. `cargo-deny` is required for `just deny`:
 cargo install cargo-deny --locked
 ```
 
-Linux runs the egui shell. A GTK 4 shell reached a live terminal and is parked
-(ADR 062). It stays behind an opt-in feature, so the default build needs no GTK
-headers, and running it needs a display:
+Linux builds the GTK shell by default, so it needs GTK 4.10 development
+headers; the other hosts need nothing extra:
 
 ```sh
 sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev
-cargo run -p winter --features gtk
+cargo run -p winter
 ```
 
-`WINTER_SCREENSHOT=<path>` makes that shell write its toplevel to a PNG and
-quit, which is how it is photographed on a machine with no display server.
+`--no-default-features` builds the egui shell instead, which needs no GTK
+headers and is the fallback if the toolkit is unavailable.
 
-`just linux` runs the same build. On Windows the GTK headers live in WSL, so
-the first argument names the distro — `just linux FedoraLinux-44`, and
-anything after it goes to cargo. There is no default, because a distro's name
-is a fact about a machine; `WSL_DISTRO` sets the same thing from the
-environment. The guest keeps its artefacts in its own home rather than in the
-repository's `target/`.
+`WINTER_SCREENSHOT=<path>` makes the GTK shell write its toplevel to a PNG and
+quit, which is how it is photographed on a machine with no display server;
+with `WINTER_OPEN_SETTINGS=1` it also writes `<path>-settings.png`, and
+`WINTER_OPEN_FIND=1` opens the find bar.
+
+`just linux` runs the same build from either host. On Windows the GTK headers
+live in WSL, so the first argument names the distro — `just linux
+FedoraLinux-44`, and anything after it goes to cargo. There is no default,
+because a distro's name is a fact about a machine; `WSL_DISTRO` sets the same
+thing from the environment. The guest keeps its artefacts in its own home
+rather than in the repository's `target/`.
 
 Wayland gives a client the compositor's keymap and nothing else, so the
 compositor is where a layout lives. WSLg always composes `us` and cannot be

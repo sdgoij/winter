@@ -1,15 +1,16 @@
 #!/bin/sh
-# Runs the parked GTK 4 shell (ADRs 061, 062). Linux itself runs egui.
+# Runs the Linux shell (ADRs 061, 074): the GTK 4 shell by default, or the egui
+# fallback with `--no-default-features`.
 #
 #   just linux                          # on Linux: this machine's build
 #   just linux FedoraLinux-44           # on Windows: in that WSL distro
 #   just linux FedoraLinux-44 --release # that distro, optimised
 #   just linux --release                # on Linux: anything else cargo takes
 #
-# The shell needs GTK 4.8 development headers. On Windows those live in WSL, so
-# the first argument names the distro to run in; `WSL_DISTRO` does the same from
-# the environment. Neither is defaulted: a distro's name is a fact about a
-# machine, and a guess that is wrong teaches nothing.
+# The GTK shell needs GTK 4.10 development headers. On Windows those live in
+# WSL, so the first argument names the distro to run in; `WSL_DISTRO` does the
+# same from the environment. Neither is defaulted: a distro's name is a fact
+# about a machine, and a guess that is wrong teaches nothing.
 #
 # A build under `/mnt` means the repository is on a Windows drive, so the guest
 # writes its artefacts to its own home instead of on top of the Windows ones.
@@ -23,7 +24,7 @@ run() {
     /mnt/*) CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$HOME/winterm-target"} ;;
     esac
     export CARGO_TARGET_DIR
-    cargo run -p winter --features gtk "$@"
+    cargo run -p winter "$@"
 }
 
 case "$(uname -s)" in

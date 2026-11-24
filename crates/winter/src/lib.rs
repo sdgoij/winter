@@ -20,12 +20,13 @@
 //! - [`app`] owns the tabs and the window's chords, [`terminal_widget`] is the
 //!   egui viewport over one terminal, [`config`] is the settings window, and
 //!   [`window`] the platform commands. Those four, with [`icon`], are the ones
-//!   that name a toolkit. `linux` is the GTK 4 shell (ADR 061): GTK hosts the
-//!   window, the menus and the dialogs, while the tab strip, the scrollbar and
-//!   the grid stay [`renderer`]'s pixels. It is parked (ADR 062) -- Linux runs
-//!   this egui shell. `macos` is the AppKit shell (ADR 072): AppKit hosts the
-//!   window, its menu bar, its find field and its settings window, and the tab
-//!   strip, the scrollbar and the grid are `renderer`'s pixels there too.
+//!   that name a toolkit. `linux` is the GTK 4 shell (ADR 074): GTK hosts the
+//!   window, the menus, the find bar and the settings window, while the tab
+//!   strip, the scrollbar and the grid stay [`renderer`]'s pixels. The egui
+//!   modules above remain the fallback when the `gtk` feature is off.
+//!   `macos` is the AppKit shell (ADR 072): AppKit hosts the window, its menu
+//!   bar, its find field and its settings window, and the tab strip, the
+//!   scrollbar and the grid are `renderer`'s pixels there too.
 //!
 //! The emulation and console crates are portable and are tested without a
 //! window.

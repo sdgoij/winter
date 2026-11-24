@@ -12,13 +12,12 @@ use std::time::{Duration, Instant};
 
 use renderer::renderer::Renderer;
 use renderer::{
-    AtlasEngine, CellSizeInDIP, Composition, CompositionRange, FontDueRasterizer, FontFace, FontInfo, IBackend,
-    RenderSettings, RenderingPayload, Settings, SharedBackend, SoftwareBackend,
+    AtlasEngine, CellSizeInDIP, Composition, FontDueRasterizer, FontFace, FontInfo, IBackend, RenderSettings,
+    RenderingPayload, Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
 use types::text_color::ColorType;
-use types::{TextAttribute, UnderlineStyle};
 use utils::Size;
 
 use crate::find::FindBar;
@@ -272,7 +271,7 @@ impl Shell {
 
     /// Shows or clears the input method's marked text.
     pub(crate) fn set_composition(&mut self, text: &str, selected_utf16: usize) {
-        self.composition = composition(text, selected_utf16);
+        self.composition = crate::terminal_render::composition(text, selected_utf16);
     }
 
     fn clear_composition(&mut self) {
@@ -1619,72 +1618,9 @@ fn finite_scale(scale: f32) -> f32 {
     }
 }
 
-/// Builds the renderer's IME preview from marked text and AppKit's selection.
-///
-/// AppKit reports the selection in UTF-16 units; the renderer's caret counts
-/// characters, so the range is converted here. One underline run covers the
-/// whole preview, which is how a terminal marks uncommitted text.
-pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
-    let mut attr = TextAttribute::default();
-    attr.set_underline_style(UnderlineStyle::SinglyUnderlined);
-    let len = text.chars().count();
-    Composition {
-        text: text.to_string(),
-        attributes: if len == 0 {
-            Vec::new()
-        } else {
-            vec![CompositionRange { len, attr }]
-        },
-        cursor_pos: char_index(text, selected_utf16),
-    }
-}
-
-/// The character index `units` UTF-16 units into `text`, clamped to its end.
-///
-/// A selection in the middle of a surrogate pair names the character that
-/// contains it, which is the only cell the caret can sit on.
-fn char_index(text: &str, units: usize) -> usize {
-    let mut seen = 0;
-    for (index, ch) in text.chars().enumerate() {
-        if seen >= units {
-            return index;
-        }
-        seen += ch.len_utf16();
-    }
-    text.chars().count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_marked_selection_counts_characters_not_utf16_units() {
-        assert_eq!(composition("ni", 0).cursor_pos, 0);
-        assert_eq!(composition("ni", 1).cursor_pos, 1);
-        // A BMP CJK character is one UTF-16 unit.
-        assert_eq!(composition("日本語", 3).cursor_pos, 3);
-        assert_eq!(composition("日本語", 1).cursor_pos, 1);
-        // An emoji is two UTF-16 units but one character, even mid-pair.
-        assert_eq!(composition("😀", 2).cursor_pos, 1);
-        assert_eq!(composition("😀", 1).cursor_pos, 1);
-        assert_eq!(composition("😀日", 3).cursor_pos, 2);
-        // An out-of-range selection clamps to the end.
-        assert_eq!(composition("ni", 9).cursor_pos, 2);
-    }
-
-    #[test]
-    fn the_marked_text_is_one_underlined_run() {
-        let preview = composition("abc", 0);
-        assert_eq!(preview.text, "abc");
-        assert_eq!(preview.attributes.len(), 1);
-        assert_eq!(preview.attributes[0].len, 3);
-        assert_eq!(
-            preview.attributes[0].attr.get_underline_style(),
-            UnderlineStyle::SinglyUnderlined
-        );
-        assert!(composition("", 0).attributes.is_empty());
-    }
 
     #[test]
     fn a_bad_scale_falls_back_to_one() {

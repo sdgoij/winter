@@ -7,8 +7,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         winter::macos::run()?;
     }
-    // The GTK shell is parked (ADR 062) and opt-in: Linux runs the egui shell
-    // below unless `cargo run --features gtk` asks for this one.
+    // The GTK shell is the Linux shell (ADR 074). `--no-default-features`
+    // leaves it out and the egui shell below runs instead.
     #[cfg(all(target_os = "linux", feature = "gtk"))]
     {
         winter::linux::run()?;

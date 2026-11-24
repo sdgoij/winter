@@ -111,6 +111,25 @@ pub fn strip_hit(layout: &StripLayout, x: i32) -> Option<StripHit> {
     })
 }
 
+/// The slot a dragged tab lands in when the pointer is at `x`.
+///
+/// The target is the number of *other* tabs whose midpoint lies left of the
+/// pointer, so the dragged tab crosses a neighbour only once the pointer passes
+/// that neighbour's middle and does not count itself. Returns `None` when
+/// `from` is not a tab in the layout.
+pub fn drag_target(tabs: &[TabBox], from: usize, x: i32) -> Option<usize> {
+    if from >= tabs.len() {
+        return None;
+    }
+
+    Some(
+        tabs.iter()
+            .enumerate()
+            .filter(|&(index, tab)| index != from && x > tab.left + tab.width() / 2)
+            .count(),
+    )
+}
+
 /// A list of tabs with one active index.
 #[derive(Debug, Clone)]
 pub struct Tabs<T> {
@@ -383,6 +402,49 @@ mod tests {
         assert!(!tabs.move_to(0, 2));
         assert!(!tabs.move_to(2, 0));
         assert_eq!(titles(&tabs), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn a_drag_names_the_slot_it_crossed_into() {
+        let layout = strip_layout(900, 3);
+        let first = layout.tabs[0];
+        let second = layout.tabs[1];
+        let third = layout.tabs[2];
+
+        // Dragging the first tab: it stays first until it passes the second
+        // tab's middle, then it lands second, and last past the third's.
+        assert_eq!(drag_target(&layout.tabs, 0, first.left + 2), Some(0));
+        assert_eq!(drag_target(&layout.tabs, 0, second.left + second.width() / 2), Some(0));
+        assert_eq!(
+            drag_target(&layout.tabs, 0, second.left + second.width() / 2 + 1),
+            Some(1)
+        );
+        assert_eq!(drag_target(&layout.tabs, 0, third.right - 2), Some(2));
+
+        // The same rule mirrored: the last tab stays last while it is right of
+        // the second tab's middle and lands first once it passes the first's.
+        assert_eq!(drag_target(&layout.tabs, 2, third.left + 2), Some(2));
+        assert_eq!(drag_target(&layout.tabs, 2, second.left + second.width() / 2), Some(1));
+        assert_eq!(
+            drag_target(&layout.tabs, 2, second.left + second.width() / 2 + 1),
+            Some(2)
+        );
+        assert_eq!(
+            drag_target(&layout.tabs, 2, first.left + first.width() / 2 - 1),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_drag_that_crosses_nothing_keeps_its_slot() {
+        let layout = strip_layout(900, 3);
+        let middle = layout.tabs[1];
+
+        assert_eq!(drag_target(&layout.tabs, 1, middle.left + 2), Some(1));
+        assert_eq!(drag_target(&layout.tabs, 1, middle.right - 2), Some(1));
+        // Left of everything, but the first tab's own middle lies beyond it.
+        assert_eq!(drag_target(&layout.tabs, 1, 0), Some(0));
+        assert_eq!(drag_target(&layout.tabs, 9, 0), None);
     }
 
     #[test]

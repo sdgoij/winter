@@ -64,6 +64,10 @@ just test-long  # release mode, the ignored cases included
   `Full tests` job on every push, and `package` waits for it; run it locally
   when touching a crate that has an ignored case.
 
+On Linux the gate builds the GTK shell (ADR 074), so it needs GTK 4.10
+development headers: `libgtk-4-dev` on Debian/Ubuntu, `gtk4-devel` on Fedora.
+`--no-default-features` builds the egui fallback and needs none.
+
 Enable the pre-commit hook once per clone:
 
 ```sh
@@ -201,7 +205,7 @@ Do not add call sites under an allowance.
 |---|---|
 | `docs/plan.md` | The porting plan, milestone status, and what to build next |
 | `docs/adr/` | Decisions that constrain future code |
-| `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI shell, the macOS shell, commit messages |
+| `.agents/skills/` | Proven procedures, one area per skill: porting, testing, the WinUI, macOS and Linux shells, commit messages |
 | `.design/refs/terminal/` | A local checkout of the upstream C++, gitignored, because it is the oracle and not source |
 | `crates/utils` | Geometry, colour, containers, locks — the lock-free primitives, with the crate-root `unsafe` exemption |
 | `crates/types` | Terminal vocabulary: colours, attributes, enums, parameters, input records |
@@ -214,7 +218,7 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
-| `crates/winter` | The application: the egui shell on Linux, `winui/` on Windows, and `macos/` on macOS |
+| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 074, with egui as the `--no-default-features` fallback), `winui/` on Windows, and `macos/` on macOS |
 
 ## Where the port stands
 

@@ -482,6 +482,34 @@ pub(crate) fn settings_rows(
     rows
 }
 
+/// The lines a native settings window shows under its editor: the file, what
+/// was migrated, why a file was not used, and what normalization adjusted.
+#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+pub(crate) fn status_text(
+    path: Option<&Path>,
+    migrated_from: Option<&Path>,
+    error: Option<&str>,
+    warnings: &[String],
+) -> String {
+    let mut text = match path {
+        Some(path) => format!("File: {}\n", path.display()),
+        None => "File: the platform has no settings path; the defaults are in force.\n".to_string(),
+    };
+    if let Some(path) = migrated_from {
+        text.push_str(&format!("Migrated from: {}\n", path.display()));
+    }
+    if let Some(error) = error {
+        text.push_str(&format!("\nThe file was not used: {error}\n"));
+    }
+    for warning in warnings {
+        text.push_str(&format!("Adjusted: {warning}\n"));
+    }
+    if error.is_none() && warnings.is_empty() && migrated_from.is_none() {
+        text.push_str("Every value in the file was usable.\n");
+    }
+    text
+}
+
 /// Draws a colour field's swatch, or what an empty or broken field means.
 pub(crate) fn color_swatch(ui: &mut egui::Ui, text: &str, empty: &str) {
     match settings::Color::parse(text)
@@ -784,5 +812,37 @@ pub(crate) fn draft_editor(
     }
     if dirty {
         ui.label("Unsaved changes are discarded when this window closes.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_status_names_the_file_and_every_adjustment() {
+        let path = Path::new("/home/u/.config/winter/settings.toml");
+        let old = Path::new("/home/u/.config/winter/settings.json");
+        let warnings = vec!["default_profile: no such profile".to_string()];
+        let text = status_text(Some(path), Some(old), None, &warnings);
+
+        assert!(text.contains("File: /home/u/.config/winter/settings.toml"));
+        assert!(text.contains("Migrated from: /home/u/.config/winter/settings.json"));
+        assert!(text.contains("Adjusted: default_profile: no such profile"));
+    }
+
+    #[test]
+    fn a_rejected_file_says_why_it_was_not_used() {
+        let text = status_text(None, None, Some("bad TOML"), &[]);
+
+        assert!(text.contains("the defaults are in force"));
+        assert!(text.contains("The file was not used: bad TOML"));
+        assert!(!text.contains("Every value"));
+    }
+
+    #[test]
+    fn a_clean_file_says_so() {
+        let text = status_text(Some(Path::new("settings.toml")), None, None, &[]);
+        assert!(text.contains("Every value in the file was usable."));
     }
 }

@@ -89,8 +89,8 @@ Rules:
 | [058](058-drawn-icon.md) | The icon drawing is the single source: the egui window wraps it, the Windows build embeds it, and the WinUI window is given it from the resource | Accepted |
 | [059](059-auto-mark-prompts-on-enter.md) | Enter marks the submitted command line as a prompt when the shell sends no shell-integration mark; ticks paint over the thumb | Accepted |
 | [060](060-powershell-shell-integration-hook.md) | A PowerShell profile is started with an embedded hook that sends `OSC 133` A/B/C/D, so ticks carry the exit code; marks are one per prompt row | Accepted |
-| [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Amended by 062 (parked) |
-| [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Accepted |
+| [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Amended by 062 (parked); resumed by 074 |
+| [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Superseded by 074 |
 | [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |
 | [064](064-our-own-tab-strip.md) | The WinUI tab strip is hand-built: fills that follow the terminal, a hover state, and a tab that meets the pane | Amended by 067 (the tab's height, the overhang and the button group) |
 | [065](065-wsl-distros-as-profiles.md) | WSL distributions are profiles the shell generates from `wsl.exe -l -q`, merged at load and never written to the settings file | Accepted |
@@ -104,3 +104,4 @@ Rules:
 | [072](072-win32-record-character.md) | A Win32 input record carries the character a key types, so Enter, Tab, Backspace and Escape reach a character-reading client | Accepted |
 | [073](073-macos-metal-content.md) | The macOS content path is Metal, presented through a `CAMetalLayer` drawable and read back only for screenshots and the fallback; the software backend is the fallback | Accepted |
 | [074](074-macos-app-bundle.md) | macOS ships as a `Winter.app` bundle: the plist and drawn `.icns` come from the binary, the bundle is ad-hoc signed, and a Finder launch starts in `$HOME` | Accepted |
+| [074](074-linux-gtk-shell-ships.md) | The Linux shell is GTK 4; the feature is on by default, the gate installs the headers and builds it, and the named gaps are primary selection, an accessible text tree, tab icons and sound | Accepted |

@@ -1,11 +1,13 @@
 # A native Linux shell — scope
 
-Status: parked — ADR 062. The GTK shell reached a live terminal (milestones 1–4
-and half of 5) and is not being finished; Linux ships the egui shell. What is
-here is kept for a future attempt: the measurements, the traps and the state.
-Related: ADR 062 (the parking decision), ADR 061 (the GTK decision it amends),
-ADR 018 (the egui shell), ADR 038 (crate split), ADRs 040–053 (the WinUI shell
-this mirrors), `crates/winter/src/linux/`.
+Status: shipping — ADR 074. The GTK 4 shell is the Linux shell; the egui shell
+is the `--no-default-features` fallback. What remains is named under
+[Remaining gaps](#remaining-gaps): primary selection, a cell-addressable
+accessibility tree, tab program icons and a sound sink.
+Related: ADR 074 (the shipping decision), ADR 062 (the parking it supersedes),
+ADR 061 (the GTK decision it amends), ADR 018 (the egui shell), ADR 038 (crate
+split), ADRs 040–053 (the WinUI shell this mirrors),
+`crates/winter/src/linux/`.
 
 ## Goal
 
@@ -27,13 +29,13 @@ primary selection and IME.
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
 | 3. Skeleton | ✅ `crates/winter/src/linux/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
-| 5. Host chrome | ⏳ tabs and the profile menu are in; the find bar and the settings window remain |
-| 6. Linux extras | ⏳ |
-| 7. Cut-over | ⏳ |
+| 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
+| 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
+| 7. Cut-over | ✅ `gtk` is a default feature (ADR 074), CI installs `libgtk-4-dev`, and `--no-default-features` keeps egui |
 
-`cargo run -p winter --features gtk` (or `only` that package) picks the GTK
-shell on Linux; without the feature `main.rs` still runs the egui shell, so the
-default build has no GTK dependency.
+`cargo run -p winter` builds the GTK shell on Linux; `--no-default-features`
+builds the egui one, which needs no GTK headers. `just linux` runs the GTK
+build from either host.
 
 ## What must not change
 
@@ -97,27 +99,29 @@ second shell rather than as a rejected idea.
 
 ## Architecture
 
-One directory, `crates/winter/src/linux/`, chosen in `main.rs` the way
-`winui` is (ADR 040):
+One module, `crates/winter/src/linux/mod.rs`, chosen in `main.rs` the way
+`winui` is (ADR 040). It owns:
 
-| Module | Owns |
+| Part | Owns |
 |---|---|
-| `mod.rs` | `run()`, the `gtk::Application` and the entry point's contract |
-| `window.rs` | `GtkApplicationWindow`, its host menu (a `GtkPopoverMenu` off a menu button), and the drawing area that the chrome and the grid fill |
-| `surface.rs` | `gtk::DrawingArea`: `TerminalData::refresh` → `Renderer::paint_frame` → pixels in a `gdk::MemoryTexture` appended to the snapshot; the tab strip and scrollbar are painted into the same target |
-| `tabs.rs` | The tab strip's hit-testing and painting over the shared `crate::tabs`, so it looks the same as on Windows instead of like `AdwTabBar` |
-| `input.rs` | `EventControllerKey`, `GestureClick`, `EventControllerScroll`, `EventControllerMotion` → `crate::input::Event` |
-| `menu.rs` | The profile menu's rows, rendered by the host `GtkPopoverMenu` (a native menu, unlike WinUI's overlay — ADR 052) |
-| `find.rs` | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
-| `settings.rs` | `AdwPreferencesWindow` over `config::Draft`: spin rows, entry rows, combo rows |
-| `clipboard.rs` | `gdk::Clipboard` for `CLIPBOARD`, plus `PRIMARY` for middle-click paste |
-| `a11y.rs` | The grid as a `GtkAccessibleText`, so Orca can read the terminal |
+| entry | `run()`, the `gtk::Application`, the window and the `GtkWindowHandle` title bar |
+| strip | the tab strip's layout, hit testing, painting and drag-reorder over `crate::tabs` |
+| pane | the `DrawingArea`: `TerminalData::refresh` → `Renderer::paint_frame` → Cairo, the scrollbar with prompt marks, and the bell overlay |
+| input | `EventControllerKey`, the `IMContext`, `GestureClick`, `GestureDrag`, the scroll and motion controllers → `crate::input` |
+| find | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
+| settings | a `GtkTextView` over the whole TOML document, beside the profile `GtkPopoverMenu` |
+| clipboard | `gdk::Clipboard` for `CLIPBOARD`; `PRIMARY` waits for the GTK 4.16 floor |
+| a11y | the visible screen as the pane's accessible description; a cell-addressable `GtkAccessibleText` needs a custom widget class |
+
+The module is about 2.6k lines. Splitting it along those rows is the next
+cleanup, once the shell has been exercised interactively; the WinUI and macOS
+shells are the shape to follow.
 
 Rendering path, matching ADR 041's Direct2D blit: paint into the renderer's
-software target, wrap the pixels (`gdk::MemoryTexture` borrows a `GBytes`), and
-draw that texture into the drawing area's snapshot. Full-frame uploads are the
-first cut — the same thing WinUI does — with dirty-row uploads as a later
-optimisation if a 1080p frame at 8 MB per paint proves too costly.
+software target, copy the pixels into a Cairo `ImageSurface`, and draw that
+surface into the drawing area. Full-frame uploads are the first cut — the same
+thing WinUI does — with dirty-row uploads as a later optimisation if a 1080p
+frame at 8 MB per paint proves too costly.
 
 ## Wayland rules that will bite
 
@@ -233,19 +237,39 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    the widget.
 4. **Live terminal.** ✅ `Session` + `Control` wiring, key input, resize; the
    bar was `cargo run` on a real prompt in the guest, photographed by the shot.
-5. **Host chrome.** ⏳ The tab strip (tabs, close boxes, the new-tab button
+5. **Host chrome.** ✅ The tab strip (tabs, close boxes, the new-tab button
    and the profile menu's button) is painted by this shell inside a
-   `GtkWindowHandle`, with the profile list as a `GtkPopoverMenu`. The find
-   bar, the settings window and the native dialogs remain.
-6. **Linux extras.** Primary selection, IME preview, bell, notifications.
-7. **Cut-over.** Not taken: ADR 062 parks the shell, so `main.rs` keeps egui on
-   Linux and the next native shell is macOS's.
+   `GtkWindowHandle`, with the profile list as a `GtkPopoverMenu`. The find bar
+   is a `GtkSearchBar`, the settings editor is a `GtkTextView` over the TOML
+   document, and a tab reorders when it is dragged past a neighbour.
+6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
+   caret, the screen as the pane's accessible description, the bell flash and
+   OSC 777 notifications. ⏳ Primary selection.
+7. **Cut-over.** ✅ Taken by ADR 074: `gtk` is the Linux default, the gate
+   installs the headers and builds it, and egui remains the
+   `--no-default-features` fallback.
+
+## Remaining gaps
+
+- **Primary selection.** GDK exposes `PRIMARY` as a clipboard only from 4.16;
+  middle-click pastes `CLIPBOARD` today. Raising the floor to 4.16 is the
+  follow-up and drops the Ubuntu 24.04 runner without a PPA.
+- **A cell-addressable accessibility tree.** The visible screen is the pane's
+  description, which Orca can read, but there is no `GtkAccessibleText` tree.
+  That needs a custom widget class; macOS has the same shape of gap (ADR 072).
+- **Program icons on tabs.** The macOS shell gets one from Launch Services and
+  WinUI from the executable; the GTK strip draws titles only.
+- **Sound.** ADR 033 stands: the bell flashes and DECPS is silent on Linux.
+- **The module split.** `linux/mod.rs` carries entry, strip, pane, input, find,
+  settings, clipboard and accessibility; splitting it is the cleanup named in
+  *Architecture*.
 
 ## Open questions
 
-ADR 062 answers the fallback one: Linux keeps the egui shell, so there is no
-cut-over to prepare for.
+ADR 074 settles the fallback: egui stays built by `--no-default-features`, so a
+GTK problem always has a working shell to fall back to.
 
-- Should the settings window be the native preferences dialog only, or also stay
-  available as the shared `config::Draft` form for parity testing? This matters
-  only if the shell is revived.
+- Should the settings window be the native document editor only, or also stay
+  available as the shared `config::Draft` form for parity testing?
+- When the GTK floor reaches 4.16, should `PRIMARY` and middle-click paste be
+  part of the same change that raises it?

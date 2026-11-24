@@ -1,6 +1,6 @@
 # ADR 062 — The Linux shell stays egui; the GTK shell is parked
 
-- Status: Accepted
+- Status: Superseded by ADR 074 (the GTK shell ships)
 - Date: 2026-11-23
 - Related: ADR 061 (the decision this amends), ADR 018 (the egui shell),
   `docs/linux-shell-scope.md`, `crates/winter/src/linux/`

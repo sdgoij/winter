@@ -119,18 +119,7 @@ pub(crate) fn strip_hit(layout: &Strip, x: f64) -> Option<StripHit> {
 /// that neighbour's middle and does not count itself. Returns `None` when
 /// `from` is not a tab in the layout.
 pub(crate) fn drag_target(layout: &Strip, from: usize, x: f64) -> Option<usize> {
-    if from >= layout.tabs.len() {
-        return None;
-    }
-
-    let x = x.round() as i32;
-    let target = layout
-        .tabs
-        .iter()
-        .enumerate()
-        .filter(|&(index, tab)| index != from && x > tab.left + tab.width() / 2)
-        .count();
-    Some(target)
+    tabs::drag_target(&layout.tabs, from, x.round() as i32)
 }
 
 /// The strip's fills and its two label colours.

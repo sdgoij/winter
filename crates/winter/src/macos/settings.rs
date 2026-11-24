@@ -276,25 +276,12 @@ fn button(
 }
 
 fn status_text(shell: &Shell) -> String {
-    let mut text = String::new();
-    if let Some(path) = shell.settings_path() {
-        text.push_str(&format!("File: {}\n", path.display()));
-    } else {
-        text.push_str("File: the platform has no settings path; the defaults are in force.\n");
-    }
-    if let Some(path) = shell.migrated_from() {
-        text.push_str(&format!("Migrated from: {}\n", path.display()));
-    }
-    if let Some(error) = shell.settings_error() {
-        text.push_str(&format!("\nThe file was not used: {error}\n"));
-    }
-    for warning in shell.warnings() {
-        text.push_str(&format!("Adjusted: {warning}\n"));
-    }
-    if text.is_empty() {
-        text.push_str("Every value in the file was usable.");
-    }
-    text
+    crate::config::status_text(
+        shell.settings_path(),
+        shell.migrated_from(),
+        shell.settings_error(),
+        shell.warnings(),
+    )
 }
 
 #[cfg(test)]
