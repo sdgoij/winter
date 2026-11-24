@@ -146,7 +146,10 @@ impl TerminalOutput {
         if (0x20..=0x7E).contains(&code) {
             return translate_with(self.gl_translation_table, ch, 0x20);
         }
-        if (0xA0..=0xFF).contains(&code) {
+        // The default GR table is the ASCII set, whose entries are the low half's
+        // characters. Applying it to 0xA0..=0xFF would fold `ç` (0xE7) to `g`
+        // (0x67); only a designated GR character set translates that range.
+        if (0xA0..=0xFF).contains(&code) && self.gr_translation_table != charsets::ASCII {
             return translate_with(self.gr_translation_table, ch, 0xA0);
         }
         ch
@@ -372,6 +375,27 @@ mod tests {
         assert_eq!(output.translate_key('A'), 'A');
         assert_eq!(output.translate_key('a'), 'a');
         assert_eq!(output.translate_key('0'), '0');
+    }
+
+    #[test]
+    fn the_default_gr_table_leaves_non_ascii_alone() {
+        // The default GR table is the ASCII set, whose entries are 0x20..=0x7E.
+        // Applying it to 0xA0..=0xFF folded 'ç' (0xE7) to 'g' (0x67).
+        let mut output = TerminalOutput::new(false);
+        assert_eq!(output.translate_key('\u{e7}'), '\u{e7}');
+        assert_eq!(output.translate_key('\u{e2}'), '\u{e2}');
+        assert_eq!(output.translate_key('\u{2014}'), '\u{2014}');
+        assert_eq!(output.translate_key('\u{30cd}'), '\u{30cd}');
+    }
+
+    #[test]
+    fn a_designated_gr_set_still_translates_its_range() {
+        let mut output = TerminalOutput::new(true);
+        output.designate_94_charset(1, VTID::from_byte(b'0'));
+        output.locking_shift_right(1);
+
+        // 0xF1 is the GR form of the drawing set's 'q'.
+        assert_eq!(output.translate_key('\u{f1}'), '\u{2500}');
     }
 
     #[test]
