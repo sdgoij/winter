@@ -1,0 +1,13 @@
+[package]
+name = "winter-icon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "The Winter icon's pixels, drawn rather than shipped"
+
+[dependencies]
+
+[lints]
+workspace = true

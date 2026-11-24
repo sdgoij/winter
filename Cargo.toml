@@ -12,6 +12,7 @@ members = [
     "crates/server",
     "crates/settings",
     "crates/audio",
+    "crates/icon",
     "crates/winter",
     "crates/gtk4",
     "crates/cocoa",

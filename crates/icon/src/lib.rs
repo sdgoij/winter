@@ -2,11 +2,11 @@
 //!
 //! Upstream embeds an `.ico` through its packaging; this port has no binary
 //! asset in the tree, so the icon is computed from the same geometry at every
-//! size. The macOS bundle draws its iconset from [`rgba`], and the Windows build
-//! script encodes [`ico`] and embeds it in the executable (ADR 058).
+//! size. The GTK shell and the macOS bundle draw [`rgba`], the Windows build
+//! script encodes [`ico`] and embeds it in the executable, and the packager's
+//! PNG comes from the same drawing (ADRs 058, 077, 080).
 //!
-//! This file is included by `build.rs` as well as by `icon.rs`, so it must stay
-//! free of crate imports.
+//! The crate has no dependencies, because a build script has to compile it.
 
 /// The size of the window icon, in pixels.
 pub const SIZE: usize = 64;
@@ -63,7 +63,6 @@ pub fn rgba(size: usize) -> Vec<u8> {
 ///
 /// `build.rs` includes this file and calls the encoder; in the library only a
 /// test needs it, so it is allowed to be dead here.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn ico(sizes: &[usize]) -> Vec<u8> {
     let images: Vec<(usize, Vec<u8>)> = sizes
         .iter()
@@ -101,7 +100,6 @@ pub fn ico(sizes: &[usize]) -> Vec<u8> {
 }
 
 /// One uncompressed 32-bit image, header first.
-#[cfg_attr(not(test), allow(dead_code))]
 fn dib(size: usize, rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(&40u32.to_le_bytes()); // BITMAPINFOHEADER

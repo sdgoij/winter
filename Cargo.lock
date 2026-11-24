@@ -41,6 +41,7 @@ dependencies = [
  "embed-resource",
  "winter-cocoa",
  "winter-gtk4",
+ "winter-icon",
  "winter-winui",
 ]
 
@@ -2467,6 +2468,7 @@ dependencies = [
  "types",
  "utils",
  "windows-sys",
+ "winter-icon",
 ]
 
 [[package]]
@@ -2504,6 +2506,10 @@ dependencies = [
  "utils",
  "winter",
 ]
+
+[[package]]
+name = "winter-icon"
+version = "0.1.0"
 
 [[package]]
 name = "winter-winui"

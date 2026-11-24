@@ -84,3 +84,12 @@ Negative:
 | Move the shared modules too, into a fifth crate | They are the core by definition; a second move would rename the same code twice |
 | Name the crates after their toolkits (`gtk4`, `cocoa`) | `gtk4` collides with the binding the shell depends on |
 | Leave the binary in `crates/winter` behind a feature | Still a package cycle, and the feature would have to pick a shell |
+
+## Amendment
+
+The drawing is a crate of its own: `crates/icon` (`winter-icon`) holds the
+geometry with no dependencies, because the binary's build script needs the
+same pixels and a build script cannot reach into another package's `src/`
+without a `#[path]` that only some tooling resolves. `winter` re-exports
+`SIZE` and `rgba` from it, the Windows resource asks it for `ico`, and the
+packager's PNG comes from the same function.

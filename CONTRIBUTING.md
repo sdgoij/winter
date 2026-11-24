@@ -219,6 +219,7 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
+| `crates/icon` | The drawn icon's pixels — RGBA at any size and the Windows ICO — with no dependencies, so the binary's build script can compile it (ADRs 058, 080) |
 | `crates/winter` | The shell-independent core: the pty session, the grid, the input rules, the control and its connection, the settings draft, the fonts list and the drawn icon (ADR 080) |
 | `crates/gtk4` | The GTK 4 shell on Linux: the window, strip, find bar, settings editor and the OpenGL content path (ADRs 075, 076) |
 | `crates/cocoa` | The AppKit shell on macOS, through `objc2`, with the Metal content path (ADRs 072, 073) |

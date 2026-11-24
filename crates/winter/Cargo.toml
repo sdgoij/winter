@@ -18,6 +18,9 @@ term.workspace = true
 types.workspace = true
 utils.workspace = true
 notify-rust.workspace = true
+# The drawn icon (ADR 058); dependency-free so the binary's build script can
+# compile the same geometry.
+winter-icon = { path = "../icon" }
 
 [target.'cfg(windows)'.dependencies]
 # The bell's Windows sink calls `Beep` directly (ADR 033).

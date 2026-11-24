@@ -7,11 +7,6 @@
 //!
 //!     cargo run -p winter --example write-icon -- <path/to/winter.png>
 
-// The file `build.rs` includes too: the drawing, without crate imports.
-#[path = "../src/icon_draw.rs"]
-#[allow(dead_code)]
-mod icon_draw;
-
 /// The size a desktop entry's icon is installed at.
 const SIZE: usize = 256;
 
@@ -24,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), SIZE as u32, SIZE as u32);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    encoder.write_header()?.write_image_data(&icon_draw::rgba(SIZE))?;
+    encoder.write_header()?.write_image_data(&winter_icon::rgba(SIZE))?;
 
     println!("wrote {destination}");
     Ok(())

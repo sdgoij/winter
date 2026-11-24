@@ -1,18 +1,13 @@
 //! Embeds the window icon in the Windows executable.
 //!
-//! The pixels come from `crates/winter/src/icon_draw.rs`, the same drawing the
-//! shells hand their window manager and the macOS bundle draws its iconset
-//! from, so the file Explorer shows and the shell's icon cannot drift
-//! (ADR 058). The ICO is generated into `OUT_DIR` and compiled with the rest of
-//! the resources.
-
-#[path = "../winter/src/icon_draw.rs"]
-#[allow(dead_code)]
-mod icon_draw;
+//! The pixels come from the `winter-icon` crate, the same drawing the shells
+//! hand their window manager and the macOS bundle draws its iconset from, so
+//! the file Explorer shows and the shell's icon cannot drift (ADR 058). The
+//! crate has no dependencies, which is why a build script can compile it.
 
 fn main() {
-    println!("cargo:rerun-if-changed=../winter/src/icon_draw.rs");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../icon/src/lib.rs");
 
     #[cfg(windows)]
     embed();
@@ -29,7 +24,7 @@ fn embed() {
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     let icon = out.join("winter.ico");
-    std::fs::write(&icon, icon_draw::ico(&[16, 32, 48, 64, 256])).expect("write the icon");
+    std::fs::write(&icon, winter_icon::ico(&[16, 32, 48, 64, 256])).expect("write the icon");
 
     let resource = out.join("winter.rc");
     let icon_path = icon.display().to_string().replace('\\', "\\\\");

@@ -22,6 +22,8 @@ winter-winui = { path = "../winui" }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource.workspace = true
+# The drawn icon (ADR 058), the same pixels the app itself shows.
+winter-icon = { path = "../icon" }
 
 [lints]
 workspace = true

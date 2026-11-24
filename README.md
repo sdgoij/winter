@@ -42,6 +42,7 @@ Linux shell to fall back to (ADR 079).
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |
 | [`crates/audio`](crates/audio) | The bell and the DECPS tones: the upstream frequency, wave-rate and gain arithmetic, with no device | Phase 11 (ADR 033) |
+| [`crates/icon`](crates/icon) | The icon's pixels, drawn rather than shipped, as RGBA and as a Windows ICO | No dependencies (ADRs 058, 080) |
 | [`crates/winter`](crates/winter) | The shell-independent core: a `Control` over a `Connection` trait, the pty session, the grid, the input rules, the settings draft, the fonts list and the drawn icon | The shells are built on it (ADR 080) |
 | [`crates/gtk4`](crates/gtk4) | The GTK 4 shell: the window, strip, find bar, settings editor, and the grid through GTK's OpenGL context | Linux's shell (ADRs 075, 076) |
 | [`crates/cocoa`](crates/cocoa) | The AppKit shell, through `objc2`, with the Metal content path | macOS's shell (ADRs 072, 073) |
