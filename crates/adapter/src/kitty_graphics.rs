@@ -426,6 +426,62 @@ mod tests {
         vt::encode(&raw).into_bytes()
     }
 
+    /// The APC bodies one frame of the game sends: RGBA, zlib compressed,
+    /// chunked at the protocol's payload size, with the control data on the
+    /// first chunk and `m`/`q` on every continuation.
+    fn game_frame(width: usize, height: usize, columns: i32, rows: i32) -> Vec<Vec<u8>> {
+        let mut raw = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                raw.extend_from_slice(&[x as u8, y as u8, 0, 255]);
+            }
+        }
+        let compressed = miniz_oxide::deflate::compress_to_vec_zlib(&raw, 6);
+        let encoded = vt::encode(&compressed);
+
+        let mut apcs = Vec::new();
+        let mut chunks = encoded.as_bytes().chunks(4096).peekable();
+        let mut first = true;
+        while let Some(chunk) = chunks.next() {
+            let more = u8::from(chunks.peek().is_some());
+            let mut apc = if first {
+                first = false;
+                format!("Ga=T,f=32,s={width},v={height},c={columns},r={rows},i=1,p=1,o=z,C=1,z=-1,m={more},q=1;")
+                    .into_bytes()
+            } else {
+                format!("Gm={more},q=1;").into_bytes()
+            };
+            apc.extend_from_slice(chunk);
+            apcs.push(apc);
+        }
+        apcs
+    }
+
+    #[test]
+    fn each_row_of_a_frame_is_its_own_bitmap() {
+        // The painters keep one bitmap per revision, so rows that shared one
+        // number would paint the first row's band on every row.
+        let mut buffer = TextBuffer::with_dimensions(80, 30, 0);
+        let mut kitty = KittyGraphics::new();
+        for apc in game_frame(360, 270, 80, 30) {
+            kitty.apply(&apc, &mut buffer);
+        }
+        kitty.flush(&mut buffer);
+
+        let revision = |row: i32| {
+            buffer
+                .get_row_at_screen_line(row)
+                .unwrap()
+                .image_slice()
+                .unwrap()
+                .revision()
+        };
+        let first = revision(0);
+        assert_ne!(first, 0, "a painted band is not the never-drawn sentinel");
+        assert_ne!(first, revision(1));
+        assert_ne!(first, revision(2));
+    }
+
     #[test]
     fn the_games_first_and_continuation_chunks_parse() {
         let first = Control::parse(b"a=T,f=32,s=640,v=360,c=100,r=50,i=1,p=1,o=z,C=1,z=-1,m=1,q=1");

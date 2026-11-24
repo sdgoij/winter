@@ -129,6 +129,11 @@ scroll.
   copies rows through `copy_visible_into`, so that copy has to carry the band
   (`Row::copy_from` is text only). A missing image after a correct sixel is
   almost always there (ADR 055).
+- A GPU painter keeps **one bitmap per `ImageSlice` revision**, so a band must
+  never be written without a bump: `mutable_pixels` and `erase_cells` do it, and
+  writing through a raw `&mut` is how a full-screen kitty frame becomes row 0
+  repeated down the pane. Upstream bumps in `ROW::GetMutableImageSlice`; the GTK
+  and Metal painters cache by the same number.
 - A kitty image is painted when the batch ends, not when its APC completes:
   `Terminal::process_bytes` flushes the deferred images, and a retransmission of
   the same id replaces the one waiting (ADR 057). A test that drives

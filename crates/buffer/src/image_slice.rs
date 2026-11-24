@@ -90,7 +90,14 @@ impl ImageSlice {
     ///
     /// Ported from `ImageSlice::MutablePixels`: growing moves the existing
     /// pixels to their new offset instead of dropping them.
+    ///
+    /// Handing out the pixels is what marks the band changed: the painters keep
+    /// one bitmap per revision, so two rows that shared a number would paint
+    /// the first one's pixels on both. Upstream bumps in
+    /// `ROW::GetMutableImageSlice`; handing out the pixels is this port's
+    /// equivalent chokepoint for every writer.
     pub fn mutable_pixels(&mut self, column_begin: i32, column_end: i32) -> &mut [u32] {
+        self.bump_revision();
         let needs_resize =
             self.pixel_buffer.is_empty() || column_begin < self.column_begin || column_end > self.column_end;
         if needs_resize {
@@ -147,6 +154,7 @@ impl ImageSlice {
                 let start = (y * self.pixel_width + offset).max(0) as usize;
                 self.pixel_buffer[start..start + length.max(0) as usize].fill(0);
             }
+            self.bump_revision();
         }
         false
     }
@@ -290,6 +298,29 @@ mod tests {
         assert_eq!(image.column_begin(), 0);
         assert_eq!(image.column_end(), 4);
         assert_eq!(image.pixels(), &[1, 0, 2, 3]);
+    }
+
+    #[test]
+    fn writing_pixels_bumps_the_revision() {
+        let mut image = ImageSlice::new((1, 1));
+        assert_eq!(image.revision(), 0);
+
+        image.mutable_pixels(0, 4)[0] = 0xFFFF_0000;
+        let written = image.revision();
+        assert_ne!(written, 0);
+
+        image.mutable_pixels(0, 4)[1] = 0xFF00_0000;
+        assert_ne!(image.revision(), written);
+    }
+
+    #[test]
+    fn erasing_pixels_bumps_the_revision() {
+        let mut image = band((1, 1), 0, 4);
+        image.pixel_buffer.copy_from_slice(&[1, 2, 3, 4]);
+        let before = image.revision();
+
+        assert!(!image.erase_cells(1, 3));
+        assert_ne!(image.revision(), before);
     }
 
     #[test]
