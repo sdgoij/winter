@@ -48,6 +48,8 @@ pub(crate) struct Tab {
     pub(crate) view: ViewState,
     pub(crate) title: String,
     pub(crate) find: FindBar,
+    /// The program the tab runs, so the strip can find the tab's icon.
+    pub(crate) program: String,
 }
 
 /// What one tick asks the controller to do.
@@ -156,6 +158,7 @@ impl Shell {
                 view: ViewState::new(),
                 title: template.title.clone(),
                 find: FindBar::default(),
+                program: template.command.program().to_string_lossy().into_owned(),
             }),
             template,
             bindings,
@@ -207,6 +210,13 @@ impl Shell {
     pub(crate) fn titles(&self) -> Vec<String> {
         (0..self.tabs.len())
             .filter_map(|index| self.tabs.get(index).map(|tab| tab.title.clone()))
+            .collect()
+    }
+
+    /// The program each tab runs, in strip order.
+    pub(crate) fn programs(&self) -> Vec<String> {
+        (0..self.tabs.len())
+            .filter_map(|index| self.tabs.get(index).map(|tab| tab.program.clone()))
             .collect()
     }
 
@@ -592,6 +602,7 @@ impl Shell {
             view: ViewState::new(),
             title: terminal.title,
             find: FindBar::default(),
+            program: terminal.command.program().to_string_lossy().into_owned(),
         });
         self.title_dirty = true;
     }

@@ -2,8 +2,8 @@
 
 Status: shipping first cut (ADR 072). The shell runs a real pty, paints the
 terminal through `renderer`, and owns a native window, menu bar, find field,
-settings window and input-method client. Accessibility, program icons on tabs
-and a GPU content pass are named follow-ups below, not hidden gaps.
+settings window and input-method client. Accessibility and a GPU content pass
+are named follow-ups below, not hidden gaps.
 Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split), ADRs 064,
 068, 069 (the strip), `crates/winter/src/macos/`.
@@ -34,6 +34,8 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   text is drawn as the renderer's underlined preview at the cursor, a commit
   reaches the pty through the shared text path, and the candidate window is
   anchored at the caret.
+- Program icons on tabs: Launch Services' icon for the profile's program, with
+  the shell's drawn mark when the program is a script or does not resolve.
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
   OSC 777 notifications through `notify-rust`.
 - The shell's drawn icon (ADR 058) as the application icon.
@@ -50,8 +52,6 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 - Accessibility: the custom view reports no accessibility tree. A terminal that
   draws its own text needs the AppKit text interface before VoiceOver can read
   it; this is the same gap the WinUI shell has with UIA.
-- A program's own icon on its tab (WinUI's ADR 066). macOS has no equivalent of
-  GDI's icon extraction; a bundle's icon comes from Launch Services.
 - Panes, the command palette, DECPS tones and a GPU content path.
 - The settings editor edits four values; profile, keybinding, scheme and theme
   rows stay file-only here.
@@ -65,6 +65,7 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 | `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the IME composition. No AppKit except the `Frame` it owns |
 | `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
+| `icon.rs` | A tab's program icon from Launch Services, and the drawn application mark (ADR 058), both cached |
 | `settings.rs` | The native settings window and its action methods |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 

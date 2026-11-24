@@ -10,7 +10,7 @@
 //! `find`, `scrollbar`, `terminal_render` — are shared unchanged.
 //!
 //! `unsafe` is confined to the AppKit boundary: this module declares the
-//! allowance for its own calls and for `view`, `chrome`, `frame` and
+//! allowance for its own calls and for `view`, `chrome`, `frame`, `icon` and
 //! `settings`, which call objc2's window, menu and bitmap entry points (ADR
 //! 072). `keys` and `shell` contain none.
 
@@ -23,14 +23,14 @@ use std::time::Instant;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
-    NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType, NSBeep, NSBezelStyle, NSBitmapFormat,
-    NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSButton, NSColor,
-    NSControlTextEditingDelegate, NSDeviceRGBColorSpace, NSEventModifierFlags, NSFont, NSImage, NSMenu, NSMenuItem,
-    NSSearchField, NSSearchFieldDelegate, NSTextField, NSTextFieldDelegate, NSTextView, NSTitlebarSeparatorStyle,
-    NSWindow, NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType, NSBeep, NSBezelStyle,
+    NSBitmapImageFileType, NSBitmapImageRepPropertyKey, NSButton, NSColor, NSControlTextEditingDelegate,
+    NSEventModifierFlags, NSFont, NSMenu, NSMenuItem, NSSearchField, NSSearchFieldDelegate, NSTextField,
+    NSTextFieldDelegate, NSTextView, NSTitlebarSeparatorStyle, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSDictionary, NSNotification, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString,
@@ -43,6 +43,7 @@ use self::view::TerminalView;
 
 pub(crate) mod chrome;
 pub(crate) mod frame;
+pub(crate) mod icon;
 pub(crate) mod keys;
 pub(crate) mod settings;
 pub(crate) mod shell;
@@ -201,50 +202,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// Hands the application its drawn icon (ADR 058), so the Dock and the app
 /// switcher show the same mark the Windows shell embeds.
 fn install_icon(app: &NSApplication, _mtm: MainThreadMarker) {
-    let data = crate::icon::data();
-    let width = data.width as isize;
-    let height = data.height as isize;
-    let Some(bytes_per_row) = width.checked_mul(4) else {
+    let Some(image) = icon::own() else {
         return;
     };
-
-    // SAFETY: `planes` is null, so AppKit allocates the storage; the arguments
-    // describe the straight RGBA the icon drawing produces.
-    let Some(rep) = (unsafe {
-        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
-            NSBitmapImageRep::alloc(),
-            std::ptr::null_mut(),
-            width,
-            height,
-            8,
-            4,
-            true,
-            false,
-            NSDeviceRGBColorSpace,
-            NSBitmapFormat::AlphaNonpremultiplied,
-            bytes_per_row,
-            32,
-        )
-    }) else {
-        return;
-    };
-
-    let destination = rep.bitmapData();
-    let needed = data.width as usize * data.height as usize * 4;
-    if destination.is_null() || data.rgba.len() < needed {
-        return;
-    }
-    // SAFETY: the rep owns a buffer of the size asked for above and the icon
-    // data is at least that long; the copy borrows both for its duration.
-    unsafe {
-        std::ptr::copy_nonoverlapping(data.rgba.as_ptr(), destination, needed);
-    }
-
-    let image = NSImage::initWithSize(
-        NSImage::alloc(),
-        NSSize::new(f64::from(data.width), f64::from(data.height)),
-    );
-    image.addRepresentation(&rep);
     // SAFETY: the image is alive for the call and is retained by the
     // application.
     unsafe { app.setApplicationIconImage(Some(&image)) };

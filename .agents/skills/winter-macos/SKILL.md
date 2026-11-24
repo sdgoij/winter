@@ -21,6 +21,7 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 | `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state; no AppKit except the `Frame` |
 | `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
+| `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
 | `settings.rs` | Native settings window over `config::Draft` |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 

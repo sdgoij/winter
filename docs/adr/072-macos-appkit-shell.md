@@ -46,9 +46,10 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
    terminal's own fills, the close box beside the title and the prompt ticks
    (the reasons ADR 064 gives for Windows).
 5. **`unsafe` is confined to the AppKit boundary.** `macos/mod.rs`, `view`,
-   `chrome`, `frame` and `settings` carry one module-level `#[allow(unsafe_code)]`;
-   every call has a `SAFETY:` note where the invariant is not obvious. `keys` and
-   `shell` contain no `unsafe`, and no other crate gains an exemption.
+   `chrome`, `frame`, `icon` and `settings` carry one module-level
+   `#[allow(unsafe_code)]`; every call has a `SAFETY:` note where the invariant
+   is not obvious. `keys` and `shell` contain no `unsafe`, and no other crate
+   gains an exemption.
 6. **The shell shares every rule it can.** `input`, `view`, `tabs`,
    `term_control`, `session`, `find`, `scrollbar`, `grid` and `terminal_render`
    are used unchanged. Windows-only logic stays in `winui`; macOS-only logic
@@ -74,6 +75,12 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
     `firstRectForCharacterRange:actualRange:` anchors the candidate window at the
     caret. Plain typing still takes the shell's key path: `insertText:` only
     commits when marked text existed, so no character is sent twice.
+11. **A tab wears its program's icon, or the shell's drawn mark.** macOS has no
+    GDI icon extraction (ADR 066), so the icon is `NSWorkspace`'s
+    `iconForFile:` for the program a profile runs, resolved on `PATH` when the
+    command is a bare name. Both the Launch Services icon and the drawn mark
+    (ADR 058) are cached per program for the session; a program that cannot be
+    resolved falls back to the mark rather than leaving the tab blank (ADR 070).
 
 ## Rationale
 
@@ -108,8 +115,7 @@ Negative:
   accessibility tree; a terminal that draws its own text needs the AppKit text
   interface before VoiceOver can read it. This is the same gap the WinUI shell
   has with UIA.
-- **No program icons on tabs, no panes, no command palette.** The first is a
-  parity gap with WinUI; the latter two are unported there as well.
+- **No panes and no command palette.** Both are unported on WinUI as well.
 - **A preview crate.** `objc2` 0.6 is a stable release of the family, but the
   AppKit surface is generated and some generated APIs are deprecated; pin the
   versions and treat a move as deliberate.

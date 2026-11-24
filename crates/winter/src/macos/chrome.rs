@@ -19,6 +19,8 @@ use utils::InclusiveRect;
 use crate::scrollbar;
 use crate::tabs::{self, TabBox};
 
+use super::icon;
+
 /// The traffic lights occupy this much of the strip's left edge.
 ///
 /// The content view extends under the title bar (`FullSizeContentView`), so the
@@ -40,6 +42,8 @@ const TAB_OVERHANG: f64 = 4.0;
 const RADIUS: f64 = 6.0;
 /// The add, drop-down and close glyphs' box.
 const GLYPH: f64 = 9.0;
+/// A tab's program icon.
+const TAB_ICON: f64 = 14.0;
 
 /// Where the tabs and the two buttons sit in the strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,6 +238,8 @@ pub(crate) struct ChromeState<'a> {
     pub(crate) active: usize,
     /// The tab titles, in order.
     pub(crate) titles: &'a [String],
+    /// The program each tab runs, in order, for the tabs' icons.
+    pub(crate) programs: &'a [String],
     /// The tab the pointer is over.
     pub(crate) hovered_tab: Option<usize>,
     /// The tab whose close box the pointer is over.
@@ -337,9 +343,20 @@ fn draw_tabs(bounds: NSRect, state: &ChromeState<'_>, mtm: MainThreadMarker) {
         color(fill_color).setFill();
         path.fill();
 
-        let room = f64::from(slots.width()) - f64::from(tabs::CLOSE) - 16.0;
+        let icon = state.programs.get(index).and_then(|program| icon::for_program(program));
+        let title_x = if let Some(image) = &icon {
+            let rect = NSRect::new(
+                NSPoint::new(f64::from(slots.left) + 8.0, (STRIP_HEIGHT - TAB_ICON) / 2.0),
+                NSSize::new(TAB_ICON, TAB_ICON),
+            );
+            image.drawInRect(rect);
+            f64::from(slots.left) + 8.0 + TAB_ICON + 6.0
+        } else {
+            f64::from(slots.left) + 10.0
+        };
+        let room = f64::from(slots.right) - title_x - f64::from(tabs::CLOSE) - 6.0;
         if room > 8.0 {
-            draw_text(title, f64::from(slots.left) + 10.0, 9.0, room, text_color, &font, mtm);
+            draw_text(title, title_x, 9.0, room, text_color, &font, mtm);
         }
 
         let close = if state.hovered_close == Some(index) {

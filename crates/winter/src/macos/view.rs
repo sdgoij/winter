@@ -104,12 +104,14 @@ define_class!(
             };
             let bounds = self.bounds();
             let titles = shell.titles();
+            let programs = shell.programs();
             let (background, _) = shell.active_colors();
             let (scroll, document, visible) = shell.scroll_facts();
             let state = ChromeState {
                 strip: shell.strip(),
                 active: shell.active_index(),
                 titles: &titles,
+                programs: &programs,
                 hovered_tab: shell.hovered_tab(),
                 hovered_close: shell.hovered_close(),
                 hovered_new: shell.hovered_new(),
