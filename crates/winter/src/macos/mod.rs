@@ -28,7 +28,7 @@ use objc2_app_kit::{
     NSAlert, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType, NSBeep, NSBezelStyle,
     NSBitmapImageFileType, NSBitmapImageRepPropertyKey, NSButton, NSColor, NSControlTextEditingDelegate,
-    NSEventModifierFlags, NSFont, NSMenu, NSMenuItem, NSSearchField, NSSearchFieldDelegate, NSTextField,
+    NSEventModifierFlags, NSFont, NSMenu, NSMenuItem, NSScreen, NSSearchField, NSSearchFieldDelegate, NSTextField,
     NSTextFieldDelegate, NSTextView, NSTitlebarSeparatorStyle, NSWindow, NSWindowDelegate, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
@@ -57,9 +57,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     install_icon(&app, mtm);
 
     let face = find_face().ok_or("no monospaced face was found; install Menlo or Monaco")?;
-    let shell = Rc::new(RefCell::new(Shell::new(face, mtm)?));
+    let scale = NSScreen::mainScreen(mtm).map_or(1.0, |screen| screen.backingScaleFactor());
+    let shell = Rc::new(RefCell::new(Shell::new(face, scale as f32, mtm)?));
 
-    let initial = view::default_size(shell.borrow().cell());
+    let initial = view::default_size(shell.borrow().cell(), scale);
     let initial_title = shell.borrow().title().to_string();
     // SAFETY: every window and control here is created on the main thread,
     // which AppKit requires, and each is retained by the controller or by its

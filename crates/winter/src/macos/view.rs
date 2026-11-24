@@ -26,7 +26,7 @@ use term::input::Key;
 
 use super::chrome::{self, ChromeState, STRIP_HEIGHT};
 use super::keys;
-use super::shell::Shell;
+use super::shell::{INITIAL_GRID, Shell};
 
 /// The view's instance state.
 pub struct Ivars {
@@ -546,6 +546,40 @@ fn modifiers(flags: NSEventModifierFlags) -> Modifiers {
 }
 
 /// The size the view reports for an unscaled terminal.
-pub(crate) fn default_size(cell: (u16, u16)) -> NSSize {
-    NSSize::new(f64::from(cell.0) * 100.0, f64::from(cell.1) * 28.0 + STRIP_HEIGHT)
+///
+/// `cell` is in physical pixels at `scale`, so the opening window is the
+/// initial grid plus the pane's left inset and the scrollbar, in points. The
+/// half-point slack keeps the first grid computation from rounding a whole cell
+/// away and resizing the pty after the shell has started.
+pub(crate) fn default_size(cell: (u16, u16), scale: f64) -> NSSize {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let insets = chrome::PANE_LEFT + f64::from(crate::scrollbar::WIDTH);
+    NSSize::new(
+        f64::from(cell.0) * f64::from(INITIAL_GRID.0) / scale + insets + 0.5,
+        f64::from(cell.1) * f64::from(INITIAL_GRID.1) / scale + STRIP_HEIGHT + 0.5,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_window_is_exactly_the_initial_grid() {
+        let cases = [
+            ((8u16, 16u16), 1.0f64),
+            ((16, 32), 2.0),
+            ((17, 33), 2.0),
+            ((9, 18), 1.5),
+        ];
+        for (cell, scale) in cases {
+            let size = default_size(cell, scale);
+            let bounds = NSRect::new(NSPoint::new(0.0, 0.0), size);
+            assert_eq!(
+                chrome::grid_for(bounds, scale, cell),
+                INITIAL_GRID,
+                "{cell:?} at {scale}"
+            );
+        }
+    }
 }

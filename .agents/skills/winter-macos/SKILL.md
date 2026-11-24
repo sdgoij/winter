@@ -73,6 +73,13 @@ second.
   alpha. `to_ne_bytes` produces `B,G,R,A`, which the rep reads as a nearly
   transparent image; the pane looks white over the window. Use
   `(pixel | 0xFF00_0000).to_be_bytes()` and `SourceOver`.
+- **Build the face at the window's backing scale and size the opening window
+  to the initial grid.** Spawning the shell at 100×28 and then resizing it for
+  the real view makes the pty change size after zsh has laid out its first
+  prompt; zsh's `PROMPT_EOL_MARK` then survives as a stray `%` on the first
+  line, because the bytes were authored for the old width. `default_size` must
+  include the pane inset and the scrollbar, and `Shell::new` must take the
+  screen's scale.
 - **The settings editor's `NSTextView` needs its smart substitutions off.**
   macOS rewrites quotes, dashes and spellings as you type, which corrupts the
   TOML keys. Turn off quote, dash, replacement and spelling correction, or the

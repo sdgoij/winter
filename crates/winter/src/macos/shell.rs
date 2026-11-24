@@ -37,7 +37,7 @@ use super::chrome::{self, STRIP_HEIGHT, Strip, StripColors, StripHit};
 use super::frame::Frame;
 
 /// The grid the window opens with, before its bounds are known.
-const INITIAL_GRID: (i32, i32) = (100, 28);
+pub(crate) const INITIAL_GRID: (i32, i32) = (100, 28);
 /// How often the pty is polled, matching the WinUI shell (ADR 006).
 pub(crate) const TICK: Duration = Duration::from_millis(16);
 /// The cursor's blink half-period, matching the egui shell.
@@ -132,7 +132,14 @@ pub(crate) struct Shell {
 
 impl Shell {
     /// Starts the shell from the settings file and a host face.
-    pub(crate) fn new(face: FontFace, mtm: objc2::MainThreadMarker) -> Result<Self, String> {
+    ///
+    /// `scale` is the backing scale the window will have, so the face, the cell
+    /// and the opening window's size agree. A face built at the wrong scale is
+    /// replaced and the grid recomputed on the first resize, and a pty that
+    /// changes size after the shell started lays its first prompt out for the
+    /// old width (a zsh `PROMPT_EOL_MARK` is the visible symptom).
+    pub(crate) fn new(face: FontFace, scale: f32, mtm: objc2::MainThreadMarker) -> Result<Self, String> {
+        let scale = finite_scale(scale);
         settings::ensure_file();
         let loaded = settings::load_with_report();
         let settings_path = loaded.path.clone();
@@ -147,7 +154,7 @@ impl Shell {
         control.apply_scheme(template.scheme.as_ref());
         let (_background, _foreground) = control.default_colors();
 
-        let fonts = font_setup(&face, font_size, 1.0, INITIAL_GRID)?;
+        let fonts = font_setup(&face, font_size, scale, INITIAL_GRID)?;
         let cell = fonts.settings.font.cell_size;
         let (renderer, shared) = renderer_for(fonts, INITIAL_GRID);
 
@@ -178,7 +185,7 @@ impl Shell {
             face,
             font_size,
             cell,
-            scale: 1.0,
+            scale,
             size: (0.0, 0.0),
             grid: INITIAL_GRID,
             frame,
