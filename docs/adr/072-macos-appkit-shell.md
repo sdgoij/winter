@@ -87,6 +87,12 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
     child list. VoiceOver therefore reads what the pane shows; character-level
     navigation through the `NSAccessibility` text protocol remains out of
     scope and is named as such.
+13. **DECPS plays through the host's sound thread.** Every tab's requested notes
+    are drained each tick and handed to `crate::sound`, whose macOS backend
+    renders the whole sequence to a temporary WAV and plays it with `afplay` on
+    the existing thread; a failed player still sleeps out the sequence. BEL stays
+    the system's `NSBeep`, so the bell keeps the platform's own sound and volume
+    settings (ADR 033).
 
 ## Rationale
 

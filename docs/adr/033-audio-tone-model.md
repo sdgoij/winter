@@ -1,10 +1,10 @@
-# ADR 033 — Audio is a portable tone model with a Windows sink
+# ADR 033 — Audio is a portable tone model with host sinks
 
-- Status: Accepted
+- Status: Accepted; ADR 072 adds the macOS sink
 - Date: 2026-11-22
 - Related: `crates/audio/`, `crates/winter/src/sound.rs`,
   `crates/winter/src/visual_bell.rs`, `crates/adapter/src/adapt_dispatch.rs`;
-  ADRs 001, 006, 016
+  ADRs 001, 006, 016, 072
 
 ## Context
 
@@ -35,12 +35,15 @@ packages.
   pty backends allowed `unsafe`. On Windows it plays tones with `Beep` on a
   thread of its own, one sequence at a time: the same blocking order as
   `MidiAudio::PlayNote`. A `Beep` that fails still sleeps out the note, so the
-  sequence keeps the rhythm the program asked for.
+  sequence keeps the rhythm the program asked for. On macOS the same thread
+  renders the sequence to a temporary WAV and plays it with `afplay`, waiting
+  for the player; when the player fails, the sequence still sleeps out its
+  duration (ADR 072).
 - **The bell is a tone and a flash.** The tone is 800 Hz for 200 ms. The flash
   lives in `winter::visual_bell` as data (ADR 006): one second, fading, and a
   second bell while one runs is ignored, which is what `BellLightOn` does.
-- **Every other target is silent for now.** `sound::play` drops the tone; the
-  bell still flashes the pane and asks for attention.
+- **The remaining target is silent for now.** Linux drops the tone; the bell
+  still flashes the pane and asks for attention.
 
 ## Rationale
 
@@ -60,9 +63,10 @@ packages.
 
 ## Consequences
 
-- Windows hears the bell and DECPS notes. Linux and macOS flash the pane and
-  stay silent until a backend exists; the plan's Phase 11 row says so, and no
-  code pretends otherwise.
+- Windows hears the bell and DECPS notes. Linux flashes the pane and stays
+  silent until a backend exists; the plan's Phase 11 row says so, and no code
+  pretends otherwise. macOS plays DECPS through `afplay` while its BEL stays the
+  system's own `NSBeep` (ADR 072).
 - A DECPS note is at most 255/32 seconds, and the sound thread blocks for it.
   The thread is never joined, so closing the window does not wait for a song.
 - Replacing the sink later is a change to `winter::sound::play` only; the crate

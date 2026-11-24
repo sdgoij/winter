@@ -25,6 +25,7 @@ use crate::find::FindBar;
 use crate::input;
 use crate::scrollbar::{self, Press, Scrollbar};
 use crate::session::Session;
+use crate::sound::Sound;
 use crate::tabs::Tabs;
 use crate::term_control::Control;
 use crate::term_events::TerminalEvent;
@@ -125,6 +126,8 @@ pub(crate) struct Shell {
     title_dirty: bool,
     /// The input method's marked text, drawn at the cursor until it commits.
     composition: Composition,
+    /// The DECPS tones every tab asked for, played on a thread of their own.
+    sound: Sound,
 }
 
 impl Shell {
@@ -199,6 +202,7 @@ impl Shell {
             close_requested: false,
             title_dirty: false,
             composition: Composition::default(),
+            sound: Sound::new(),
         })
     }
 
@@ -420,6 +424,7 @@ impl Shell {
         let mut tick = Tick::default();
         let mut exited = Vec::new();
         let mut title_changed = false;
+        let mut notes = Vec::new();
 
         if self.close_requested {
             tick.close_window = true;
@@ -431,6 +436,7 @@ impl Shell {
                 continue;
             };
             tab.control.pump();
+            notes.extend(tab.control.take_sounds());
             for event in tab.control.take_events(now) {
                 match event {
                     TerminalEvent::Exited => exited.push(index),
@@ -444,6 +450,10 @@ impl Shell {
                 tab.title = title;
                 title_changed = true;
             }
+        }
+
+        if !notes.is_empty() {
+            self.sound.play(audio::midi::tones(&notes));
         }
 
         for index in exited.into_iter().rev() {

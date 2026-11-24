@@ -39,6 +39,8 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   the shell's drawn mark when the program is a script or does not resolve.
 - An accessibility element: VoiceOver reads the active tab's title and the
   visible screen's text, with the pane's frame and an empty child list.
+- DECPS notes through the host's sound thread: the sequence is rendered to a
+  temporary WAV and played by `afplay`; the bell stays the system's `NSBeep`.
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
   OSC 777 notifications through `notify-rust`.
 - The shell's drawn icon (ADR 058) as the application icon.
@@ -56,7 +58,7 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   as one value; character- and line-level navigation through the
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
-- Panes, the command palette, DECPS tones and a GPU content path.
+- Panes, the command palette and a GPU content path.
 - The settings editor edits four values; profile, keybinding, scheme and theme
   rows stay file-only here.
 

@@ -112,3 +112,5 @@ second.
 - Claim per-cell accessibility: the view exposes the visible screen as one
   value for VoiceOver, not an `NSAccessibility` text tree. The remaining gap is
   named in ADR 072 and `docs/macos-shell-scope.md`.
+- Claim DECPS is silent: the macOS `sound` backend renders the sequence to a
+  WAV and plays it with `afplay`; only BEL stays `NSBeep`.
