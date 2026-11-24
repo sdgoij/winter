@@ -103,8 +103,11 @@ On Windows the drop-down also offers one profile per installed WSL
 distribution, generated from `wsl.exe -l -q` at load: the list belongs to the
 machine, so it is never written to the settings file, and a distribution the
 file already names is left to the file (ADR 065). Each profile's row and each
-tab carry the icon of the program that profile runs, taken from the executable
-(ADR 066).
+tab carry the icon of the program that profile runs, taken from the executable;
+a profile whose program has none wears the shell's own icon, so no row or tab is
+left blank. A hairline separates the profiles from `Settings` and `About`, which
+carry a gear and a question mark, and the About dialog links this repository
+(ADRs 066, 070).
 Ctrl+Shift+F opens the find bar: every match in the history and on screen is
 highlighted, Enter and Shift+Enter step through them, and Escape closes it. On
 Windows the bar is an overlay in the pane (ADR 050). A

@@ -110,6 +110,12 @@ const SYMBOL_FONT: &str = "Segoe Fluent Icons,Segoe MDL2 Assets";
 const PLUS_GLYPH: &str = "\u{e710}";
 const CHEVRON_GLYPH: &str = "\u{e70d}";
 const CLOSE_GLYPH: &str = "\u{e711}";
+/// The drop-down's own glyphs: a gear for `Settings` and a question mark for
+/// `About`, `U+E713` and `U+E897` in the same two faces.
+const SETTINGS_GLYPH: &str = "\u{e713}";
+const ABOUT_GLYPH: &str = "\u{e897}";
+/// Where the shell's source lives, shown in the About dialog.
+const REPOSITORY: &str = "https://github.com/sdgoij/winterm";
 /// The tab row's fill: behind an inactive tab, and between the last tab and
 /// the caption buttons.
 const TITLEBAR: Color = Color::rgb(32, 32, 36);
@@ -2293,22 +2299,33 @@ fn find_bar(tab: &Tab, sender: &LocalSender<Message>, field: &ElementRef<TextBox
 /// The pinned binding has no flyout, so this is an overlay anchored to the
 /// pane's top-left, under the title bar (ADR 052).
 fn profile_menu(profiles: &[settings::Profile], sender: &LocalSender<Message>, left: f64) -> View {
-    let rows: Vec<View> = menu::entries(profiles)
-        .into_iter()
-        .map(|entry| {
-            // A profile's row carries the icon of the program it starts, so the
-            // menu reads like a list of shells rather than a list of names
-            // (ADR 066).
-            let icon = match &entry {
-                MenuEntry::Profile(name) => profiles
-                    .iter()
-                    .find(|profile| &profile.name == name)
-                    .and_then(|profile| profile_icon::png_for(&profile.command)),
-                MenuEntry::Settings | MenuEntry::About => None,
-            };
-            menu_row(entry, sender, icon)
-        })
-        .collect();
+    let mut rows: Vec<View> = Vec::new();
+    let mut separated = false;
+    for entry in menu::entries(profiles) {
+        // The window's commands are a group of their own, as upstream's flyout
+        // separates them: one hairline between the last profile and `Settings`
+        // (ADR 070).
+        if !separated && !matches!(entry, MenuEntry::Profile(_)) {
+            separated = true;
+            if !rows.is_empty() {
+                rows.push(menu_separator());
+            }
+        }
+
+        // A profile's row carries the icon of the program it starts, and the two
+        // commands carry their own glyph, so the menu reads like a list of
+        // shells and actions rather than a list of names (ADRs 066, 070).
+        let leading = match &entry {
+            MenuEntry::Profile(name) => profiles
+                .iter()
+                .find(|profile| &profile.name == name)
+                .and_then(|profile| profile_icon::png_for(&profile.command))
+                .map(menu_image),
+            MenuEntry::Settings => Some(menu_glyph(SETTINGS_GLYPH)),
+            MenuEntry::About => Some(menu_glyph(ABOUT_GLYPH)),
+        };
+        rows.push(menu_row(entry, sender, leading));
+    }
 
     Border::new()
         .background(Color::rgb(44, 44, 48))
@@ -2324,6 +2341,38 @@ fn profile_menu(profiles: &[settings::Profile], sender: &LocalSender<Message>, l
         .into()
 }
 
+/// The hairline between the profile rows and the window's commands.
+fn menu_separator() -> View {
+    Border::new()
+        .height(1.0)
+        .margin(Thickness::new(6.0, 4.0, 6.0, 4.0))
+        .background(Color::rgb(72, 72, 78))
+        .into()
+}
+
+/// A row's program icon.
+fn menu_image(icon: Arc<[u8]>) -> View {
+    Image::new()
+        .source_data(EncodedImage::new(icon))
+        .width(TAB_ICON)
+        .height(TAB_ICON)
+        .stretch(Stretch::Uniform)
+        .vertical_alignment(VerticalAlignment::Center)
+        .into()
+}
+
+/// A row's symbol glyph, in the same square an icon takes so the labels line up.
+fn menu_glyph(glyph: &str) -> View {
+    TextBlock::new()
+        .text(glyph)
+        .font_family(SYMBOL_FONT)
+        .font_size(14.0)
+        .width(TAB_ICON)
+        .text_alignment(TextAlignment::Center)
+        .vertical_alignment(VerticalAlignment::Center)
+        .into()
+}
+
 /// The drop-down's menu hangs under the button, kept inside the pane.
 ///
 /// The header's measured width ends at the button's right edge, so its left
@@ -2334,23 +2383,24 @@ fn menu_left(shell: &Shell) -> f64 {
 }
 
 /// One clickable row of the drop-down.
-fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>, icon: Option<Arc<[u8]>>) -> View {
+fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>, leading: Option<View>) -> View {
     let button = match entry {
         MenuEntry::Profile(name) => {
             let sender = sender.clone();
-            menu_button(name.clone(), icon.clone()).on_click(move || {
+            let leading = leading.clone();
+            menu_button(name.clone(), leading).on_click(move || {
                 let _ = sender.send(Message::MenuProfile(name.clone()));
             })
         }
         MenuEntry::Settings => {
             let sender = sender.clone();
-            menu_button("Settings".to_string(), icon).on_click(move || {
+            menu_button("Settings".to_string(), leading).on_click(move || {
                 let _ = sender.send(Message::MenuSettings);
             })
         }
         MenuEntry::About => {
             let sender = sender.clone();
-            menu_button("About Winter".to_string(), icon).on_click(move || {
+            menu_button("About Winter".to_string(), leading).on_click(move || {
                 let _ = sender.send(Message::MenuAbout);
             })
         }
@@ -2358,19 +2408,14 @@ fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>, icon: Option<Arc<[u
     button.into()
 }
 
-/// A flat, left-aligned row sized to the menu, with the icon when it has one.
-fn menu_button(label: String, icon: Option<Arc<[u8]>>) -> Button {
-    let content: View = match icon {
-        Some(icon) => StackPanel::new()
+/// A flat, left-aligned row sized to the menu, with its icon or glyph.
+fn menu_button(label: String, leading: Option<View>) -> Button {
+    let content: View = match leading {
+        Some(leading) => StackPanel::new()
             .orientation(Orientation::Horizontal)
             .spacing(8.0)
             .children((
-                Image::new()
-                    .source_data(EncodedImage::new(icon))
-                    .width(TAB_ICON)
-                    .height(TAB_ICON)
-                    .stretch(Stretch::Uniform)
-                    .vertical_alignment(VerticalAlignment::Center),
+                leading,
                 TextBlock::new()
                     .text(label)
                     .vertical_alignment(VerticalAlignment::Center),
@@ -2388,11 +2433,27 @@ fn menu_button(label: String, icon: Option<Arc<[u8]>>) -> Button {
 
 /// The About dialog: the version this build was compiled as.
 fn about_dialog(sender: &LocalSender<Message>) -> ContentDialog {
-    let details = StackPanel::new().spacing(8.0).children((
-        TextBlock::new().text(format!("Winter {}", env!("CARGO_PKG_VERSION"))),
-        TextBlock::new().text("A cross-platform terminal emulator in Rust."),
-        TextBlock::new().text("Ported from Microsoft's Windows Terminal."),
-    ));
+    let mut details: Vec<View> = vec![
+        TextBlock::new()
+            .text(format!("Winter {}", env!("CARGO_PKG_VERSION")))
+            .into(),
+        TextBlock::new()
+            .text("A cross-platform terminal emulator in Rust.")
+            .into(),
+        TextBlock::new()
+            .text("Ported from Microsoft's Windows Terminal.")
+            .into(),
+    ];
+    // The repository, where the issues are. A `HyperlinkButton` opens the
+    // default browser itself, so the shell does not need `ShellExecute`.
+    if let Ok(link) = HyperlinkButton::new()
+        .navigate_uri(REPOSITORY)
+        .map(|link| link.content(REPOSITORY))
+    {
+        details.push(link.into());
+    }
+
+    let details = StackPanel::new().spacing(8.0).children(details);
 
     ContentDialog::new()
         .title("About Winter")

@@ -98,3 +98,4 @@ Rules:
 | [067](067-tab-row-height-and-split-button.md) | The tab row is a fixed 32 DIP, a tab paints past it to reach the pane, and `+`/`▾` are one split control | Amended by 068, 069 |
 | [068](068-tab-widths-and-pane-inset.md) | Tabs share the row equally and ellipsise; the pane is inset on the left and the grid stops short of the scrollbar | Amended by 069 (grid columns, hover, group size) |
 | [069](069-tab-grid-and-header-alignment.md) | A tab's icon, title and close are grid columns; the close button hovers; the header sits at the slot's bottom | Accepted |
+| [070](070-profile-icons-and-menu-groups.md) | A profile with no icon wears the shell's own; the drop-down groups its commands behind a hairline with gear and help glyphs; the About dialog links the repository | Accepted |

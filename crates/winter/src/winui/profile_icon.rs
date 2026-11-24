@@ -34,25 +34,51 @@ const SIZE: i32 = 32;
 thread_local! {
     /// One entry per program, so a program is extracted once per session.
     static CACHE: RefCell<HashMap<String, Option<Arc<[u8]>>>> = RefCell::new(HashMap::new());
+    /// The icon this executable carries, read once.
+    static OWN: RefCell<Option<Option<Arc<[u8]>>>> = const { RefCell::new(None) };
 }
 
 /// The PNG of the icon `program` carries, or None when there is none.
 ///
 /// `program` is what a profile's `command` holds: a name on `PATH`, or a path.
+/// A profile whose program has no icon of its own — `bash` on a machine where
+/// the name resolves to nothing, a script, a command that is not a Windows
+/// executable — wears the shell's own icon, so no row or tab is left blank
+/// (ADR 070).
 pub(super) fn png_for(program: &str) -> Option<Arc<[u8]>> {
     CACHE.with_borrow_mut(|cache| {
         if let Some(cached) = cache.get(program) {
             return cached.clone();
         }
-        let bytes = encode(program);
+        let bytes = lookup(program, own_icon);
         cache.insert(program.to_string(), bytes.clone());
         bytes
     })
 }
 
+/// The icon `program` carries, or what `fallback` names when it has none.
+///
+/// Split out from the cache so the rule can be tested with a fallback of the
+/// test's own: the test binary is not the executable the icon is embedded in.
+fn lookup(program: &str, fallback: impl FnOnce() -> Option<Arc<[u8]>>) -> Option<Arc<[u8]>> {
+    encode(program).or_else(fallback)
+}
+
+/// The icon this executable carries.
+fn own_icon() -> Option<Arc<[u8]>> {
+    OWN.with_borrow_mut(|cache| {
+        cache
+            .get_or_insert_with(|| std::env::current_exe().ok().and_then(|path| png_of(&path)))
+            .clone()
+    })
+}
+
 fn encode(program: &str) -> Option<Arc<[u8]>> {
-    let path = resolve(program)?;
-    let (width, height, pixels) = extract(&path)?;
+    png_of(&resolve(program)?)
+}
+
+fn png_of(path: &Path) -> Option<Arc<[u8]>> {
+    let (width, height, pixels) = extract(path)?;
     let png = png::encode(u32::try_from(width).ok()?, u32::try_from(height).ok()?, &pixels);
     (!png.is_empty()).then(|| Arc::from(png))
 }
@@ -232,7 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn a_program_that_is_not_found_has_no_icon() {
-        assert!(png_for("winter-no-such-program-6b2f").is_none());
+    fn a_program_with_no_icon_of_its_own_falls_back() {
+        let fallback = || Some(Arc::from(&b"the app's own icon"[..]));
+        assert_eq!(lookup("winter-no-such-program-6b2f", fallback), fallback());
+
+        // A program that does have one keeps it; the fallback is not reached.
+        assert_eq!(lookup("cmd.exe", || None), png_for("cmd.exe"));
+        assert!(lookup("cmd.exe", || None).is_some());
     }
 }

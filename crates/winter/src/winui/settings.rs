@@ -543,7 +543,10 @@ impl SettingsWindow {
         let content = ScrollViewer::new()
             .horizontal_scroll_bar_visibility(ScrollBarVisibility::Disabled)
             .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
-            .height(480.0)
+            // A cap, not a height: this used to be a fixed 480 DIP, which is
+            // taller than the space a `ContentDialog` gives its content, so the
+            // Apply row slid under the dialog's own Close button (ADR 070).
+            .max_height(420.0)
             .content(StackPanel::new().spacing(10.0).children(children));
 
         ContentDialog::new()

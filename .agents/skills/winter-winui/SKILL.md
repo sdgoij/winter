@@ -207,8 +207,16 @@ settings window and the writer work from the parsed file.
   the bytes, so do not "fix" it to one encoding.
 - A distribution named like a profile in the file is dropped from the merge; the
   file wins.
-- A row's icon is the program's, from `profile_icon` (ADR 066). `Settings` and
-  `About` have none, so their rows are text only.
+- A row's icon is the program's, from `profile_icon` (ADR 066). A program with
+  no icon of its own falls back to the shell's own executable, so neither a row
+  nor a tab is ever blank (ADR 070). `lookup` takes the fallback as an argument
+  so that rule is testable; the test binary carries no icon resource.
+- `Settings` and `About` carry the symbol font's gear (`U+E713`) and question
+  mark (`U+E897`) in a square the size of an icon, and a `menu_separator`
+  hairline divides the profiles from them (ADR 070).
+- The settings dialog's `ScrollViewer` is capped with `max_height`, never given a
+  fixed `height`: a `ContentDialog` decides how tall its content may be, and a
+  fixed 480 DIP pushed the Apply row under its Close button (ADR 070).
 
 ## Scrollbar
 
