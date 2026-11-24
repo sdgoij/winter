@@ -278,17 +278,24 @@ mod tests {
         // `ptsname` answers from a buffer shared by the whole process, so two
         // spawns at the same moment can name the same slave, and the second
         // child's `TIOCSCTTY` then fails because another session owns it.
+        //
+        // Each pty is held until every name is in. A thread that drops its own
+        // gives the number back, and the next spawn is handed `/dev/pts/1`
+        // again — three of the eight did on the arm runner — which is reuse,
+        // not two clients on one terminal.
         let threads: Vec<_> = (0..8)
             .map(|_| {
                 std::thread::spawn(|| {
                     let mut pty =
                         Pty::spawn(&PtyCommand::new(shell()).args(["-c", "tty"]), PtySize::default()).expect("spawn");
-                    read_to_string(&mut pty).trim().to_owned()
+                    let name = read_to_string(&mut pty).trim().to_owned();
+                    (pty, name)
                 })
             })
             .collect();
 
-        let names: Vec<String> = threads.into_iter().map(|handle| handle.join().expect("join")).collect();
+        let spawned: Vec<(Pty, String)> = threads.into_iter().map(|handle| handle.join().expect("join")).collect();
+        let names: Vec<String> = spawned.iter().map(|(_, name)| name.clone()).collect();
         let unique: std::collections::HashSet<&String> = names.iter().collect();
         assert_eq!(unique.len(), names.len(), "terminals: {names:?}");
     }
