@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/linux/gl.rs`, `crates/winter/Cargo.toml`,
+- Related: `crates/gtk4/src/gl.rs`, `crates/gtk4/Cargo.toml`,
   `crates/renderer/src/atlas/`; ADRs 007, 063, 073, 075
 
 ## Context

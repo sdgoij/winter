@@ -26,6 +26,12 @@ Rules:
   Edit for typos and links only.
 - "Why not X" belongs in the ADR. A future contributor who proposes X should
   find the answer without asking.
+- A record's paths are kept current: when a module moves, its link is edited in
+  place, because a stale path helps nobody and the commit that moved it records
+  the old one. ADR 080 moved the shells to `crates/winui`, `crates/gtk4` and
+  `crates/cocoa`. The egui shell's `ui`, `app`, `terminal_widget`, `window`,
+  `blink` and `layout`, and Win32's `win32`, were deleted (ADRs 040, 079), so a
+  record that names one describes code which no longer exists.
 
 | ADR | Decision | Status |
 |-----|----------|--------|

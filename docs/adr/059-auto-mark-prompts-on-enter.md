@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
-- Related: `crates/term/src/terminal.rs`, `crates/adapter/src/adapt_dispatch.rs`, `crates/buffer/src/marks.rs`, `crates/winter/src/grid.rs`, `crates/winter/src/winui/scrollbar.rs`, `crates/winter/src/terminal_widget.rs`, ADR 018, ADR 055
+- Related: `crates/term/src/terminal.rs`, `crates/adapter/src/adapt_dispatch.rs`, `crates/buffer/src/marks.rs`, `crates/winter/src/grid.rs`, `crates/winui/src/scrollbar.rs`, `crates/winter/src/terminal_widget.rs`, ADR 018, ADR 055
 
 ## Context
 

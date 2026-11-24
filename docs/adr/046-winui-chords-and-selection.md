@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/view.rs`,
+- Related: `crates/winui/src/app.rs`, `crates/winter/src/view.rs`,
   `crates/winter/src/term_control.rs`, `crates/settings/src/keybindings.rs`,
   ADR 019, ADR 023
 

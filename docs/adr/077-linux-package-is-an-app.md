@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-24
 - Related: `scripts/package.sh`, `packaging/linux/`,
-  `crates/winter/examples/write-icon.rs`, `crates/winter/src/icon_draw.rs`;
+  `crates/winter/examples/write-icon.rs`, `crates/icon/src/lib.rs`;
   ADRs 055, 058, 075, 076, 078
 
 ## Context

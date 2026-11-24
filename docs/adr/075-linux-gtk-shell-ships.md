@@ -5,7 +5,7 @@
 - Related: ADRs 061 (the toolkit decision), 062 (the parking decision this
   supersedes), 018 (egui), 033 (Linux has no sound sink), 072/073 (the macOS
   shell that set the precedent), `docs/linux-shell-scope.md`,
-  `crates/winter/src/linux/`
+  `crates/gtk4/src/`
 
 ## Context
 

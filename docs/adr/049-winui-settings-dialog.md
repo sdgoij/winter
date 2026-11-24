@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winter/src/winui/settings.rs`, `crates/winter/src/config.rs`,
+- Related: `crates/winui/src/settings.rs`, `crates/winter/src/config.rs`,
   `crates/settings/src/parser.rs`; ADR 025, ADR 028, ADR 030–032
 
 ## Context

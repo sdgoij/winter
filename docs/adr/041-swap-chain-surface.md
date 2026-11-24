@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-22
 - Related: ADR 040, ADR 007, ADR 016; `crates/winter/src/terminal_render.rs`,
-  `crates/renderer/src/atlas/shared.rs`, `crates/winter/src/winui/surface.rs`
+  `crates/renderer/src/atlas/shared.rs`, `crates/winui/src/surface.rs`
 
 ## Context
 
@@ -36,7 +36,7 @@ the window.
   chain to reactor, and presents the software backend's pixels through a
   Direct2D device context: a bitmap made from `SharedBackend`'s buffer, drawn
   onto the back buffer.
-- **The interop is one module.** `crates/winter/src/winui/surface.rs` carries a
+- **The interop is one module.** `crates/winui/src/surface.rs` carries a
   module-level `#[allow(unsafe_code)]` and a `SAFETY:` note per call, the shape
   ADR 016 gave the pty backends. No other module gains `unsafe`.
 - **The text path stays `renderer`'s.** The bitmap is the software backend's

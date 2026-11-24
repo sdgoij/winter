@@ -2,7 +2,7 @@
 
 - Status: Amended by 068 (28-DIP row, centred group, equal tab widths)
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/app.rs`, ADR 051, ADR 052, ADR 064
+- Related: `crates/winui/src/app.rs`, ADR 051, ADR 052, ADR 064
 
 ## Context
 

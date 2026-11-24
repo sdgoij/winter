@@ -2,7 +2,7 @@
 
 - Status: Amended by 067 (the tab's height, the overhang and the button group)
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/app.rs`, ADR 051, ADR 052
+- Related: `crates/winui/src/app.rs`, ADR 051, ADR 052
 
 ## Context
 

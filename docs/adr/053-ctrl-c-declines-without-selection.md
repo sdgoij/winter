@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/settings/src/keybindings.rs`, `crates/winter/src/winui/app.rs`, `crates/winter/src/app.rs`, ADR 023, ADR 046
+- Related: `crates/settings/src/keybindings.rs`, `crates/winui/src/app.rs`, `crates/winter/src/app.rs`, ADR 023, ADR 046
 
 ## Context
 

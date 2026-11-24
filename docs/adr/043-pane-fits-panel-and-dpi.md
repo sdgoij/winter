@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/winui/surface.rs`,
+- Related: `crates/winui/src/app.rs`, `crates/winui/src/surface.rs`,
   `crates/renderer/src/renderer.rs`, `crates/renderer/src/atlas/engine.rs`,
   ADR 006, ADR 040, ADR 041
 

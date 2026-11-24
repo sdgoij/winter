@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: ADR 040, ADR 041; `crates/winter/Cargo.toml`,
-  `crates/winter/src/winui/app.rs`
+- Related: ADR 040, ADR 041; `crates/winui/Cargo.toml`,
+  `crates/winui/src/app.rs`
 
 ## Context
 
@@ -40,7 +40,7 @@ into a `SwapChainPanel`, and `echo hello` was typed and executed.
 
 - A pre-release dependency, republished outside Microsoft's account, joins the
   tree with `windows-window-pre` 0.104.
-- The binding is confined to `crates/winter/src/winui/`; a change of version is
+- The binding is confined to `crates/winui/src/`; a change of version is
   a change of that directory.
 - `cargo-deny` licences and sources apply to the new crates like any other.
 

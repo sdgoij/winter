@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/input.rs`, `crates/winter/src/winui/app.rs`,
+- Related: `crates/winter/src/input.rs`, `crates/winui/src/app.rs`,
   `crates/term/src/input/terminal_input.rs`, ADR 056
 
 ## Context

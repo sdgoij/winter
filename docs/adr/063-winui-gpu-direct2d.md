@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-23
-- Related: `crates/winter/src/winui/gpu.rs`, `winui/surface.rs`,
+- Related: `crates/winui/src/gpu.rs`, `crates/winui/src/surface.rs`,
   `crates/renderer/src/atlas/common.rs`; ADRs 007, 041, 043, 045
 
 ## Context

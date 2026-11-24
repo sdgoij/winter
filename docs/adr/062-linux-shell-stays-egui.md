@@ -3,7 +3,7 @@
 - Status: Superseded by ADR 075 (the GTK shell ships)
 - Date: 2026-11-23
 - Related: ADR 061 (the decision this amends), ADR 018 (the egui shell),
-  `docs/linux-shell-scope.md`, `crates/winter/src/linux/`
+  `docs/linux-shell-scope.md`, `crates/gtk4/src/`
 
 ## Context
 
@@ -31,7 +31,7 @@ shell on macOS, which has none.
 - **Linux ships the egui shell**, which already covers what the project has:
   tabs, panes, scrollback, selection, copy/paste, the settings window, the find
   bar, notifications and the palette.
-- **The code stays.** `crates/winter/src/linux/` and the `gtk` feature remain: a
+- **The code stays.** `crates/gtk4/src/` and the `gtk` feature remain: a
   working reference for the Wayland traps the notes record (a widget paintable
   pictures the last painted frame, `GtkWindowHandle` claims double presses, a
   GTK call can re-enter a borrowed shell), and the feature flag already keeps it

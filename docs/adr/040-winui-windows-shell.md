@@ -57,7 +57,7 @@ appearance is `WindowVisuals` with `theme`, `backdrop` (Mica, MicaAlt, Acrylic),
    underneath it, and no hand-written Win32 host is written.
 2. **The dependency is Windows-only and confined.** `windows-reactor` goes in
    `[target.'cfg(windows)'.dependencies]` and is named only inside
-   `crates/winter/src/winui/`. Nothing below the shell sees it.
+   `crates/winui/src/`. Nothing below the shell sees it.
 3. **One module per upstream XAML file**, as the port does everywhere else:
    `terminal_page`, `tab_row`, `titlebar`, `palette`, `settings_editor` and
    `app`, each naming its XAML source.

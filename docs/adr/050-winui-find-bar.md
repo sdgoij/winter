@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winter/src/find.rs`, `crates/winter/src/winui/app.rs`,
+- Related: `crates/winter/src/find.rs`, `crates/winui/src/app.rs`,
   `crates/winter/src/terminal_render.rs`, `crates/renderer/src/renderer.rs`;
   ADR 019, ADR 046
 

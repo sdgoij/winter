@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-22
-- Related: `crates/winter/src/winui/app.rs`, `crates/winter/src/winui/menu.rs`, ADR 042, ADR 050, ADR 051
+- Related: `crates/winui/src/app.rs`, `crates/winui/src/menu.rs`, ADR 042, ADR 050, ADR 051
 
 ## Context
 

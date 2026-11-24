@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/wsl.rs`, `crates/winter/src/winui/app.rs`,
+- Related: `crates/winui/src/wsl.rs`, `crates/winui/src/app.rs`,
   ADR 023, ADR 034
 
 ## Context

@@ -2,8 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/profile_icon.rs`,
-  `crates/winter/src/winui/png.rs`, `crates/winter/src/winui/app.rs`, ADR 064,
+- Related: `crates/winui/src/profile_icon.rs`,
+  `crates/winui/src/png.rs`, `crates/winui/src/app.rs`, ADR 064,
   ADR 058
 
 ## Context

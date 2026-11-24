@@ -2,7 +2,7 @@
 
 - Status: Amended by 069 (grid columns, hover, group size)
 - Date: 2026-11-24
-- Related: `crates/winter/src/winui/app.rs`, ADR 064, ADR 067, ADR 059
+- Related: `crates/winui/src/app.rs`, ADR 064, ADR 067, ADR 059
 
 ## Context
 
