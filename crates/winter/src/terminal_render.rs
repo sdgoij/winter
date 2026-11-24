@@ -77,11 +77,14 @@ impl TerminalData {
             self.settings.set_color_table(table.clone());
         }
 
-        self.cursor.coord_cursor = Point::new(screen.cursor.0, screen.cursor.1);
+        // The cursor is anchored to the text, not the viewport: scrolling back
+        // moves it down with its row and out of the pane, as it does upstream.
+        let cursor_row = screen.cursor.1 + view.scroll();
+        self.cursor.coord_cursor = Point::new(screen.cursor.0, cursor_row);
         self.cursor.cursor_type = screen.cursor_shape;
         self.cursor.is_visible = screen.cursor_visible;
         self.cursor.is_on = cursor_on;
-        self.cursor.in_viewport = screen.cursor_visible;
+        self.cursor.in_viewport = screen.cursor_visible && (0..rows).contains(&cursor_row);
 
         let history = control.max_scroll();
         let scroll = view.scroll();

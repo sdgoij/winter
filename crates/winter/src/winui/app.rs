@@ -1269,9 +1269,14 @@ impl Shell {
             return false;
         };
 
-        arboard::Clipboard::new()
+        let copied = arboard::Clipboard::new()
             .and_then(|mut clipboard| clipboard.set_text(text))
-            .is_ok()
+            .is_ok();
+        if copied {
+            // A copy ends the selection, as it does upstream (ADR 053).
+            tab.view.clear_selection();
+        }
+        copied
     }
 
     /// Sends the clipboard through the terminal's bracketed-paste filter.
@@ -1422,6 +1427,12 @@ impl Shell {
         let cell = pointer_cell(info.x, info.y, self.grid, self.cell, self.scale);
         self.pointer_cell = cell;
 
+        // A right press pastes, unless the program asked to see the mouse.
+        if info.is_right_button_pressed && !forward {
+            self.paste_clipboard();
+            return;
+        }
+
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
@@ -1433,11 +1444,18 @@ impl Shell {
                     info.is_middle_button_pressed,
                     info.is_right_button_pressed,
                 );
+                let button = if info.is_right_button_pressed {
+                    MouseButton::Right
+                } else if info.is_middle_button_pressed {
+                    MouseButton::Middle
+                } else {
+                    MouseButton::Left
+                };
                 let chord =
                     input::key_modifiers(modifiers(info.modifiers), self.sides.right_alt, self.sides.right_ctrl);
                 let event = MouseEvent {
                     position,
-                    kind: MouseEventKind::Press(MouseButton::Left),
+                    kind: MouseEventKind::Press(button),
                     buttons,
                     modifiers: chord,
                     delta: 0,
