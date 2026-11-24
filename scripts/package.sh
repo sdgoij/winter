@@ -21,6 +21,9 @@
 # Apple silicon archive instead of waiting for an arm64 macOS runner.
 #
 # `WINTER_TARGET=<target>` packages one target instead of the default set.
+#
+# Linux ships an app rather than a bare binary -- a desktop entry, the icon the
+# binary draws and an installer that needs no root (ADR 076).
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -38,6 +41,9 @@ if [ -z "$version" ]; then
     fi
 fi
 
+# `CARGO_TARGET_DIR` moves the build directory; an agent or a WSL checkout
+# usually sets it, so every binary path below follows it.
+target_dir=${CARGO_TARGET_DIR:-$root/target}
 host=$(rustc -vV | awk '/^host:/ { print $2 }')
 # CFBundleVersion is a period-separated list of integers; the display string
 # keeps the prerelease suffix that `CFBundleShortVersionString` may hold.
@@ -112,7 +118,7 @@ if [ "${1:-}" = "--app" ]; then
         exit 1
     fi
     cargo build --release -p winter
-    build_app "dist/Winter.app" "target/release/winter" "target/release/winter"
+    build_app "dist/Winter.app" "$target_dir/release/winter" "$target_dir/release/winter"
     echo "dist/Winter.app"
     exit 0
 fi
@@ -140,16 +146,16 @@ check_target() {
 }
 
 cargo build --release -p winter
-icon_binary="$root/target/release/winter"
+icon_binary="$target_dir/release/winter"
 
 for target in $targets; do
     check_target "$target"
 
     if [ "$target" = "$host" ]; then
-        binary="$root/target/release/winter"
+        binary="$target_dir/release/winter"
     else
         cargo build --release -p winter --target "$target"
-        binary="$root/target/$target/release/winter"
+        binary="$target_dir/$target/release/winter"
     fi
     case "$target" in
     *windows*) binary="$binary.exe" ;;
@@ -175,6 +181,26 @@ for target in $targets; do
         build_app "$stage/Winter.app" "$binary" "$icon_binary"
         cp LICENSE.md "$stage/LICENSE.md"
         cp README.md "$stage/README.md"
+        tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
+        echo "dist/$name.tar.gz"
+        ;;
+    Linux)
+        # The archive is an app, not a bare binary: launching it from the menu
+        # is what the other two platforms' shells get from their packaging
+        # (ADR 076).
+        cp "$binary" "$stage/winter"
+        cp LICENSE.md "$stage/LICENSE.md"
+        cp README.md "$stage/README.md"
+        cp packaging/linux/install.sh "$stage/install.sh"
+        chmod +x "$stage/install.sh"
+        cp packaging/linux/org.winter.Winter.desktop "$stage/org.winter.Winter.desktop"
+        # The icon is drawn rather than committed, so the menu's icon and the
+        # window's cannot drift (ADRs 058, 076).
+        cargo run --quiet --release -p winter --example write-icon -- "$stage/winter.png"
+        # The entry is what a user clicks; a typo in it is a broken install.
+        if command -v desktop-file-validate >/dev/null 2>&1; then
+            desktop-file-validate "$stage/org.winter.Winter.desktop"
+        fi
         tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
         echo "dist/$name.tar.gz"
         ;;

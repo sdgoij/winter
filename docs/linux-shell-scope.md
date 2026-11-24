@@ -252,6 +252,9 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 7. **Cut-over.** ✅ Taken by ADR 074: `gtk` is the Linux default, the gate
    installs the headers and builds it, and egui remains the
    `--no-default-features` fallback.
+8. **Package.** ✅ Taken by ADR 076: the Linux archive is an app tree — the
+   binary, a desktop entry named after the application id, the generated icon
+   and a rootless installer for `~/.local`.
 
 ## Remaining gaps
 

@@ -209,6 +209,17 @@ either slice — so a release never waits for an arm64 macOS runner. The bundle
 is ad-hoc signed; a Developer ID, notarization and a disk image are release
 work.
 
+On Linux the archive is an app rather than a bare binary: `winter`, a desktop
+entry, the generated icon and `install.sh`, which installs them for the current
+user and needs no root (ADR 076).
+
+```sh
+just package
+tar -xzf dist/winter-*-linux-gnu.tar.gz
+cd winter-*-linux-gnu && ./install.sh     # ~/.local/bin, and Winter in the menu
+./install.sh --uninstall                 # removes the same three files
+```
+
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
 x86-64 and arm64 Linux, Windows, and macOS, plus `just test-long` as a `Full
 tests` job — the `#[ignore]`d font cases and the release profile, which the gate

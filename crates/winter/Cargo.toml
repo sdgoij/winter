@@ -144,5 +144,10 @@ windows = { version = "0.62", features = [
 [target.'cfg(windows)'.build-dependencies]
 embed-resource.workspace = true
 
+[dev-dependencies]
+# The `write-icon` example encodes the drawn icon as the PNG the Linux package
+# installs (ADR 076). Only the example needs it, so the binary never links it.
+png = "0.18"
+
 [lints]
 workspace = true

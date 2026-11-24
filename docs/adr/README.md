@@ -106,3 +106,4 @@ Rules:
 | [074](074-macos-app-bundle.md) | macOS ships as a `Winter.app` bundle: the plist and drawn `.icns` come from the binary, the bundle is ad-hoc signed, and a Finder launch starts in `$HOME` | Accepted |
 | [074](074-linux-gtk-shell-ships.md) | The Linux shell is GTK 4; the feature is on by default, the gate installs the headers and builds it, and the named gaps are primary selection, an accessible text tree, tab icons and sound | Accepted |
 | [075](075-linux-opengl-content.md) | The Linux content path is OpenGL over GTK's GL area, with the software backend as the fallback; `linux::gl` carries the loader's unsafe exemption | Accepted |
+| [076](076-linux-package-is-an-app.md) | The Linux archive is an app tree — desktop entry named after the GTK application id, a generated icon and a rootless installer — with AppImage, Flatpak and deb left in the plan | Accepted |

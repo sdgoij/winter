@@ -1,6 +1,6 @@
 ---
 name: winter-linux
-description: Build, run and live-check the GTK 4 shell in crates/winter/src/linux. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar, the OpenGL content path or the Cairo blit, or when a Linux build or headless screenshot behaves differently.
+description: Build, run, live-check and package the GTK 4 shell in crates/winter/src/linux. Use when changing the Linux window, tab strip, find bar, settings editor, pointer or keyboard input, IME, scrollbar, the OpenGL content path, the Cairo blit or the Linux package, or when a Linux build or headless screenshot behaves differently.
 ---
 
 # The Linux shell
@@ -45,6 +45,35 @@ fallback and needs no headers; the gate checks it on Linux.
 
 The grid is drawn through GTK's OpenGL context when libGL/libEGL exists;
 `WINTER_SOFTWARE=1` forces the CPU blit. Both paths are built either way.
+
+## Package
+
+`just package` builds the release and writes `dist/winter-<version>-<target>`
+with the binary, `org.winter.Winter.desktop`, `winter.png` and `install.sh`
+(ADR 076). Windows and macOS keep their own archives; only Linux gets the app
+tree.
+
+```sh
+just package
+tar -xzf dist/winter-*-linux-gnu.tar.gz -C /tmp/app
+BINDIR=/tmp/prefix/bin DATADIR=/tmp/prefix/share /tmp/app/winter-*/install.sh
+```
+
+`BINDIR`/`DATADIR` keep a test out of `~/.local`; with neither set, the script
+installs to `~/.local/bin` and `${XDG_DATA_HOME:-~/.local/share}`. Launch the
+installed entry the way a desktop would — this needs the prefix on
+`XDG_DATA_DIRS` *and* on `PATH`, since the entry's `Exec=winter` is a name:
+
+```sh
+setsid dbus-run-session -- env DISPLAY=:98 GDK_BACKEND=x11 \
+  XDG_DATA_DIRS=/tmp/prefix/share:/usr/share \
+  PATH=/tmp/prefix/bin:/usr/bin:/bin \
+  sh -c 'gtk-launch org.winter.Winter & sleep 8; import -window root /tmp/menu.png'
+```
+
+`desktop-file-validate` is run by `just package` when the host has it, and
+`install.sh --uninstall` should leave nothing behind but the regenerated
+`mimeinfo.cache`.
 
 ## Live check
 
@@ -175,6 +204,15 @@ a neighbour's midpoint.
 - **GTK 4.10 is the floor.** `gtk::accessible` and the property API need
   `v4_10`; `PRIMARY` as a clipboard needs 4.16, which is why middle-click
   pastes `CLIPBOARD` today.
+- **The window's `WM_CLASS` is `winter`, not the application id.** Measured with
+  `xprop -id <toplevel> WM_CLASS` under Xvfb: GTK 4 derives the class from the
+  program name, while `org.winter.Winter` is the Wayland app id. The desktop
+  entry is named after the id and sets `StartupWMClass=winter`; swapping the
+  two gives the dock a second, icon-less entry.
+- **`gtk-launch` spawns the app and exits.** Wrapping it directly in
+  `dbus-run-session` closes the session bus underneath the new process, which
+  then exits after a run of `Cannot list activatable names` warnings; the
+  Package section keeps the session alive with `sh -c 'gtk-launch … & sleep'`.
 
 ## Do not
 

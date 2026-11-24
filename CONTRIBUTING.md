@@ -220,6 +220,7 @@ Do not add call sites under an allowance.
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
 | `crates/winter` | The application: the GTK 4 shell on Linux (ADR 074, with egui as the `--no-default-features` fallback) and its OpenGL content path (ADR 075), `winui/` on Windows, and `macos/` on macOS |
+| `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 076) |
 
 ## Where the port stands
 

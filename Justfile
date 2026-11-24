@@ -82,7 +82,8 @@ dist:
     cp README.md dist/README.md
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1 -Destination dist
 
-# Build and package this platform's release archive into `dist/`.
+# Build and package this platform's release archive into `dist/`. On Linux the
+# archive is an app tree with a desktop entry and an installer (ADR 076).
 package:
     sh scripts/package.sh
 
