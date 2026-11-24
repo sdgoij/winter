@@ -3,8 +3,13 @@
 //! The D2D/D3D/DWrite members are left to the backend modules; these are the
 //! value types the engine and its tests share.
 
-use crate::render_frame_info::GridLineSet;
+use crate::render_frame_info::{GridLineSet, GridLines};
 use types::LineRendition;
+
+/// Converts a `COLORREF` (`0x00BBGGRR`) to `0xAARRGGBB`.
+pub const fn argb_from_colorref(color: u32) -> u32 {
+    0xFF00_0000 | ((color & 0x0000_00FF) << 16) | (color & 0x0000_FF00) | ((color & 0x00FF_0000) >> 16)
+}
 
 /// The position and height of a font decoration (underline, grid line, ...).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -461,6 +466,148 @@ impl RenderingPayload {
     }
 }
 
+/// The pixel rectangle of one cell, as `(left, top, right, bottom)`.
+pub fn cell_rect(column: u16, row: u16, cell_width: u32, cell_height: u32) -> (i32, i32, i32, i32) {
+    let left = i32::from(column) * cell_width as i32;
+    let top = i32::from(row) * cell_height as i32;
+    (left, top, left + cell_width as i32, top + cell_height as i32)
+}
+
+/// The `(background, foreground)` colours of one cell, as `0xAARRGGBB`.
+///
+/// A cell outside the colour bitmap keeps the engine's black-on-white default,
+/// which is what a backend painted before this was shared.
+pub fn cell_colors(payload: &RenderingPayload, column: u16, row: u16) -> (u32, u32) {
+    const BLACK: u32 = 0xFF00_0000;
+    const WHITE: u32 = 0xFFFF_FFFF;
+
+    let stride = payload.color_bitmap_row_stride;
+    let depth = payload.color_bitmap_depth_stride;
+    let Some(index) = (row as usize)
+        .checked_mul(stride)
+        .and_then(|base| base.checked_add(column as usize))
+    else {
+        return (BLACK, WHITE);
+    };
+    if index >= depth {
+        return (BLACK, WHITE);
+    }
+    let background = payload.color_bitmap.get(index).copied().unwrap_or(BLACK);
+    let foreground = payload.color_bitmap.get(depth + index).copied().unwrap_or(WHITE);
+    (background, foreground)
+}
+
+/// The text baseline in pixels from the top of a row.
+pub fn baseline(payload: &RenderingPayload, cell_height: u32) -> i32 {
+    if payload.settings.font.baseline == 0 {
+        (cell_height * 3 / 4) as i32
+    } else {
+        i32::from(payload.settings.font.baseline)
+    }
+}
+
+/// The pixel origin of a rasterised glyph inside a cell.
+pub fn glyph_origin(
+    column: u16,
+    row: u16,
+    cell_width: u32,
+    cell_height: u32,
+    baseline: i32,
+    bitmap_left: i32,
+    bitmap_top: i32,
+) -> (i32, i32) {
+    (
+        i32::from(column) * cell_width as i32 + bitmap_left,
+        i32::from(row) * cell_height as i32 + baseline + bitmap_top,
+    )
+}
+
+/// A solid rectangle a backend fills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SolidRect {
+    /// Left edge in pixels.
+    pub left: i32,
+    /// Top edge in pixels.
+    pub top: i32,
+    /// Right edge, exclusive.
+    pub right: i32,
+    /// Bottom edge, exclusive.
+    pub bottom: i32,
+    /// The fill, `0xAARRGGBB`.
+    pub color: u32,
+}
+
+/// The grid lines of one row, as solid rectangles.
+pub fn grid_line_rects(
+    payload: &RenderingPayload,
+    row_index: u16,
+    cell_width: u32,
+    cell_height: u32,
+) -> Vec<SolidRect> {
+    let top = i32::from(row_index) * cell_height as i32;
+    let bottom = top + cell_height as i32 - 1;
+    let underline = bottom - 1;
+    let middle = top + cell_height as i32 / 2;
+    let mut rects = Vec::new();
+
+    let Some(row) = payload.rows.get(row_index as usize) else {
+        return rects;
+    };
+
+    for range in &row.grid_line_ranges {
+        let left = i32::from(range.from) * cell_width as i32;
+        let right = i32::from(range.to) * cell_width as i32;
+        if left >= right {
+            continue;
+        }
+
+        let (_, foreground) = cell_colors(payload, range.from, row_index);
+        let mut push = |l: i32, t: i32, r: i32, b: i32| {
+            if l < r && t < b {
+                rects.push(SolidRect {
+                    left: l,
+                    top: t,
+                    right: r,
+                    bottom: b,
+                    color: foreground,
+                });
+            }
+        };
+
+        if range.lines.contains(GridLines::Top) {
+            push(left, top, right, top + 1);
+        }
+        if range.lines.contains(GridLines::Bottom) {
+            push(left, bottom, right, bottom + 1);
+        }
+        if range.lines.contains(GridLines::Strikethrough) {
+            push(left, middle, right, middle + 1);
+        }
+        if range.lines.contains(GridLines::Underline)
+            || range.lines.contains(GridLines::DoubleUnderline)
+            || range.lines.contains(GridLines::CurlyUnderline)
+            || range.lines.contains(GridLines::DottedUnderline)
+            || range.lines.contains(GridLines::DashedUnderline)
+            || range.lines.contains(GridLines::HyperlinkUnderline)
+        {
+            push(left, underline, right, underline + 1);
+        }
+
+        for column in range.from..range.to {
+            let cell_left = i32::from(column) * cell_width as i32;
+            let cell_right = cell_left + cell_width as i32;
+            if range.lines.contains(GridLines::Left) {
+                push(cell_left, top, cell_left + 1, bottom + 1);
+            }
+            if range.lines.contains(GridLines::Right) {
+                push(cell_right - 1, top, cell_right, bottom + 1);
+            }
+        }
+    }
+
+    rects
+}
+
 /// A graphics backend for the atlas engine.
 ///
 /// Ported from `common.h`'s `IBackend`. The backend owns its device and surface;
@@ -674,5 +821,61 @@ mod tests {
         backend.release_resources();
 
         assert!(!backend.requires_continuous_redraw());
+    }
+
+    fn one_cell_payload(background: u32, foreground: u32) -> RenderingPayload {
+        let mut payload = RenderingPayload::default();
+        payload.settings.viewport_cell_count = (1, 1);
+        payload.color_bitmap_row_stride = 1;
+        payload.color_bitmap_depth_stride = 1;
+        payload.color_bitmap = vec![background, foreground];
+        payload.rows.push(ShapedRow::default());
+        payload
+    }
+
+    #[test]
+    fn a_cell_rect_is_the_cell_size_times_its_column_and_row() {
+        assert_eq!(cell_rect(2, 3, 10, 20), (20, 60, 30, 80));
+    }
+
+    #[test]
+    fn cell_colors_read_the_background_and_foreground_planes() {
+        let payload = one_cell_payload(0xFF11_2233, 0xFF44_5566);
+        assert_eq!(cell_colors(&payload, 0, 0), (0xFF11_2233, 0xFF44_5566));
+    }
+
+    #[test]
+    fn a_cell_outside_the_colour_bitmap_keeps_the_default_colours() {
+        let payload = one_cell_payload(0xFF11_2233, 0xFF44_5566);
+        assert_eq!(cell_colors(&payload, 1, 0), (0xFF00_0000, 0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn an_underline_is_a_one_pixel_rect_at_the_bottom_of_the_cell() {
+        let mut payload = one_cell_payload(0, 0xFF12_3456);
+        let mut lines = GridLineSet::new();
+        lines.insert(GridLines::Underline);
+        payload.rows[0]
+            .grid_line_ranges
+            .push(GridLineRange { lines, from: 0, to: 1 });
+
+        let rects = grid_line_rects(&payload, 0, 10, 20);
+
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].left, 0);
+        assert_eq!(rects[0].right, 10);
+        assert_eq!(rects[0].bottom - rects[0].top, 1);
+        assert_eq!(rects[0].color, 0xFF12_3456);
+    }
+
+    #[test]
+    fn a_glyph_origin_sits_on_the_baseline() {
+        assert_eq!(glyph_origin(2, 3, 10, 20, 15, 1, -8), (21, 67));
+    }
+
+    #[test]
+    fn the_baseline_defaults_to_three_quarters_of_the_cell() {
+        let payload = RenderingPayload::default();
+        assert_eq!(baseline(&payload, 20), 15);
     }
 }

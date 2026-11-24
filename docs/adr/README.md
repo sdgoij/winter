@@ -35,7 +35,7 @@ Rules:
 | [004](004-incremental-dispatch.md) | Port the dispatcher family by family, with explicit `unhandled` defaults | Accepted |
 | [005](005-images-in-the-buffer.md) | Images are buffer content: per-row bands, carried by cell operations | Accepted |
 | [006](006-render-loop-model.md) | The renderer is host-driven; no thread, timers are data | Accepted |
-| [007](007-gpu-backend-and-surface.md) | The GPU backend is created by the UI layer with a surface | Accepted |
+| [007](007-gpu-backend-and-surface.md) | The GPU backend is created by the UI layer with a surface | Amended by 063 (the WinUI pane uses a sprite batch) |
 | [008](008-font-discovery.md) | Fonts are found by scanning host-supplied directories, read with a small SFNT reader | Accepted |
 | [009](009-platform-neutral-input.md) | Input translation takes portable events and a mode snapshot | Accepted |
 | [010](010-input-parser-in-the-host.md) | The input parser is ported with the host layer | Accepted |
@@ -91,3 +91,4 @@ Rules:
 | [060](060-powershell-shell-integration-hook.md) | A PowerShell profile is started with an embedded hook that sends `OSC 133` A/B/C/D, so ticks carry the exit code; marks are one per prompt row | Accepted |
 | [061](061-linux-gtk-host-own-chrome.md) | The Linux shell's host is GTK 4; the tab strip, scrollbar and grid stay our renderer's pixels | Amended by 062 (parked) |
 | [062](062-linux-shell-stays-egui.md) | The GTK shell is parked at a working state; Linux ships egui, and the next native shell is macOS | Accepted |
+| [063](063-winui-gpu-direct2d.md) | The WinUI pane paints on the GPU: Direct2D fills for the grid and DirectWrite glyph runs for the text | Accepted |

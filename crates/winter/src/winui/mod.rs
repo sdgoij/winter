@@ -10,6 +10,9 @@
 pub mod surface;
 
 #[allow(unsafe_code)]
+mod gpu;
+
+#[allow(unsafe_code)]
 mod wheel;
 
 #[allow(unsafe_code)]

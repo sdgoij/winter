@@ -9,16 +9,20 @@ use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 
 use windows::Win32::Foundation::HMODULE;
-use windows::Win32::Graphics::Direct2D::Common::{D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT};
+use windows::Win32::Graphics::Direct2D::Common::{
+    D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE, D2D1_ALPHA_MODE_IGNORE, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
+};
 use windows::Win32::Graphics::Direct2D::{
     D2D1_BITMAP_OPTIONS, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-    D2D1CreateFactory, ID2D1Bitmap, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1Image,
+    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1CreateFactory, ID2D1Bitmap, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext,
+    ID2D1Factory1, ID2D1Image, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice, ID3D11Device,
 };
+use windows::Win32::Graphics::DirectWrite::{DWRITE_GLYPH_RUN, DWRITE_MEASURING_MODE_NATURAL, IDWriteFontFace};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_IGNORE, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_UNKNOWN, DXGI_SAMPLE_DESC,
 };
@@ -28,6 +32,7 @@ use windows::Win32::Graphics::Dxgi::{
     IDXGISurface, IDXGISwapChain1, IDXGISwapChain2,
 };
 use windows::core::{BOOL, Interface as _, Result};
+use windows_numerics::Vector2;
 
 /// A composition swap chain and the Direct2D context that draws into it.
 pub struct Surface {
@@ -174,6 +179,164 @@ impl Surface {
             )
         };
         borrowed.to_owned()
+    }
+
+    /// Begins a frame: re-acquires the back buffer, begins drawing and clears.
+    ///
+    /// A flip-model swap chain rotates its buffers on `Present`, so the target is
+    /// re-acquired from the new back buffer each frame; drawing into the old one
+    /// leaves a frame on screen that was never painted.
+    pub fn begin_frame(&mut self, background: u32) -> Result<()> {
+        // SAFETY: the context is live and the swap chain is a composition swap
+        // chain, so buffer zero is the current back buffer.
+        unsafe { self.context.SetTarget(None::<&ID2D1Image>) };
+        self._target = Some(create_target(&self.context, &self.swap_chain)?);
+
+        let clear = D2D1_COLOR_F {
+            r: f32::from((background & 0xFF) as u8) / 255.0,
+            g: f32::from(((background >> 8) & 0xFF) as u8) / 255.0,
+            b: f32::from(((background >> 16) & 0xFF) as u8) / 255.0,
+            a: 1.0,
+        };
+
+        // SAFETY: BeginDraw pairs with `end_frame`'s EndDraw on every path.
+        unsafe {
+            self.context.BeginDraw();
+            self.context.Clear(Some(&clear as *const _));
+        }
+        Ok(())
+    }
+
+    /// Ends the frame and presents the back buffer.
+    pub fn end_frame(&mut self) -> Result<()> {
+        // SAFETY: `begin_frame` called BeginDraw on this context, and the swap
+        // chain is live.
+        unsafe {
+            if let Err(error) = self.context.EndDraw(None, None) {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| eprintln!("winter gpu: EndDraw: {error}"));
+                return Err(error);
+            }
+            let hr = self.swap_chain.Present(1, DXGI_PRESENT(0));
+            if hr.is_err() {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| eprintln!("winter gpu: Present: {hr:?}"));
+                return hr.ok();
+            }
+        }
+        Ok(())
+    }
+
+    /// Creates a CPU-writable bitmap for the glyph atlas or an image.
+    pub fn create_bitmap(
+        &self,
+        width: u32,
+        height: u32,
+        pixels: &[u32],
+        alpha_mode: D2D1_ALPHA_MODE,
+    ) -> Result<ID2D1Bitmap1> {
+        let properties = D2D1_BITMAP_PROPERTIES1 {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: alpha_mode,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            bitmapOptions: D2D1_BITMAP_OPTIONS(0),
+            colorContext: ManuallyDrop::new(None),
+        };
+        let size = D2D_SIZE_U { width, height };
+
+        // SAFETY: the pixel buffer is `width * height` `u32`s, the pitch matches
+        // the row length, and the properties describe that layout.
+        unsafe {
+            self.context
+                .CreateBitmap(size, Some(pixels.as_ptr().cast()), width * 4, &properties as *const _)
+        }
+    }
+
+    /// Creates a solid brush whose colour a frame changes per draw.
+    pub fn create_solid_brush(&self) -> Result<ID2D1SolidColorBrush> {
+        let color = D2D1_COLOR_F {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        };
+        // SAFETY: the colour is a stack value and no brush properties are asked
+        // for, so Direct2D uses the identity transform.
+        unsafe { self.context.CreateSolidColorBrush(&color, None) }
+    }
+
+    /// Sets a brush's colour.
+    pub fn set_brush_color(&mut self, brush: &ID2D1SolidColorBrush, color: D2D1_COLOR_F) {
+        // SAFETY: the brush is a live solid-colour brush from this context.
+        unsafe { brush.SetColor(&color) };
+    }
+
+    /// Fills `destination` with `brush`'s colour.
+    pub fn fill_rect(&mut self, brush: &ID2D1SolidColorBrush, destination: D2D_RECT_F) {
+        // SAFETY: the brush belongs to this device and the rectangle is a value
+        // on the stack for the duration of the call.
+        unsafe { self.context.FillRectangle(&destination, brush) };
+    }
+
+    /// Draws one run of glyphs, tinted by `brush`.
+    pub fn draw_glyph_run(
+        &mut self,
+        brush: &ID2D1SolidColorBrush,
+        origin: Vector2,
+        face: &IDWriteFontFace,
+        em_size: f32,
+        glyphs: &[u16],
+        advances: &[f32],
+    ) -> Result<()> {
+        if glyphs.is_empty() || advances.len() != glyphs.len() {
+            return Ok(());
+        }
+        let run = DWRITE_GLYPH_RUN {
+            fontFace: ManuallyDrop::new(Some(face.clone())),
+            fontEmSize: em_size,
+            glyphCount: glyphs.len() as u32,
+            glyphIndices: glyphs.as_ptr(),
+            glyphAdvances: advances.as_ptr(),
+            glyphOffsets: std::ptr::null(),
+            isSideways: BOOL(0),
+            bidiLevel: 0,
+        };
+        // SAFETY: the run borrows the two slices for the duration of the call,
+        // and the brush belongs to this context's device.
+        unsafe {
+            self.context
+                .DrawGlyphRun(origin, &run, None, brush, DWRITE_MEASURING_MODE_NATURAL);
+        }
+        Ok(())
+    }
+
+    /// Draws text with grayscale antialiasing, matching the software backend.
+    pub fn set_grayscale_text(&mut self) {
+        // SAFETY: the context is live.
+        unsafe {
+            self.context.SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        }
+    }
+
+    /// Draws one bitmap into `destination`, one pixel to one pixel.
+    pub fn draw_bitmap(&mut self, bitmap: &ID2D1Bitmap1, destination: D2D_RECT_F) -> Result<()> {
+        let bitmap: &ID2D1Bitmap = bitmap;
+        // SAFETY: the bitmap belongs to this context's device and the rectangle
+        // is a value on the stack for the duration of the call.
+        unsafe {
+            self.context.DrawBitmap(
+                bitmap,
+                Some(&destination),
+                1.0,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                None,
+                None,
+            );
+        }
+        Ok(())
     }
 
     /// Blits `pixels` (`0xAARRGGBB`, which is BGRA in memory) and presents.

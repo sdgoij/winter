@@ -5123,6 +5123,7 @@ dependencies = [
  "utils",
  "windows",
  "windows-core 0.100.0",
+ "windows-numerics",
  "windows-reactor-pre",
  "windows-sys 0.61.2",
 ]

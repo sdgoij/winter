@@ -26,7 +26,7 @@ after the behaviour is right.
 | [`crates/vt`](crates/vt) | DFA parser for VT escape sequences | Complete for Phase 3 |
 | [`crates/adapter`](crates/adapter) | Dispatch state, page manager, sixel and kitty graphics, macros | Complete for Phase 4 |
 | [`crates/term`](crates/term) | Parser-to-dispatch loop, `Terminal` façade, key and mouse encoders | Complete for Phase 5 input; Phase 8 adds focus, clamp and AltGr rules |
-| [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames; its font collection supplies the shell's faces | GPU backend deferred (ADR 007) |
+| [`crates/renderer`](crates/renderer) | Fonts, atlas, software backend, painted frames; its font collection supplies the shell's faces | The WinUI shell paints on the GPU (ADR 063); the software backend is the tested path |
 | [`crates/host`](crates/host) | Command history, input buffer, cooked read with aliases, input engine, console, screen, settings, the registry schema, key info, scrolling, selection input, console utils | Portable modules complete (Phase 6, ADR 037) |
 | [`crates/server`](crates/server) | Console API surface: shim policy, and the ConPTY/`openpty` pty layer, including a headless OpenConsole host | Complete for Phase 7 (ADRs 015, 016, 055) |
 | [`crates/settings`](crates/settings) | The TOML settings file: named profiles, keybindings, colour schemes, window themes, normalization, the default file and the migration from the earlier JSON one | Phase 10 (ADRs 022–026, 034, 035) |

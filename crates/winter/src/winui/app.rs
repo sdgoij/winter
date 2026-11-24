@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use renderer::renderer::Renderer;
 use renderer::{
-    AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontInfo, RenderSettings, Settings, SharedBackend, SoftwareBackend,
+    AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontInfo, IBackend, RenderSettings, Settings, SharedBackend,
+    SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseEvent, MouseEventKind, WheelAxis};
@@ -34,6 +35,7 @@ use crate::term_settings::TerminalSettings;
 use crate::terminal_render::TerminalData;
 use crate::view::View as ViewState;
 
+use super::gpu::GpuBackend;
 use super::icon;
 use super::menu::{self, MenuEntry};
 use super::scrollbar as bar;
@@ -108,7 +110,7 @@ struct Shell {
     /// When the settings file was last polled, so the check is once a second.
     settings_at: Instant,
     renderer: Renderer<TerminalData>,
-    shared: SharedBackend,
+    shared: Option<SharedBackend>,
     panel: ElementRef<SwapChainPanel>,
     focus: ElementRef<Border>,
     find_field: ElementRef<TextBox>,
@@ -248,10 +250,10 @@ impl Component for Shell {
         let face = face_path();
         let fonts = font_setup(&face, font_size, 1.0, grid);
         let cell = fonts.settings.font.cell_size;
-        let (renderer, shared) = renderer_for(fonts, grid);
 
         let panel = ElementRef::<SwapChainPanel>::new();
         let surface = Rc::new(RefCell::new(None::<Surface>));
+        let (renderer, shared) = renderer_for(fonts, grid, Rc::clone(&surface), &face);
         let observation = {
             let bound = panel.clone();
             let surface = Rc::clone(&surface);
@@ -774,11 +776,13 @@ impl Shell {
             (renderer.paint_frame().is_ok(), background)
         };
 
-        if painted {
-            let width = self.shared.width();
-            let height = self.shared.height();
+        // The GPU backend presents inside `paint_frame`; only the software
+        // fallback has pixels left to blit.
+        if painted && let Some(shared) = &self.shared {
+            let width = shared.width();
+            let height = shared.height();
             let surface = Rc::clone(&self.surface);
-            self.shared.with_pixels(|pixels| {
+            shared.with_pixels(|pixels| {
                 if let Some(surface) = surface.borrow_mut().as_mut() {
                     let _ = surface.present(pixels, width, height, background);
                 }
@@ -817,7 +821,7 @@ impl Shell {
     fn rebuild_face(&mut self, scale: f32) {
         let fonts = font_setup(&self.face, self.font_size, scale, self.grid);
         self.cell = fonts.settings.font.cell_size;
-        let (renderer, shared) = renderer_for(fonts, self.grid);
+        let (renderer, shared) = renderer_for(fonts, self.grid, Rc::clone(&self.surface), &self.face);
         self.renderer = renderer;
         self.shared = shared;
     }
@@ -1663,18 +1667,48 @@ struct Fonts {
     rasterizer: FontDueRasterizer,
 }
 
-/// Builds a renderer that paints a `grid` through a fresh software backend.
-fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, SharedBackend) {
-    let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(fonts.rasterizer)));
-    let mut engine = AtlasEngine::with_settings(fonts.settings, Box::new(shared.clone()));
-    engine.set_shaping(Box::new(fonts.shaper));
+/// Builds a renderer that paints a `grid`, on the GPU unless the CPU path is
+/// forced.
+fn renderer_for(
+    fonts: Fonts,
+    grid: (i32, i32),
+    surface: Rc<RefCell<Option<Surface>>>,
+    face: &Path,
+) -> (Renderer<TerminalData>, Option<SharedBackend>) {
+    let Fonts {
+        font,
+        settings,
+        shaper,
+        rasterizer,
+    } = fonts;
+
+    let (backend, shared): (Box<dyn IBackend>, Option<SharedBackend>) = if software_renderer() {
+        let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(rasterizer)));
+        (Box::new(shared.clone()), Some(shared))
+    } else {
+        (Box::new(GpuBackend::new(surface, face)), None)
+    };
+
+    let mut engine = AtlasEngine::with_settings(settings, backend);
+    engine.set_shaping(Box::new(shaper));
 
     let mut renderer = Renderer::new(
-        TerminalData::new(fonts.font, RenderSettings::new(), grid.0, grid.1),
+        TerminalData::new(font, RenderSettings::new(), grid.0, grid.1),
         RenderSettings::new(),
     );
     renderer.add_engine(Box::new(engine));
     (renderer, shared)
+}
+
+/// Whether the CPU path is forced for this process.
+///
+/// `WINTER_SOFTWARE_RENDERER=1` is the escape hatch when a machine's Direct2D
+/// behaves differently from the one the GPU backend was checked on.
+fn software_renderer() -> bool {
+    match std::env::var("WINTER_SOFTWARE_RENDERER") {
+        Ok(value) => !value.is_empty() && value != "0",
+        Err(_) => false,
+    }
 }
 
 /// Finds a monospace face and the metrics the atlas paints with at `scale`.

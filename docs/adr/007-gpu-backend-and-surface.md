@@ -1,6 +1,6 @@
 # ADR 007 — The GPU backend waits for the window surface
 
-- Status: Accepted
+- Status: Amended by ADR 063 (the WinUI pane paints on the GPU)
 - Date: 2026-11-22
 - Related: `crates/renderer/src/atlas/software.rs`, `atlas/font.rs`,
   `IBackend`; ADR 006

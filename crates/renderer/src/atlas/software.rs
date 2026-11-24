@@ -5,8 +5,10 @@
 //! [`GlyphRasterizer`]; the backend owns the layout, grid lines, cursor,
 //! selections and image blitting.
 
-use super::common::{FontId, IBackend, RenderingPayload};
-use crate::render_frame_info::GridLines;
+use super::common::{
+    FontId, IBackend, RenderingPayload, argb_from_colorref, baseline, cell_colors, cell_rect, glyph_origin,
+    grid_line_rects,
+};
 
 /// A rasterised glyph's coverage mask.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,11 +33,6 @@ pub trait GlyphRasterizer {
 
 const DEFAULT_CELL_WIDTH: u32 = 8;
 const DEFAULT_CELL_HEIGHT: u32 = 16;
-
-/// Converts a `COLORREF` (`0x00BBGGRR`) to `0xAARRGGBB`.
-const fn argb_from_colorref(color: u32) -> u32 {
-    0xFF00_0000 | ((color & 0x0000_00FF) << 16) | (color & 0x0000_FF00) | ((color & 0x00FF_0000) >> 16)
-}
 
 /// Renders the atlas payload into an in-memory pixel buffer.
 pub struct SoftwareBackend {
@@ -144,37 +141,13 @@ impl SoftwareBackend {
         *destination = 0xFF00_0000 | ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
     }
 
-    fn cell_colors(payload: &RenderingPayload, column: u16, row: u16) -> (u32, u32) {
-        let stride = payload.color_bitmap_row_stride;
-        let depth = payload.color_bitmap_depth_stride;
-        let Some(index) = (row as usize)
-            .checked_mul(stride)
-            .and_then(|base| base.checked_add(column as usize))
-        else {
-            return (0xFF00_0000, 0xFFFF_FFFF);
-        };
-        if index >= depth {
-            return (0xFF00_0000, 0xFFFF_FFFF);
-        }
-        let background = payload.color_bitmap.get(index).copied().unwrap_or(0xFF00_0000);
-        let foreground = payload.color_bitmap.get(depth + index).copied().unwrap_or(0xFFFF_FFFF);
-        (background, foreground)
-    }
-
     fn render_backgrounds(&mut self, payload: &RenderingPayload, cell_width: u32, cell_height: u32) {
         let (columns, rows) = payload.settings.viewport_cell_count;
         for row in 0..rows {
             for column in 0..columns {
-                let (background, _) = Self::cell_colors(payload, column, row);
-                let left = i32::from(column) * cell_width as i32;
-                let top = i32::from(row) * cell_height as i32;
-                self.fill_rect(
-                    left,
-                    top,
-                    left + cell_width as i32,
-                    top + cell_height as i32,
-                    background,
-                );
+                let (background, _) = cell_colors(payload, column, row);
+                let (left, top, right, bottom) = cell_rect(column, row, cell_width, cell_height);
+                self.fill_rect(left, top, right, bottom, background);
             }
         }
     }
@@ -184,21 +157,24 @@ impl SoftwareBackend {
             return;
         };
 
-        let baseline = if payload.settings.font.baseline == 0 {
-            (cell_height * 3 / 4) as i32
-        } else {
-            i32::from(payload.settings.font.baseline)
-        };
+        let baseline = baseline(payload, cell_height);
 
         for (row_index, row) in payload.rows.iter().enumerate() {
             for (glyph, &column) in row.glyph_indices.iter().zip(&row.glyph_columns) {
-                let (_, foreground) = Self::cell_colors(payload, column, row_index as u16);
+                let (_, foreground) = cell_colors(payload, column, row_index as u16);
                 let Some(bitmap) = rasterizer.rasterize(FontId(0), *glyph) else {
                     continue;
                 };
 
-                let origin_x = i32::from(column) * cell_width as i32 + bitmap.left;
-                let origin_y = row_index as i32 * cell_height as i32 + baseline + bitmap.top;
+                let (origin_x, origin_y) = glyph_origin(
+                    column,
+                    row_index as u16,
+                    cell_width,
+                    cell_height,
+                    baseline,
+                    bitmap.left,
+                    bitmap.top,
+                );
 
                 for y in 0..bitmap.height {
                     for x in 0..bitmap.width {
@@ -217,49 +193,9 @@ impl SoftwareBackend {
     }
 
     fn render_grid_lines(&mut self, payload: &RenderingPayload, cell_width: u32, cell_height: u32) {
-        for (row_index, row) in payload.rows.iter().enumerate() {
-            let top = row_index as i32 * cell_height as i32;
-            let bottom = top + cell_height as i32 - 1;
-            let underline = bottom - 1;
-            let middle = top + cell_height as i32 / 2;
-
-            for range in &row.grid_line_ranges {
-                let left = i32::from(range.from) * cell_width as i32;
-                let right = i32::from(range.to) * cell_width as i32;
-                if left >= right {
-                    continue;
-                }
-
-                let (_, foreground) = Self::cell_colors(payload, range.from, row_index as u16);
-                if range.lines.contains(GridLines::Top) {
-                    self.fill_rect(left, top, right, top + 1, foreground);
-                }
-                if range.lines.contains(GridLines::Bottom) {
-                    self.fill_rect(left, bottom, right, bottom + 1, foreground);
-                }
-                if range.lines.contains(GridLines::Strikethrough) {
-                    self.fill_rect(left, middle, right, middle + 1, foreground);
-                }
-                if range.lines.contains(GridLines::Underline)
-                    || range.lines.contains(GridLines::DoubleUnderline)
-                    || range.lines.contains(GridLines::CurlyUnderline)
-                    || range.lines.contains(GridLines::DottedUnderline)
-                    || range.lines.contains(GridLines::DashedUnderline)
-                    || range.lines.contains(GridLines::HyperlinkUnderline)
-                {
-                    self.fill_rect(left, underline, right, underline + 1, foreground);
-                }
-
-                for column in range.from..range.to {
-                    let cell_left = i32::from(column) * cell_width as i32;
-                    let cell_right = cell_left + cell_width as i32;
-                    if range.lines.contains(GridLines::Left) {
-                        self.fill_rect(cell_left, top, cell_left + 1, bottom + 1, foreground);
-                    }
-                    if range.lines.contains(GridLines::Right) {
-                        self.fill_rect(cell_right - 1, top, cell_right, bottom + 1, foreground);
-                    }
-                }
+        for row_index in 0..payload.rows.len() as u16 {
+            for rect in grid_line_rects(payload, row_index, cell_width, cell_height) {
+                self.fill_rect(rect.left, rect.top, rect.right, rect.bottom, rect.color);
             }
         }
     }
@@ -364,7 +300,7 @@ mod tests {
     use super::*;
     use crate::atlas::common::CursorSettings;
     use crate::atlas::common::{Bitmap, FontSettings, GridLineRange, MiscellaneousSettings, Settings, ShapedRow};
-    use crate::render_frame_info::GridLineSet;
+    use crate::render_frame_info::{GridLineSet, GridLines};
 
     /// A rasteriser that fills its whole glyph with coverage.
     struct SolidRasterizer;
