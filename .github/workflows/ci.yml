@@ -49,7 +49,7 @@ jobs:
       # the toolchain CI uses; there is no second version to keep in sync.
       - name: Install the pinned toolchain
         run: rustup show
-      # The Linux gate builds the GTK 4 shell (ADR 074), which needs the
+      # The Linux gate builds the GTK 4 shell (ADR 075), which needs the
       # toolkit's development headers; the other hosts use their own.
       - name: Install GTK 4 headers
         if: runner.os == 'Linux'
@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'macOS'
         run: just app
       # The gate builds the GTK shell on Linux; the egui fallback is built
-      # separately so it cannot rot (ADR 074).
+      # separately so it cannot rot (ADR 075).
       - name: Check the egui fallback
         if: runner.os == 'Linux'
         run: cargo check -p winter --no-default-features
@@ -170,7 +170,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libgtk-4-dev
       # `scripts/package.sh` builds the Linux AppImage only when it has a tool
-      # (ADR 077), so the tag job supplies one. The tool is itself an AppImage
+      # (ADR 078), so the tag job supplies one. The tool is itself an AppImage
       # and runs extracted, because a hosted runner has no FUSE.
       - name: Install appimagetool
         if: runner.os == 'Linux'

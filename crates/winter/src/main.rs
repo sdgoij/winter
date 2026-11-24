@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         winter::macos::run()?;
     }
-    // The GTK shell is the Linux shell (ADR 074). `--no-default-features`
+    // The GTK shell is the Linux shell (ADR 075). `--no-default-features`
     // leaves it out and the egui shell below runs instead.
     #[cfg(all(target_os = "linux", feature = "gtk"))]
     {

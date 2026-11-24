@@ -23,10 +23,10 @@ presented through a `CAMetalLayer` drawable, with the offscreen readback drawn
 only for a screenshot or when the layer has no drawable (ADR 073). On Linux
 it is a native GTK 4 shell — the window, profile menu, find bar and settings
 editor are the platform's, while the tab strip, scrollbar and grid stay
-`renderer`'s pixels (ADR 074), with pointer selection and drag scrolling,
+`renderer`'s pixels (ADR 075), with pointer selection and drag scrolling,
 copy/paste, scrollback with prompt marks, tab reordering, input-method
 composition, a bell flash, notifications and an accessibility value; the grid
-is drawn on the GPU through GTK's OpenGL context (ADR 075), and egui remains
+is drawn on the GPU through GTK's OpenGL context (ADR 076), and egui remains
 the `--no-default-features` fallback (ADR 018).
 
 | Crate | What it is | State |
@@ -211,8 +211,8 @@ work.
 
 On Linux the archive is an app rather than a bare binary: `winter`, a desktop
 entry, the generated icon and `install.sh`, which installs them for the current
-user and needs no root (ADR 076). A tag release also attaches an AppImage — the
-same app as one executable file with no install step (ADR 077).
+user and needs no root (ADR 077). A tag release also attaches an AppImage — the
+same app as one executable file with no install step (ADR 078).
 
 ```sh
 just package
@@ -246,7 +246,7 @@ cargo run -p winter
 `--no-default-features` builds the egui shell instead, which needs no GTK
 headers and is the fallback if the toolkit is unavailable.
 
-The pane draws through GTK's OpenGL context when the host has one (ADR 075);
+The pane draws through GTK's OpenGL context when the host has one (ADR 076);
 `WINTER_SOFTWARE=1` forces the CPU blit. A capture includes the GL area, so
 `WINTER_SCREENSHOT` is the same either way.
 

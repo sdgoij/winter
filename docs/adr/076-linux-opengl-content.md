@@ -1,13 +1,13 @@
-# ADR 075 — The Linux content path is OpenGL, with a software fallback
+# ADR 076 — The Linux content path is OpenGL, with a software fallback
 
 - Status: Accepted
 - Date: 2026-11-24
 - Related: `crates/winter/src/linux/gl.rs`, `crates/winter/Cargo.toml`,
-  `crates/renderer/src/atlas/`; ADRs 007, 063, 073, 074
+  `crates/renderer/src/atlas/`; ADRs 007, 063, 073, 075
 
 ## Context
 
-ADR 074's GTK shell rasterised the terminal on the CPU and copied the software
+ADR 075's GTK shell rasterised the terminal on the CPU and copied the software
 backend's frame into a Cairo surface every frame. That is the first cut WinUI
 shipped (ADR 041) and macOS replaced with Metal (ADR 073); ADR 063 gave Windows
 Direct2D. The seam is the same on every platform: `renderer::IBackend`, whose

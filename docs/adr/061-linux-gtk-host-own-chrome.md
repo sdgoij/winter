@@ -1,6 +1,6 @@
 # ADR 061 — The Linux shell is GTK 4 for the host, our renderer for the chrome
 
-- Status: Amended by ADR 062 (parked); resumed by ADR 074
+- Status: Amended by ADR 062 (parked); resumed by ADR 075
 - Date: 2026-11-23
 - Related: `crates/winter/src/linux/`, `crates/renderer`, `docs/linux-shell-scope.md`, ADRs 018, 038, 040, 041, 043, 051
 

@@ -1,4 +1,4 @@
-# ADR 074 — The Linux shell is GTK 4, built by the gate
+# ADR 075 — The Linux shell is GTK 4, built by the gate
 
 - Status: Accepted
 - Date: 2026-11-24

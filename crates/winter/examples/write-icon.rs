@@ -3,7 +3,7 @@
 //! `just package` puts this file beside the binary as the desktop entry's
 //! icon. It is generated rather than committed, so the tree keeps no binary
 //! asset and the menu's icon cannot drift from the one the window shows
-//! (ADRs 058, 076).
+//! (ADRs 058, 077).
 //!
 //!     cargo run -p winter --example write-icon -- <path/to/winter.png>
 

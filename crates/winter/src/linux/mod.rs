@@ -3,7 +3,7 @@
 //! A `GtkHeaderBar` holds the tab strip, which this module paints itself; below
 //! it a base `GtkDrawingArea` paints the pane's fill, scrollbar and margins, and
 //! a `GtkGLArea` inset by those margins draws the grid through GTK's OpenGL
-//! context (ADR 075), with the software blit as the fallback. The terminal is
+//! context (ADR 076), with the software blit as the fallback. The terminal is
 //! the shared `Control` over a pty, and every tab keeps draining while it is in
 //! the background. Keys go through the shared `input` rules, the wheel scrolls
 //! history unless a tracking program owns it, and a chord the settings file
@@ -115,7 +115,7 @@ fn activate(app: &Application) {
     let bindings = document.keybindings.clone().into();
 
     let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(Box::new(fonts.rasterizer)));
-    // The GPU path is the default when this host has GL (ADR 075); the
+    // The GPU path is the default when this host has GL (ADR 076); the
     // software backend remains built because it is the fallback and the
     // screenshot blit.
     let gpu = if std::env::var_os("WINTER_SOFTWARE").is_some() {
@@ -177,7 +177,7 @@ fn activate(app: &Application) {
     area.set_hexpand(true);
 
     // The find bar is GTK's own: a native search entry that reveals over the
-    // pane, so Escape and the match keys are the desktop's (ADR 074).
+    // pane, so Escape and the match keys are the desktop's (ADR 075).
     let search_entry = gtk::SearchEntry::new();
     search_entry.set_placeholder_text(Some("Find"));
     search_entry.set_hexpand(true);
@@ -196,7 +196,7 @@ fn activate(app: &Application) {
     // The pane is the base widget; the GL area sits above it, inset by the left
     // pane margin and the scrollbar's gutter, so its framebuffer is exactly the
     // grid. The base widget paints the margins, the scrollbar and the bell's
-    // background; the GL area paints the cells (ADR 075).
+    // background; the GL area paints the cells (ADR 076).
     let gl_area = gtk::GLArea::new();
     gl_area.set_hexpand(true);
     gl_area.set_vexpand(true);
@@ -327,7 +327,7 @@ fn activate(app: &Application) {
 
     // The input method goes first on every key: it turns a composition into a
     // commit and reports the marked text, and a key it consumed must not also
-    // reach the encoder (ADR 074).
+    // reach the encoder (ADR 075).
     let im = gtk::IMMulticontext::new();
     im.set_client_widget(Some(&area));
     {
@@ -1831,7 +1831,7 @@ impl Shell {
     /// A full `GtkAccessibleText` needs a custom widget class, which this shell
     /// does not own yet, so the screen is the pane's description: a screen
     /// reader can read the terminal even though it cannot address a cell. The
-    /// remaining gap is named in ADR 074.
+    /// remaining gap is named in ADR 075.
     fn announce_text(&mut self) {
         let text = self.renderer.data().visible_text();
         if text.is_empty() || text == self.accessible_text {
@@ -2480,7 +2480,7 @@ fn paste_from_clipboard(shell: &Rc<RefCell<Shell>>) {
 ///
 /// Saving parses the text with the same reader startup uses and writes it
 /// through `settings::save`, so what is in force is always the normalized file
-/// (ADR 030's rule; ADR 074 records why the document is the editor).
+/// (ADR 030's rule; ADR 075 records why the document is the editor).
 fn open_settings_window(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) -> gtk::Window {
     let mut builder = gtk::Window::builder()
         .title("Winter Settings")

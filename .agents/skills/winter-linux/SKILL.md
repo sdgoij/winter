@@ -6,7 +6,7 @@ description: Build, run, live-check and package the GTK 4 shell in crates/winter
 # The Linux shell
 
 `crates/winter/src/linux/mod.rs` is the Linux shell; `main.rs` chooses it when
-the `gtk` feature is on, which it is by default (ADR 074). GTK owns the window,
+the `gtk` feature is on, which it is by default (ADR 075). GTK owns the window,
 the profile menu, the find bar and the settings editor; the tab strip, scrollbar
 and grid are our pixels, the split ADR 061 takes. `winui`, `macos` and this
 module share `input`, `view`, `tabs`, `term_control`, `session`, `find`,
@@ -22,7 +22,7 @@ One module owns:
 | entry | `run()`, the window, the `GtkWindowHandle` title bar |
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
 | pane | the base `DrawingArea`: pane fill, scrollbar, marks, and the input controllers over the GL area |
-| gl | the OpenGL content path (ADR 075): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
+| gl | the OpenGL content path (ADR 076): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
 | settings | a `GtkTextView` over the TOML document; Save/Revert/Close |
@@ -50,7 +50,7 @@ The grid is drawn through GTK's OpenGL context when libGL/libEGL exists;
 
 `just package` builds the release and writes `dist/winter-<version>-<target>`
 with the binary, `org.winter.Winter.desktop`, `winter.png` and `install.sh`
-(ADR 076). Windows and macOS keep their own archives; only Linux gets the app
+(ADR 077). Windows and macOS keep their own archives; only Linux gets the app
 tree.
 
 ```sh
@@ -78,7 +78,7 @@ setsid dbus-run-session -- env DISPLAY=:98 GDK_BACKEND=x11 \
 ### The AppImage
 
 The same run also builds `dist/winter-<version>-<target>.AppImage` from the
-staged tree, when it has a tool (ADR 077). Without one it prints a line and
+staged tree, when it has a tool (ADR 078). Without one it prints a line and
 still writes the tarball:
 
 ```sh
@@ -244,12 +244,12 @@ a neighbour's midpoint.
 ## Do not
 
 - Add `unsafe` outside `linux::gl`: gtk-rs is safe, and the GL loader's
-  exemption is the only one the shell names (ADR 075).
+  exemption is the only one the shell names (ADR 076).
 - Add a second renderer, pty pump or timer. The connection is not `Send`; the
   timer polls every pty on the UI thread.
 - Put GTK in a shared module, or Linux logic in `input`, `view`, `tabs`,
   `find` or `scrollbar`.
 - Claim the accessibility tree is complete: the pane exposes the visible screen
-  as its description, not a cell-addressable `GtkAccessibleText` (ADR 074).
+  as its description, not a cell-addressable `GtkAccessibleText` (ADR 075).
 - Claim Linux has sound: ADR 033 stands, and only the bell flash and
   notifications are implemented.

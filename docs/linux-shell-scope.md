@@ -1,10 +1,10 @@
 # A native Linux shell — scope
 
-Status: shipping — ADR 074. The GTK 4 shell is the Linux shell; the egui shell
+Status: shipping — ADR 075. The GTK 4 shell is the Linux shell; the egui shell
 is the `--no-default-features` fallback. What remains is named under
 [Remaining gaps](#remaining-gaps): primary selection, a cell-addressable
 accessibility tree, tab program icons and a sound sink.
-Related: ADR 074 (the shipping decision), ADR 062 (the parking it supersedes),
+Related: ADR 075 (the shipping decision), ADR 062 (the parking it supersedes),
 ADR 061 (the GTK decision it amends), ADR 018 (the egui shell), ADR 038 (crate
 split), ADRs 040–053 (the WinUI shell this mirrors),
 `crates/winter/src/linux/`.
@@ -31,7 +31,7 @@ primary selection and IME.
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
 | 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
 | 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
-| 7. Cut-over | ✅ `gtk` is a default feature (ADR 074), CI installs `libgtk-4-dev`, and `--no-default-features` keeps egui |
+| 7. Cut-over | ✅ `gtk` is a default feature (ADR 075), CI installs `libgtk-4-dev`, and `--no-default-features` keeps egui |
 
 `cargo run -p winter` builds the GTK shell on Linux; `--no-default-features`
 builds the egui one, which needs no GTK headers. `just linux` runs the GTK
@@ -108,7 +108,7 @@ One module, `crates/winter/src/linux/mod.rs`, chosen in `main.rs` the way
 | entry | `run()`, the `gtk::Application`, the window and the `GtkWindowHandle` title bar |
 | strip | the tab strip's layout, hit testing, painting and drag-reorder over `crate::tabs` |
 | pane | the base `DrawingArea`: the pane fill, the scrollbar with prompt marks and the input controllers over the GL area |
-| gl | the OpenGL content path (ADR 075): one `GtkGLArea` above the pane, the two pipelines, the glyph atlas, image textures, and the software fallback |
+| gl | the OpenGL content path (ADR 076): one `GtkGLArea` above the pane, the two pipelines, the glyph atlas, image textures, and the software fallback |
 | input | `EventControllerKey`, the `IMContext`, `GestureClick`, `GestureDrag`, the scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
 | settings | a `GtkTextView` over the whole TOML document, beside the profile `GtkPopoverMenu` |
@@ -249,12 +249,12 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
    caret, the screen as the pane's accessible description, the bell flash and
    OSC 777 notifications. ⏳ Primary selection.
-7. **Cut-over.** ✅ Taken by ADR 074: `gtk` is the Linux default, the gate
+7. **Cut-over.** ✅ Taken by ADR 075: `gtk` is the Linux default, the gate
    installs the headers and builds it, and egui remains the
    `--no-default-features` fallback.
-8. **Package.** ✅ Taken by ADR 076: the Linux archive is an app tree — the
+8. **Package.** ✅ Taken by ADR 077: the Linux archive is an app tree — the
    binary, a desktop entry named after the application id, the generated icon
-   and a rootless installer for `~/.local` — and by ADR 077: the tag job also
+   and a rootless installer for `~/.local` — and by ADR 078: the tag job also
    builds an AppImage from the same tree.
 
 ## Remaining gaps
@@ -280,7 +280,7 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 
 ## Open questions
 
-ADR 074 settles the fallback: egui stays built by `--no-default-features`, so a
+ADR 075 settles the fallback: egui stays built by `--no-default-features`, so a
 GTK problem always has a working shell to fall back to.
 
 - Should the settings window be the native document editor only, or also stay

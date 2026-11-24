@@ -64,7 +64,7 @@ just test-long  # release mode, the ignored cases included
   `Full tests` job on every push, and `package` waits for it; run it locally
   when touching a crate that has an ignored case.
 
-On Linux the gate builds the GTK shell (ADR 074), so it needs GTK 4.10
+On Linux the gate builds the GTK shell (ADR 075), so it needs GTK 4.10
 development headers: `libgtk-4-dev` on Debian/Ubuntu, `gtk4-devel` on Fedora.
 `--no-default-features` builds the egui fallback and needs none.
 
@@ -177,7 +177,7 @@ tests pass.
   (ADRs 041, 047, 058, 066), and `macos` declares one allowance for the AppKit
   and Metal boundary — its window, menu, bitmap, layer and device calls (ADRs
   072, 073); `linux::gl` declares one for resolving libGL/libEGL's entry points
-  and the OpenGL calls over GTK's context (ADR 075). The two
+  and the OpenGL calls over GTK's context (ADR 076). The two
   self-referential buffer iterators carry an
   item-level `#[allow(unsafe_code)]` and a `SAFETY:` note. New `unsafe`
   anywhere is a review event.
@@ -219,8 +219,8 @@ Do not add call sites under an allowance.
 | `crates/server` | The console API surface: shim policy, and the pty layer (`unsafe` confined to its backends, ADR 016), with a headless OpenConsole host so image sequences reach the terminal (ADR 055) |
 | `crates/settings` | The TOML settings file: profiles, keybindings, schemes, themes, normalization, migration |
 | `crates/audio` | The bell and DECPS tones, computed without a device (ADR 033) |
-| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 074, with egui as the `--no-default-features` fallback) and its OpenGL content path (ADR 075), `winui/` on Windows, and `macos/` on macOS |
-| `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 076) |
+| `crates/winter` | The application: the GTK 4 shell on Linux (ADR 075, with egui as the `--no-default-features` fallback) and its OpenGL content path (ADR 076), `winui/` on Windows, and `macos/` on macOS |
+| `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 077) |
 
 ## Where the port stands
 

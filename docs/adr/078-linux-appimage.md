@@ -1,13 +1,13 @@
-# ADR 077 — The Linux release also ships an AppImage
+# ADR 078 — The Linux release also ships an AppImage
 
 - Status: Accepted
 - Date: 2026-11-24
 - Related: `scripts/package.sh`, `packaging/linux/AppRun`,
-  `.github/workflows/ci.yml`; ADRs 055, 074, 076
+  `.github/workflows/ci.yml`; ADRs 055, 074, 077
 
 ## Context
 
-ADR 076 turned the Linux archive into an app tree with a rootless installer.
+ADR 077 turned the Linux archive into an app tree with a rootless installer.
 That still asks a user to extract a tarball and run a script, and it leaves the
 files spread across `~/.local`. The macOS answer is one bundle a user runs; the
 Linux answer with the same property is an AppImage: one executable file with the
@@ -47,7 +47,7 @@ be assembled from the same generated icon and desktop entry the tarball carries.
 - **It is the closest thing Linux has to the macOS bundle.** One file that runs
   from anywhere, with the entry and the icon inside.
 - **Nothing new is invented.** The entry, the icon and the application id are
-  ADR 076's; an AppImage adds a layout and a launcher script.
+  ADR 077's; an AppImage adds a layout and a launcher script.
 - **The release stays honest.** With no tool the archive is still produced, and
   the log says why the image is not; the tag job is the only place that has to
   provide one.

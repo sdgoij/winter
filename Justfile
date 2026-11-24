@@ -58,7 +58,7 @@ gate: fmt clippy deny test doc
 # The inner loop. Not the gate.
 fast: fmt clippy test
 
-# Run the Linux shell (ADR 074); on Windows name the WSL distro: `just linux <distro>`.
+# Run the Linux shell (ADR 075); on Windows name the WSL distro: `just linux <distro>`.
 linux *args:
     sh scripts/linux.sh {{args}}
 
@@ -83,7 +83,7 @@ dist:
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/console-host.ps1 -Destination dist
 
 # Build and package this platform's release archive into `dist/`. On Linux the
-# archive is an app tree with a desktop entry and an installer (ADR 076).
+# archive is an app tree with a desktop entry and an installer (ADR 077).
 package:
     sh scripts/package.sh
 

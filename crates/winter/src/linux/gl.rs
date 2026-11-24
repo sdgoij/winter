@@ -10,7 +10,7 @@
 //! GTK makes the pane's `GdkGLContext` current in `GtkGLArea::render`, which is
 //! where the engine's frame is drawn; a frame therefore costs no CPU blit and
 //! no texture copy. The software path stays the fallback when this host has no
-//! GL, or when `WINTER_SOFTWARE=1` asks for it (ADR 075).
+//! GL, or when `WINTER_SOFTWARE=1` asks for it (ADR 076).
 //!
 //! `unsafe` is confined to this module by the allow below: loading libGL/libEGL
 //! and resolving the context's entry points is FFI, and glow's calls are

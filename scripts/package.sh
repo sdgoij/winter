@@ -23,8 +23,8 @@
 # `WINTER_TARGET=<target>` packages one target instead of the default set.
 #
 # Linux ships an app rather than a bare binary -- a desktop entry, the icon the
-# binary draws and an installer that needs no root (ADR 076) -- and, when a tool
-# is available, an AppImage of the same tree (ADR 077).
+# binary draws and an installer that needs no root (ADR 077) -- and, when a tool
+# is available, an AppImage of the same tree (ADR 078).
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -113,7 +113,7 @@ PLIST
     fi
 }
 
-# The AppImage wraps the staged tree (ADR 077). It needs `appimagetool`, which
+# The AppImage wraps the staged tree (ADR 078). It needs `appimagetool`, which
 # the tag job downloads; without one the tarball is still the release, so this
 # says why and carries on.
 build_image() {
@@ -227,7 +227,7 @@ for target in $targets; do
     Linux)
         # The archive is an app, not a bare binary: launching it from the menu
         # is what the other two platforms' shells get from their packaging
-        # (ADR 076).
+        # (ADR 077).
         cp "$binary" "$stage/winter"
         cp LICENSE.md "$stage/LICENSE.md"
         cp README.md "$stage/README.md"
@@ -235,7 +235,7 @@ for target in $targets; do
         chmod +x "$stage/install.sh"
         cp packaging/linux/org.winter.Winter.desktop "$stage/org.winter.Winter.desktop"
         # The icon is drawn rather than committed, so the menu's icon and the
-        # window's cannot drift (ADRs 058, 076).
+        # window's cannot drift (ADRs 058, 077).
         cargo run --quiet --release -p winter --example write-icon -- "$stage/winter.png"
         # The entry is what a user clicks; a typo in it is a broken install.
         if command -v desktop-file-validate >/dev/null 2>&1; then

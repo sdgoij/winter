@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the Linux shell (ADRs 061, 074): the GTK 4 shell by default, or the egui
+# Runs the Linux shell (ADRs 061, 075): the GTK 4 shell by default, or the egui
 # fallback with `--no-default-features`.
 #
 #   just linux                          # on Linux: this machine's build

@@ -1,10 +1,10 @@
-# ADR 076 — The Linux package is a desktop-integrated app, not a bare binary
+# ADR 077 — The Linux package is a desktop-integrated app, not a bare binary
 
 - Status: Accepted
 - Date: 2026-11-24
 - Related: `scripts/package.sh`, `packaging/linux/`,
   `crates/winter/examples/write-icon.rs`, `crates/winter/src/icon_draw.rs`;
-  ADRs 055, 058, 074, 075, 077
+  ADRs 055, 058, 075, 076, 078
 
 ## Context
 
@@ -15,7 +15,7 @@ packaged shell that is enough: Windows puts `winter.exe` on a Start-menu tile
 through its own installer, and macOS users are used to launching a binary from a
 tarball or a shell.
 
-Linux is different. The shell (ADR 074) is a GTK application whose only surface
+Linux is different. The shell (ADR 075) is a GTK application whose only surface
 is a window, and a bare ELF in a tarball gives the user nothing to click: no
 application-menu entry, no icon in the dock, no install location. `docs/plan.md`
 has carried "Linux packaging (AppImage, Flatpak, deb)" as unstarted work.
@@ -53,7 +53,7 @@ app-packaging tooling.
    `desktop-file-validate` on the staged file if the host has it; a typo in the
    entry is a broken install, and packaging is the last place to catch one.
 7. **The tree is the substrate other formats consume.** An AppImage is built
-   from it when a packaging tool is available (ADR 077); Flatpak and a deb stay
+   from it when a packaging tool is available (ADR 078); Flatpak and a deb stay
    in the plan, because each needs tooling the runners do not carry.
 
 ## Rationale
@@ -83,7 +83,7 @@ Negative:
 
 - **System GTK is the dependency.** The archive bundles neither GTK nor its
   themes; a host without GTK 4.10 runs nothing. Bundling is what a Flatpak
-  runtime would add, and the AppImage of ADR 077 inherits the same gap.
+  runtime would add, and the AppImage of ADR 078 inherits the same gap.
 - **The application id now names a file.** Changing it must move
   `org.winter.Winter.desktop` with it, or Wayland stops grouping the window
   under the entry.
@@ -97,7 +97,7 @@ Negative:
 
 | Alternative | Why not |
 |---|---|
-| An AppImage in `just package` | Adopted by ADR 077, conditionally: the image needs a downloaded tool, so the script builds it only when `APPIMAGETOOL` or `PATH` provides one |
+| An AppImage in `just package` | Adopted by ADR 078, conditionally: the image needs a downloaded tool, so the script builds it only when `APPIMAGETOOL` or `PATH` provides one |
 | A `.deb` | Distribution- and version-specific, needs `dpkg-deb` and a Maintainer field, and CI packages two architectures of one distribution, not the distro family users run |
 | A Flatpak manifest | Needs `flatpak-builder`, a runtime and a repository to publish to |
 | Ship the icon as a committed PNG | Violates ADR 058's rule and puts the only unreadable file in the tree |
