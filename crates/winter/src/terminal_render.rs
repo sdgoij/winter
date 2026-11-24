@@ -126,6 +126,22 @@ impl TerminalData {
         self.marks = screen.marks;
     }
 
+    /// How many rows the document holds, history included.
+    pub const fn document_height(&self) -> i32 {
+        self.document_height
+    }
+
+    /// The prompt marks the scrollbar draws.
+    pub fn marks(&self) -> &[grid::MarkTick] {
+        &self.marks
+    }
+}
+
+/// The macOS shell's view of a frame: the input method's composition, the
+/// candidate window's anchor and the accessibility value. The other shells do
+/// not present either, and the rules are still tested on every host.
+#[cfg(any(target_os = "macos", test))]
+impl TerminalData {
     /// Places the input method's marked text at the cursor.
     ///
     /// The renderer draws the preview on the row named by
@@ -162,16 +178,6 @@ impl TerminalData {
             text.push('\n');
         }
         text.trim_end().to_string()
-    }
-
-    /// How many rows the document holds, history included.
-    pub const fn document_height(&self) -> i32 {
-        self.document_height
-    }
-
-    /// The prompt marks the scrollbar draws.
-    pub fn marks(&self) -> &[grid::MarkTick] {
-        &self.marks
     }
 }
 
