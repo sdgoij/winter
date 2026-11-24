@@ -254,7 +254,8 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    `--no-default-features` fallback.
 8. **Package.** ✅ Taken by ADR 076: the Linux archive is an app tree — the
    binary, a desktop entry named after the application id, the generated icon
-   and a rootless installer for `~/.local`.
+   and a rootless installer for `~/.local` — and by ADR 077: the tag job also
+   builds an AppImage from the same tree.
 
 ## Remaining gaps
 

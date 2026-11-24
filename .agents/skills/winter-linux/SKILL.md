@@ -75,6 +75,26 @@ setsid dbus-run-session -- env DISPLAY=:98 GDK_BACKEND=x11 \
 `install.sh --uninstall` should leave nothing behind but the regenerated
 `mimeinfo.cache`.
 
+### The AppImage
+
+The same run also builds `dist/winter-<version>-<target>.AppImage` from the
+staged tree, when it has a tool (ADR 077). Without one it prints a line and
+still writes the tarball:
+
+```sh
+curl -fsSL -o /tmp/appimagetool \
+  https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+chmod +x /tmp/appimagetool
+APPIMAGETOOL=/tmp/appimagetool just package
+
+APPIMAGE_EXTRACT_AND_RUN=1 WINTER_SCREENSHOT=/tmp/image.png \
+  ./dist/winter-*-linux-gnu.AppImage
+```
+
+The image needs the host's GTK like the tarball does — it bundles no toolkit —
+and its `WINTER_SCREENSHOT` is identical to the binary's from the same build,
+which is the check that the AppDir's `AppRun` reached the real shell.
+
 ## Live check
 
 The shell photographs itself, so no display server is needed. A headless weston
@@ -213,6 +233,13 @@ a neighbour's midpoint.
   `dbus-run-session` closes the session bus underneath the new process, which
   then exits after a run of `Cannot list activatable names` warnings; the
   Package section keeps the session alive with `sh -c 'gtk-launch … & sleep'`.
+- **`appimagetool` is an AppImage itself.** Run it with
+  `APPIMAGE_EXTRACT_AND_RUN=1` where FUSE is missing — a CI runner, or a
+  container — and pass `ARCH=$(uname -m)`, or the image is labelled with the
+  host's architecture instead of the build's.
+- **An AppDir carries the entry and the icon twice.** `appimagetool` reads the
+  desktop file and the icon at the AppDir's root; the copies under
+  `usr/share` are what the mounted image's menu entry resolves through.
 
 ## Do not
 

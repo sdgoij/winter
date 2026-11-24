@@ -1,0 +1,5 @@
+#!/bin/sh
+# The AppImage's entry point: the runtime executes this from the mounted image,
+# so it hands over to the binary beside it instead of to a fixed prefix.
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/usr/bin/winter" "$@"

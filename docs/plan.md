@@ -1680,7 +1680,8 @@ every platform" is the gate.
 - [ ] `winter/crates/winter/src/windows` — Windows installer (MSI/NSIS)
 - [x] `packaging/linux` — Linux packaging: the release archive is an app tree
   (desktop entry, generated icon, per-user installer) (ADR 076)
-- [ ] Linux packaging: AppImage, Flatpak and deb on top of that tree
+- [x] Linux packaging: an AppImage built by the tag job from that tree (ADR 077)
+- [ ] Linux packaging: Flatpak and deb on top of that tree
 - [ ] `winter/crates/winter/src/macos` — macOS packaging: the `Winter.app`
   bundle ships (ADR 074); a dmg and notarization remain
 - [ ] `winter/crates/winter/src/docs` — Documentation and user guide

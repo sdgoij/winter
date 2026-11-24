@@ -4,7 +4,7 @@
 - Date: 2026-11-24
 - Related: `scripts/package.sh`, `packaging/linux/`,
   `crates/winter/examples/write-icon.rs`, `crates/winter/src/icon_draw.rs`;
-  ADRs 055, 058, 074, 075
+  ADRs 055, 058, 074, 075, 077
 
 ## Context
 
@@ -52,9 +52,9 @@ app-packaging tooling.
 6. **The entry is validated when a validator exists.** `just package` runs
    `desktop-file-validate` on the staged file if the host has it; a typo in the
    entry is a broken install, and packaging is the last place to catch one.
-7. **AppImage, Flatpak and a deb stay in the plan.** This tree is the substrate
-   all three consume — `usr/bin`, `usr/share/applications`,
-   `usr/share/icons/hicolor` — and each needs tooling the runners do not carry.
+7. **The tree is the substrate other formats consume.** An AppImage is built
+   from it when a packaging tool is available (ADR 077); Flatpak and a deb stay
+   in the plan, because each needs tooling the runners do not carry.
 
 ## Rationale
 
@@ -82,8 +82,8 @@ Positive:
 Negative:
 
 - **System GTK is the dependency.** The archive bundles neither GTK nor its
-  themes; a host without GTK 4.10 runs nothing. Bundling is what an AppImage
-  would add.
+  themes; a host without GTK 4.10 runs nothing. Bundling is what a Flatpak
+  runtime would add, and the AppImage of ADR 077 inherits the same gap.
 - **The application id now names a file.** Changing it must move
   `org.winter.Winter.desktop` with it, or Wayland stops grouping the window
   under the entry.
@@ -97,7 +97,7 @@ Negative:
 
 | Alternative | Why not |
 |---|---|
-| An AppImage in `just package` | The AppImage runtime is a downloaded binary, and a GTK app needs host libraries or a bundled runtime; the runners carry neither the tool nor network access at that step |
+| An AppImage in `just package` | Adopted by ADR 077, conditionally: the image needs a downloaded tool, so the script builds it only when `APPIMAGETOOL` or `PATH` provides one |
 | A `.deb` | Distribution- and version-specific, needs `dpkg-deb` and a Maintainer field, and CI packages two architectures of one distribution, not the distro family users run |
 | A Flatpak manifest | Needs `flatpak-builder`, a runtime and a repository to publish to |
 | Ship the icon as a committed PNG | Violates ADR 058's rule and puts the only unreadable file in the tree |

@@ -23,7 +23,8 @@
 # `WINTER_TARGET=<target>` packages one target instead of the default set.
 #
 # Linux ships an app rather than a bare binary -- a desktop entry, the icon the
-# binary draws and an installer that needs no root (ADR 076).
+# binary draws and an installer that needs no root (ADR 076) -- and, when a tool
+# is available, an AppImage of the same tree (ADR 077).
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -110,6 +111,45 @@ PLIST
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "$app" >/dev/null 2>&1 || true
     fi
+}
+
+# The AppImage wraps the staged tree (ADR 077). It needs `appimagetool`, which
+# the tag job downloads; without one the tarball is still the release, so this
+# says why and carries on.
+build_image() {
+    image_stage=$1
+    image_name=$2
+    tool=${APPIMAGETOOL:-}
+    if [ -z "$tool" ] && command -v appimagetool >/dev/null 2>&1; then
+        tool=appimagetool
+    fi
+    if [ -z "$tool" ]; then
+        echo "package: no appimagetool, so no AppImage (set APPIMAGETOOL to one)" >&2
+        return 0
+    fi
+
+    appdir="$root/dist/$image_name.AppDir"
+    rm -rf "$appdir"
+    mkdir -p "$appdir/usr/bin" \
+        "$appdir/usr/share/applications" \
+        "$appdir/usr/share/icons/hicolor/256x256/apps" \
+        "$appdir/usr/share/doc/$image_name"
+    cp "$image_stage/winter" "$appdir/usr/bin/winter"
+    # The entry and the icon sit at the AppDir's root as well as in the theme,
+    # which is where the runtime looks for them.
+    cp "$image_stage/org.winter.Winter.desktop" "$appdir/usr/share/applications/"
+    cp "$image_stage/org.winter.Winter.desktop" "$appdir/"
+    cp "$image_stage/winter.png" "$appdir/usr/share/icons/hicolor/256x256/apps/"
+    cp "$image_stage/winter.png" "$appdir/"
+    cp "$image_stage/LICENSE.md" "$image_stage/README.md" "$appdir/usr/share/doc/$image_name/"
+    cp packaging/linux/AppRun "$appdir/AppRun"
+    chmod +x "$appdir/AppRun"
+
+    # The tool is itself an AppImage; `APPIMAGE_EXTRACT_AND_RUN` runs it where
+    # FUSE is missing, which is what a hosted runner is.
+    ARCH=$(uname -m) APPIMAGE_EXTRACT_AND_RUN=1 "$tool" "$appdir" "$root/dist/$image_name.AppImage"
+    rm -rf "$appdir"
+    echo "dist/$image_name.AppImage"
 }
 
 if [ "${1:-}" = "--app" ]; then
@@ -203,6 +243,7 @@ for target in $targets; do
         fi
         tar -czf "$root/dist/$name.tar.gz" -C "$root/dist" "$name"
         echo "dist/$name.tar.gz"
+        build_image "$stage" "$name"
         ;;
     *)
         cp "$binary" "$stage/winter"

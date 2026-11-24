@@ -162,13 +162,26 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@v7
-      # `rustup show` reads rust-toolchain.toml, so the archive is built with
-      # the pinned toolchain.
+      # `rustup show` reads rust-toolchain.toml, so the archive is built with the
+      # pinned toolchain.
       - name: Install the pinned toolchain
         run: rustup show
       - name: Install GTK 4 headers
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libgtk-4-dev
+      # `scripts/package.sh` builds the Linux AppImage only when it has a tool
+      # (ADR 077), so the tag job supplies one. The tool is itself an AppImage
+      # and runs extracted, because a hosted runner has no FUSE.
+      - name: Install appimagetool
+        if: runner.os == 'Linux'
+        run: |
+          set -eu
+          arch=$(uname -m)
+          curl -fsSL --retry 3 --retry-delay 2 \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage" \
+            -o "$RUNNER_TEMP/appimagetool"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
       # `just package` builds both macOS architectures; the Intel label links
       # the arm64 one from the SDK rather than waiting for an arm64 runner.
       - name: Add the macOS cross target
@@ -196,6 +209,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.AppImage
           if-no-files-found: error
           retention-days: 7
 

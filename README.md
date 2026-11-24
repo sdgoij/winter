@@ -211,14 +211,20 @@ work.
 
 On Linux the archive is an app rather than a bare binary: `winter`, a desktop
 entry, the generated icon and `install.sh`, which installs them for the current
-user and needs no root (ADR 076).
+user and needs no root (ADR 076). A tag release also attaches an AppImage — the
+same app as one executable file with no install step (ADR 077).
 
 ```sh
 just package
 tar -xzf dist/winter-*-linux-gnu.tar.gz
 cd winter-*-linux-gnu && ./install.sh     # ~/.local/bin, and Winter in the menu
 ./install.sh --uninstall                 # removes the same three files
+
+./dist/winter-*-linux-gnu.AppImage       # or run the image, nothing installed
 ```
+
+`just package` builds the AppImage when `appimagetool` is on `PATH` or named by
+`APPIMAGETOOL`, and says so when it is neither; the tag job downloads one.
 
 `just` is the entry point; `.github/workflows/ci.yml` runs the same recipes on
 x86-64 and arm64 Linux, Windows, and macOS, plus `just test-long` as a `Full
