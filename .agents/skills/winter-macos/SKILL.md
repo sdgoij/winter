@@ -74,7 +74,17 @@ second.
   `(pixel | 0xFF00_0000).to_be_bytes()` and `SourceOver`.
 - **The strip starts after the traffic lights.** The window is
   `FullSizeContentView` with a transparent hidden title bar; `LEFT_INSET` is the
-  gap. A press on the empty strip drags the window; a press on a tab selects it.
+  gap. A press on the empty strip drags the window; a press on a tab selects it
+  and arms a drag, which reorders past a neighbour's midpoint.
+- **IME needs `interpretKeyEvents:` in `keyDown:` and a commit-only-once rule.**
+  `interpretKeyEvents:` calls `setMarkedText:`/`insertText:`/`doCommandBySelector:`
+  synchronously. `insertText:` must commit only when marked text existed, because
+  plain typing reaches the shell through `keyDown:`'s own mapping; committing
+  unconditionally types every character twice.
+- **`method_id` is for a retained return.** `#[unsafe(method(...))]` in
+  `define_class!` wants a type that implements `ConvertReturn<()>`; a
+  `Retained<T>` return needs `#[unsafe(method_id(...))]`. The error names
+  `Retained<NSAttributedString>: Encode` and both `objc2` versions.
 - **The timer must be in the common run-loop modes.** A timer only in the default
   mode freezes while a window is dragged or a menu tracks.
 - **The window's appearance follows the pane, not the system.** A light
@@ -98,5 +108,5 @@ second.
 - Put Windows-only logic in the shared modules; the WinUI shell has its own.
 - Reset a frame's alpha to zero or drop the `| 0xFF00_0000`: the software
   backend writes `COLORREF`s, not opaque `ARGB`.
-- Claim IME or accessibility support: both are named follow-ups in ADR 072 and
+- Claim accessibility support: it is a named follow-up in ADR 072 and
   `docs/macos-shell-scope.md`.

@@ -67,6 +67,13 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
    midpoints, and `tabs::Tabs::move_to` applies the permutation. The rule is
    shared with a future drag on another toolkit; the close box, the `+` button
    and the empty strip never start a drag.
+10. **The view is the input method's text client.** `TerminalView` conforms to
+    `NSTextInputClient`; `keyDown:` runs the event through `interpretKeyEvents:`
+    first, marked text becomes the renderer's `Composition` at the cursor, a
+    commit goes through the shared text path, and
+    `firstRectForCharacterRange:actualRange:` anchors the candidate window at the
+    caret. Plain typing still takes the shell's key path: `insertText:` only
+    commits when marked text existed, so no character is sent twice.
 
 ## Rationale
 
@@ -97,9 +104,10 @@ Negative:
 
 - **The first content path copies a frame.** A full-frame `0xAARRGGBB` copy per
   paint is correct but not fast; the GPU path is the performance milestone.
-- **IME composition and accessibility are not implemented.** The view handles
-  key events and composed `characters`; an input method's marked text and the
-  accessibility tree are follow-ups. They are named, not silently absent.
+- **Accessibility is not implemented.** The custom view reports no
+  accessibility tree; a terminal that draws its own text needs the AppKit text
+  interface before VoiceOver can read it. This is the same gap the WinUI shell
+  has with UIA.
 - **No program icons on tabs, no panes, no command palette.** The first is a
   parity gap with WinUI; the latter two are unported there as well.
 - **A preview crate.** `objc2` 0.6 is a stable release of the family, but the

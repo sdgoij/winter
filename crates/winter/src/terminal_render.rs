@@ -32,6 +32,8 @@ pub struct TerminalData {
     tsf: Composition,
     snippet: Composition,
     composition_origin: Option<Point>,
+    /// The cursor's cell in the visible pane, which anchors the IME preview.
+    cursor_screen: Point,
     /// How many rows the document holds, history included.
     document_height: i32,
     /// The prompt marks the scrollbar draws.
@@ -55,6 +57,7 @@ impl TerminalData {
             tsf: Composition::default(),
             snippet: Composition::default(),
             composition_origin: None,
+            cursor_screen: Point::new(0, 0),
             document_height: rows,
             marks: Vec::new(),
         }
@@ -81,6 +84,7 @@ impl TerminalData {
         // moves it down with its row and out of the pane, as it does upstream.
         let cursor_row = screen.cursor.1 + view.scroll();
         self.cursor.coord_cursor = Point::new(screen.cursor.0, cursor_row);
+        self.cursor_screen = Point::new(screen.cursor.0, screen.cursor.1);
         self.cursor.cursor_type = screen.cursor_shape;
         self.cursor.is_visible = screen.cursor_visible;
         self.cursor.is_on = cursor_on;
@@ -120,6 +124,22 @@ impl TerminalData {
 
         self.document_height = screen.document_height;
         self.marks = screen.marks;
+    }
+
+    /// Places the input method's marked text at the cursor.
+    ///
+    /// The renderer draws the preview on the row named by
+    /// [`RenderData::composition_origin`], which is the cursor's *visible* cell:
+    /// a scrollback view shows the pane, not the document row. An empty
+    /// composition removes the preview.
+    pub(crate) fn set_composition(&mut self, composition: Composition) {
+        self.composition_origin = (!composition.text.is_empty()).then_some(self.cursor_screen);
+        self.tsf = composition;
+    }
+
+    /// The cursor's cell in the visible pane, for the candidate window.
+    pub(crate) const fn cursor_screen(&self) -> Point {
+        self.cursor_screen
     }
 
     /// How many rows the document holds, history included.
@@ -347,6 +367,32 @@ mod tests {
             .image_slice()
             .expect("the snapshot keeps the image band");
         assert_eq!(image.pixels()[0], 0xFF00_FF00);
+    }
+
+    #[test]
+    fn a_composition_sits_at_the_cursor_and_clears_with_its_text() {
+        let mut control = Control::new(Box::new(Buffer::with_output(b"ab")), (4, 2));
+        control.pump();
+
+        let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
+        data.refresh(&mut control, &View::new(), true, None);
+
+        let mut attr = types::TextAttribute::default();
+        attr.set_underline_style(types::UnderlineStyle::SinglyUnderlined);
+        let composition = Composition {
+            text: "ni".to_string(),
+            attributes: vec![renderer::CompositionRange { len: 2, attr }],
+            cursor_pos: 2,
+        };
+        data.set_composition(composition);
+
+        assert_eq!(data.tsf_preview().text, "ni");
+        assert_eq!(data.composition_origin(), Some(Point::new(2, 0)));
+        assert_eq!(data.cursor_screen(), Point::new(2, 0));
+
+        data.set_composition(Composition::default());
+        assert_eq!(data.composition_origin(), None);
+        assert!(data.tsf_preview().text.is_empty());
     }
 
     #[test]

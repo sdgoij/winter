@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 
 use renderer::renderer::Renderer;
 use renderer::{
-    AtlasEngine, CellSizeInDIP, FontDueRasterizer, FontFace, FontInfo, RenderSettings, Settings, SharedBackend,
-    SoftwareBackend,
+    AtlasEngine, CellSizeInDIP, Composition, CompositionRange, FontDueRasterizer, FontFace, FontInfo, RenderSettings,
+    Settings, SharedBackend, SoftwareBackend,
 };
 use server::pty::{PtyCommand, PtySize};
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
 use types::text_color::ColorType;
+use types::{TextAttribute, UnderlineStyle};
 use utils::Size;
 
 use crate::find::FindBar;
@@ -120,6 +121,8 @@ pub(crate) struct Shell {
     close_requested: bool,
     /// The active tab changed, so the window title must follow it.
     title_dirty: bool,
+    /// The input method's marked text, drawn at the cursor until it commits.
+    composition: Composition,
 }
 
 impl Shell {
@@ -192,6 +195,7 @@ impl Shell {
             find_focus: false,
             close_requested: false,
             title_dirty: false,
+            composition: Composition::default(),
         })
     }
 
@@ -228,6 +232,29 @@ impl Shell {
 
     pub(crate) fn frame(&self) -> &Frame {
         &self.frame
+    }
+
+    /// Shows or clears the input method's marked text.
+    pub(crate) fn set_composition(&mut self, text: &str, selected_utf16: usize) {
+        self.composition = composition(text, selected_utf16);
+    }
+
+    fn clear_composition(&mut self) {
+        self.composition = Composition::default();
+    }
+
+    /// The caret's box in view points, for anchoring the candidate window.
+    pub(crate) fn caret_rect(&self) -> (f64, f64, f64, f64) {
+        let point = self.renderer.data().cursor_screen();
+        let scale = f64::from(finite_scale(self.scale));
+        let width = f64::from(self.cell.0) / scale;
+        let height = f64::from(self.cell.1) / scale;
+        (
+            chrome::PANE_LEFT + f64::from(point.x()) * width,
+            STRIP_HEIGHT + f64::from(point.y()) * height,
+            width.max(1.0),
+            height.max(1.0),
+        )
     }
 
     pub(crate) fn set_focused(&mut self, focused: bool) {
@@ -438,7 +465,12 @@ impl Shell {
     fn paint(&mut self, _now: Instant, mtm: objc2::MainThreadMarker) {
         let blink_on = self.blink_on;
         let painted = {
-            let Shell { renderer, tabs, .. } = self;
+            let Shell {
+                renderer,
+                tabs,
+                composition,
+                ..
+            } = self;
             let Some(tab) = tabs.active_mut() else {
                 return;
             };
@@ -451,6 +483,7 @@ impl Shell {
             if let Ok(table) = tab.control.color_table().lock() {
                 renderer.settings_mut().set_color_table(table.clone());
             }
+            renderer.data_mut().set_composition(composition.clone());
             renderer.invalidate_all();
             renderer.paint_frame().is_ok()
         };
@@ -546,6 +579,7 @@ impl Shell {
 
     /// Starts a terminal and adds it as the active tab.
     pub(crate) fn add_tab(&mut self, terminal: TerminalSettings) {
+        self.clear_composition();
         let size = pty_size(self.grid);
         let Ok(session) = spawn_shell(&terminal.command, size) else {
             return;
@@ -563,18 +597,21 @@ impl Shell {
     }
 
     pub(crate) fn select_tab(&mut self, index: usize) {
+        self.clear_composition();
         if self.tabs.select(index) {
             self.title_dirty = true;
         }
     }
 
     pub(crate) fn step_tab(&mut self, delta: i32) {
+        self.clear_composition();
         self.tabs.step(delta);
         self.title_dirty = true;
     }
 
     /// Closes the active tab, or asks the window to close when it is the last.
     pub(crate) fn close_active_tab(&mut self) {
+        self.clear_composition();
         let index = self.tabs.index();
         if !self.tabs.close(index) {
             self.close_requested = true;
@@ -584,6 +621,7 @@ impl Shell {
 
     /// Closes a tab by its position in the strip.
     pub(crate) fn close_tab(&mut self, index: usize) {
+        self.clear_composition();
         if !self.tabs.close(index) {
             self.close_requested = true;
         }
@@ -827,6 +865,9 @@ impl Shell {
             tab.find.refresh(&mut tab.control);
             tab.find.scroll_to(&tab.control, &mut tab.view);
             self.find_focus = true;
+            // The field takes the keyboard, so a half-composed terminal
+            // preview is no longer where the user is typing.
+            self.clear_composition();
         }
     }
 
@@ -1426,9 +1467,72 @@ fn finite_scale(scale: f32) -> f32 {
     }
 }
 
+/// Builds the renderer's IME preview from marked text and AppKit's selection.
+///
+/// AppKit reports the selection in UTF-16 units; the renderer's caret counts
+/// characters, so the range is converted here. One underline run covers the
+/// whole preview, which is how a terminal marks uncommitted text.
+pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
+    let mut attr = TextAttribute::default();
+    attr.set_underline_style(UnderlineStyle::SinglyUnderlined);
+    let len = text.chars().count();
+    Composition {
+        text: text.to_string(),
+        attributes: if len == 0 {
+            Vec::new()
+        } else {
+            vec![CompositionRange { len, attr }]
+        },
+        cursor_pos: char_index(text, selected_utf16),
+    }
+}
+
+/// The character index `units` UTF-16 units into `text`, clamped to its end.
+///
+/// A selection in the middle of a surrogate pair names the character that
+/// contains it, which is the only cell the caret can sit on.
+fn char_index(text: &str, units: usize) -> usize {
+    let mut seen = 0;
+    for (index, ch) in text.chars().enumerate() {
+        if seen >= units {
+            return index;
+        }
+        seen += ch.len_utf16();
+    }
+    text.chars().count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_marked_selection_counts_characters_not_utf16_units() {
+        assert_eq!(composition("ni", 0).cursor_pos, 0);
+        assert_eq!(composition("ni", 1).cursor_pos, 1);
+        // A BMP CJK character is one UTF-16 unit.
+        assert_eq!(composition("日本語", 3).cursor_pos, 3);
+        assert_eq!(composition("日本語", 1).cursor_pos, 1);
+        // An emoji is two UTF-16 units but one character, even mid-pair.
+        assert_eq!(composition("😀", 2).cursor_pos, 1);
+        assert_eq!(composition("😀", 1).cursor_pos, 1);
+        assert_eq!(composition("😀日", 3).cursor_pos, 2);
+        // An out-of-range selection clamps to the end.
+        assert_eq!(composition("ni", 9).cursor_pos, 2);
+    }
+
+    #[test]
+    fn the_marked_text_is_one_underlined_run() {
+        let preview = composition("abc", 0);
+        assert_eq!(preview.text, "abc");
+        assert_eq!(preview.attributes.len(), 1);
+        assert_eq!(preview.attributes[0].len, 3);
+        assert_eq!(
+            preview.attributes[0].attr.get_underline_style(),
+            UnderlineStyle::SinglyUnderlined
+        );
+        assert!(composition("", 0).attributes.is_empty());
+    }
 
     #[test]
     fn a_bad_scale_falls_back_to_one() {

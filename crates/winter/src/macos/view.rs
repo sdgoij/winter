@@ -6,14 +6,17 @@
 //! [`crate::input`] record or one of [`Shell`]'s pointer methods, which are the
 //! same rules the WinUI shell uses.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Sel};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView};
-use objc2_foundation::{NSRect, NSSize};
+use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSTextInputClient, NSTrackingArea, NSTrackingAreaOptions, NSView};
+use objc2_foundation::{
+    NSArray, NSAttributedString, NSAttributedStringKey, NSNotFound, NSPoint, NSRange, NSRect, NSSize, NSString,
+    NSUInteger,
+};
 
 use crate::input::{self, Modifiers};
 use term::input::Key;
@@ -28,6 +31,10 @@ pub struct Ivars {
     pub(crate) shell: Rc<RefCell<Shell>>,
     /// The tracking area that delivers `mouseMoved`, replaced on every resize.
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
+    /// The input method's marked text, as AppKit reported it.
+    marked: RefCell<String>,
+    /// `insertText:` committed a composition during the current key press.
+    committed: Cell<bool>,
 }
 
 define_class!(
@@ -123,7 +130,22 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
+            // AppKit's text system turns the key into marked text or a commit;
+            // anything it leaves alone the shell's own mapping handles below.
+            let events = NSArray::from_slice(&[event]);
+            self.interpretKeyEvents(&events);
+            let committed = self.ivars().committed.replace(false);
+            let marked = !self.ivars().marked.borrow().is_empty();
+
             let mut shell = self.ivars().shell.borrow_mut();
+            if committed || marked {
+                // The commit already reached the shell through `insertText:`,
+                // and marked text is the preview; neither is a key to send.
+                drop(shell);
+                self.setNeedsDisplay(true);
+                return;
+            }
+
             let modifiers = modifiers(event.modifierFlags());
             let characters = event.characters().map(|text| text.to_string());
             let ignoring = event.charactersIgnoringModifiers().map(|text| text.to_string());
@@ -258,6 +280,103 @@ define_class!(
             self.setNeedsDisplay(true);
         }
     }
+
+    unsafe impl NSTextInputClient for TerminalView {
+        #[unsafe(method(hasMarkedText))]
+        fn has_marked_text(&self) -> bool {
+            !self.ivars().marked.borrow().is_empty()
+        }
+
+        #[unsafe(method(markedRange))]
+        fn marked_range(&self) -> NSRange {
+            let length = self.ivars().marked.borrow().encode_utf16().count();
+            if length > 0 {
+                NSRange::new(0, length)
+            } else {
+                // Documented to return `{NSNotFound, 0}` when there is none.
+                NSRange::new(NSNotFound as NSUInteger, 0)
+            }
+        }
+
+        #[unsafe(method(selectedRange))]
+        fn selected_range(&self) -> NSRange {
+            // The terminal has no text selection the input method can address.
+            NSRange::new(NSNotFound as NSUInteger, 0)
+        }
+
+        #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
+        fn set_marked_text(&self, string: &AnyObject, selected_range: NSRange, _replacement_range: NSRange) {
+            let text = ime_text(string);
+            self.ivars().marked.replace(text.clone());
+            self.ivars()
+                .shell
+                .borrow_mut()
+                .set_composition(&text, selected_range.location);
+            self.setNeedsDisplay(true);
+        }
+
+        #[unsafe(method(unmarkText))]
+        fn unmark_text(&self) {
+            self.ivars().marked.borrow_mut().clear();
+            self.ivars().shell.borrow_mut().set_composition("", 0);
+            self.setNeedsDisplay(true);
+        }
+
+        #[unsafe(method(insertText:replacementRange:))]
+        fn insert_text(&self, string: &AnyObject, _replacement_range: NSRange) {
+            // Without marked text this is plain typing, which the shell's key
+            // path sends; committing here too would type every character twice.
+            if self.ivars().marked.borrow().is_empty() {
+                return;
+            }
+
+            let text = ime_text(string);
+            self.ivars().marked.borrow_mut().clear();
+            self.ivars().committed.set(true);
+            let mut shell = self.ivars().shell.borrow_mut();
+            shell.set_composition("", 0);
+            if !text.chars().any(char::is_control) {
+                shell.text_input(text);
+            }
+            drop(shell);
+            self.setNeedsDisplay(true);
+        }
+
+        #[unsafe(method(doCommandBySelector:))]
+        fn do_command_by_selector(&self, _selector: Sel) {
+            // Required by the protocol; the shell's key mapping owns commands,
+            // so an unhandled selector falls through to `keyDown:`'s tail.
+        }
+
+        #[unsafe(method_id(validAttributesForMarkedText))]
+        fn valid_attributes_for_marked_text(&self) -> Retained<NSArray<NSAttributedStringKey>> {
+            NSArray::new()
+        }
+
+        #[unsafe(method_id(attributedSubstringForProposedRange:actualRange:))]
+        fn attributed_substring_for_proposed_range(
+            &self,
+            _range: NSRange,
+            _actual_range: *mut NSRange,
+        ) -> Option<Retained<NSAttributedString>> {
+            None
+        }
+
+        #[unsafe(method(characterIndexForPoint:))]
+        fn character_index_for_point(&self, _point: NSPoint) -> NSUInteger {
+            0
+        }
+
+        #[unsafe(method(firstRectForCharacterRange:actualRange:))]
+        fn first_rect_for_character_range(&self, _range: NSRange, _actual_range: *mut NSRange) -> NSRect {
+            let (x, y, width, height) = self.ivars().shell.borrow().caret_rect();
+            let local = NSRect::new(NSPoint::new(x, y), NSSize::new(width, height));
+            // AppKit wants the candidate window's anchor in screen coordinates.
+            self.window()
+                .map(|window| window.convertRectToScreen(self.convertRect_toView(local, None)))
+                .unwrap_or(local)
+        }
+    }
 );
 
 impl TerminalView {
@@ -266,6 +385,8 @@ impl TerminalView {
         let this = Self::alloc(mtm).set_ivars(Ivars {
             shell,
             tracking: RefCell::new(None),
+            marked: RefCell::new(String::new()),
+            committed: Cell::new(false),
         });
         // SAFETY: NSView's designated initializer, called on the main thread
         // with an allocated instance of this subclass.
@@ -346,6 +467,20 @@ fn event_buttons() -> term::input::MouseButtons {
     let right = pressed & 0b010 != 0;
     let middle = pressed & 0b100 != 0;
     input::mouse_buttons(left, middle, right)
+}
+
+/// The text of an `insertText:`/`setMarkedText:` argument.
+///
+/// AppKit documents the argument as either an `NSString` or an
+/// `NSAttributedString`; anything else contributes no text.
+fn ime_text(string: &AnyObject) -> String {
+    if let Some(attributed) = string.downcast_ref::<NSAttributedString>() {
+        return attributed.string().to_string();
+    }
+    string
+        .downcast_ref::<NSString>()
+        .map(ToString::to_string)
+        .unwrap_or_default()
 }
 
 fn modifiers(flags: NSEventModifierFlags) -> Modifiers {

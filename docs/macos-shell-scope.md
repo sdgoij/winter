@@ -1,9 +1,9 @@
 # A native macOS shell — scope and state
 
 Status: shipping first cut (ADR 072). The shell runs a real pty, paints the
-terminal through `renderer`, and owns a native window, menu bar, find field and
-settings window. IME composition, accessibility, program icons on tabs and a GPU
-content pass are named follow-ups below, not hidden gaps.
+terminal through `renderer`, and owns a native window, menu bar, find field,
+settings window and input-method client. Accessibility, program icons on tabs
+and a GPU content pass are named follow-ups below, not hidden gaps.
 Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split), ADRs 064,
 068, 069 (the strip), `crates/winter/src/macos/`.
@@ -30,6 +30,10 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 - Drag-reorder of tabs: a press on a tab body arms a drag, a move past a
   neighbour's midpoint swaps the two, and the close box and the buttons never
   start a drag.
+- Input-method composition: `TerminalView` is an `NSTextInputClient`, marked
+  text is drawn as the renderer's underlined preview at the cursor, a commit
+  reaches the pty through the shared text path, and the candidate window is
+  anchored at the caret.
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
   OSC 777 notifications through `notify-rust`.
 - The shell's drawn icon (ADR 058) as the application icon.
@@ -43,9 +47,6 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 
 ## What does not ship yet
 
-- IME marked text: a key's composed `characters` reach the terminal, but an
-  input method's preedit is not drawn and the candidate window is not anchored.
-  `NSTextInputClient` is the next protocol to implement.
 - Accessibility: the custom view reports no accessibility tree. A terminal that
   draws its own text needs the AppKit text interface before VoiceOver can read
   it; this is the same gap the WinUI shell has with UIA.
@@ -60,8 +61,8 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 | File | Owns |
 |---|---|
 | `mod.rs` | `run()`, the `Controller` object (timer, menus, find field, window delegate), and the application menu |
-| `view.rs` | `TerminalView`, the flipped content view: key, mouse, wheel, tracking area and `drawRect:` |
-| `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state. No AppKit except the `Frame` it owns |
+| `view.rs` | `TerminalView`, the flipped content view: key, mouse, wheel, tracking area, `drawRect:` and the `NSTextInputClient` methods |
+| `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the IME composition. No AppKit except the `Frame` it owns |
 | `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
 | `settings.rs` | The native settings window and its action methods |
@@ -98,6 +99,11 @@ below `winter` sees AppKit.
 - **The timer belongs to the common run-loop modes.** A timer only in the
   default mode stops while a window is dragged or a menu is tracking; the pty
   and the strip then freeze until the gesture ends.
+- **`method_id` is for a retained return.** `#[unsafe(method(...))]` in
+  `define_class!` requires a type that implements `ConvertReturn<()>`; a
+  `Retained<T>` return is only accepted under `#[unsafe(method_id(...))]`. The
+  symptom is "`Retained<NSAttributedString>: Encode` is not satisfied" with a
+  note listing both `objc2` versions.
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
   content under them; `chrome::LEFT_INSET` is the gap.
 
