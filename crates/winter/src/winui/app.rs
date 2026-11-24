@@ -319,7 +319,7 @@ impl Component for Shell {
         let grid = (INITIAL_COLUMNS, INITIAL_ROWS);
         let size = PtySize::new(INITIAL_COLUMNS as u16, INITIAL_ROWS as u16);
 
-        // A fresh installation is given a file to edit, as the egui shell does
+        // A fresh installation is given a file to edit, as the GTK shell does
         // (ADR 034). A broken file still yields the defaults.
         settings::ensure_file();
         let loaded = settings::load_with_report();
@@ -533,7 +533,7 @@ impl Component for Shell {
                 idle_fill
             };
             // The fill names no foreground, so the label picks a side and an
-            // inactive one is dimmed towards it -- the same rule the egui strip
+            // inactive one is dimmed towards it -- the same rule the GTK and macOS strips
             // applies, and what keeps a light scheme readable (ADR 035).
             let foreground = contrasting_text(background);
             let label = if is_active {
@@ -1973,7 +1973,7 @@ fn tab_index(tabs: &Tabs<Tab>, id: u64) -> Option<usize> {
 ///
 /// A fill names no foreground, so a tab's label has to pick a side; a light
 /// scheme would otherwise paint a white label on white. The weights and the
-/// cut-off are shared with the egui strip (ADR 035).
+/// cut-off are shared with the GTK and macOS strips (ADR 035).
 fn contrasting_text(fill: Color) -> Color {
     let luminance = 0.299 * f32::from(fill.r) + 0.587 * f32::from(fill.g) + 0.114 * f32::from(fill.b);
     if luminance > 140.0 {

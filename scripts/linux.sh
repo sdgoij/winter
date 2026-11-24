@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs the Linux shell (ADRs 061, 075): the GTK 4 shell by default, or the egui
-# fallback with `--no-default-features`.
+# Runs the Linux shell (ADRs 061, 075), the GTK 4 build this machine has;
+# there is no other Linux shell to fall back to.
 #
 #   just linux                          # on Linux: this machine's build
 #   just linux FedoraLinux-44           # on Windows: in that WSL distro

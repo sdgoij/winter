@@ -33,7 +33,7 @@ publish = false
 # user's TOML settings file and needs no workspace crate. `audio` is sound without a
 # device and sees no workspace crate either (ADR 033). `winter` is the
 # application: it sees everything and is the only crate allowed to (ADR 018).
-# Its shells are egui on Linux, WinUI 3 on Windows and AppKit on macOS.
+# Its shells are GTK 4 on Linux, WinUI 3 on Windows and AppKit on macOS.
 # A crate that needs something from a crate to its right is a design error, not
 # a manifest to edit; see docs/adr/001-workspace-layering.md.
 [workspace.dependencies]
@@ -52,7 +52,6 @@ winter = { path = "crates/winter" }
 
 arboard = "3"
 bitflags = "2"
-eframe = "0.37"
 embed-resource = "3"
 toml = "1"
 fontdue = "0.9"

@@ -46,7 +46,7 @@ Rules:
 | [015](015-server-portable-scope.md) | The server layer keeps the console API's portable halves | Accepted |
 | [016](016-pty-ffi.md) | The pty layer is hand-written FFI, confined to two modules | Accepted |
 | [017](017-input-encoders-stay-in-term.md) | The input encoders stay in `term`; there is no `input` crate | Accepted |
-| [018](018-egui-first-shell.md) | egui is the first shell; native backends come later | Accepted |
+| [018](018-egui-first-shell.md) | egui is the first shell; native backends come later | Superseded by ADR 079 |
 | [019](019-terminal-selection-is-app-state.md) | The terminal's viewport and selection are application state | Accepted |
 | [020](020-selection-adds-document-rows.md) | Selection addresses document rows (history first) | Accepted |
 | [021](021-tabs-own-terminals.md) | A tab owns one terminal; the window owns the chords | Accepted |
@@ -66,7 +66,7 @@ Rules:
 | [035](035-themes.md) | A theme is the four fills the tab strip paints; the rest of upstream's `Theme` is WinUI-only | Accepted |
 | [036](036-control-connection-events.md) | The connection is a trait, the control owns the terminal, the widget owns the viewport; an exit closes the tab | Accepted |
 | [037](037-registry-settings.md) | The console's registry settings are a portable schema; the Win32 reads belong to the server layer | Accepted |
-| [038](038-shell-modules.md) | The egui shell is `app`, `config`, `terminal_widget`, `window` and `icon`; settings, themes and a wgpu pass have no counterpart | Accepted |
+| [038](038-shell-modules.md) | The egui shell is `app`, `config`, `terminal_widget`, `window` and `icon`; settings, themes and a wgpu pass have no counterpart | Superseded by ADR 079 |
 | [039](039-native-windows-ui.md) | Native UI means a Windows-looking window: a drawn caption on the existing winit window, one `win32` module for what the toolkit cannot express | Superseded by 040 |
 | [040](040-winui-windows-shell.md) | The Windows shell is WinUI 3 through `windows-reactor`; egui keeps Linux and macOS; the terminal content stays `renderer`'s | Amended by 041 |
 | [041](041-swap-chain-surface.md) | The pane's surface is a `SwapChainPanel`; Direct2D blits the software backend's pixels, in one `unsafe` module | Accepted |
@@ -108,3 +108,4 @@ Rules:
 | [076](076-linux-opengl-content.md) | The Linux content path is OpenGL over GTK's GL area, with the software backend as the fallback; `linux::gl` carries the loader's unsafe exemption | Accepted |
 | [077](077-linux-package-is-an-app.md) | The Linux archive is an app tree — desktop entry named after the GTK application id, a generated icon and a rootless installer — with AppImage, Flatpak and deb left in the plan | Accepted |
 | [078](078-linux-appimage.md) | The Linux release also builds an AppImage, from the same tree, when `appimagetool` is available; the tag job downloads one and runs it extracted | Accepted |
+| [079](079-native-shells-only.md) | The native shells are the only shells: egui and `eframe` are deleted, the `gtk` feature goes, and the settings draft and font directories become toolkit-free public modules | Accepted |

@@ -1,6 +1,6 @@
 //! The settings dialog, from `TerminalSettingsEditor/`.
 //!
-//! The model is `config::Draft`, shared with the egui shell, so both windows
+//! The model is `config::Draft`, shared with the GTK and macOS editors, so all
 //! save the same document. This module draws it with WinUI 3 and turns each
 //! edit into a [`SettingsMessage`]; the shell applies Save and Revert because
 //! they touch the running session (ADR 028, ADR 040).

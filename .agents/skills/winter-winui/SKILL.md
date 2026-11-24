@@ -19,7 +19,7 @@ change it without rediscovering the traps.
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
 | `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
-| `../find.rs` | The query, matches and screen spans, shared with the egui pane |
+| `../find.rs` | The query, matches and screen spans, shared with the other shells |
 | `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
 | `mod.rs` | Module boundary and `run()` |
 
@@ -240,7 +240,7 @@ settings window and the writer work from the parsed file.
 ## Scrollbar
 
 The bar is a XAML `Canvas` overlay in the pane's `Grid`, between the swap
-chain and the find bar, so it paints over the last cells the way the egui shell
+chain and the find bar, so it paints over the last cells the way the GTK shell
 does. `winui::scrollbar` builds it from `scrollbar` (the shared fractions) and
 `TerminalData`, which now carries the snapshot's document height and prompt
 marks.
@@ -254,7 +254,8 @@ marks.
   while the grid is physical pixels at the composition scale. Do not mix them.
 - A press is owned until release; a move without the left button is treated as
   the release when the pane never saw one.
-- `scrollbar::thumb_pixels` is shared with egui, so the two bars cannot drift.
+- `scrollbar::thumb_pixels` is shared with the GTK and macOS strips, so the bars
+  cannot drift.
   `bar::mark_top` centres a tick on its row and keeps it inside the track.
 - Ticks come after the thumb in the overlay's children, because a later child
   paints on top (ADR 059). Upstream's mark image is declared after its
@@ -269,8 +270,8 @@ marks.
 
 ### Shell integration
 
-Red ticks need an exit code, and only the shell has one. `winui` and egui both
-start a PowerShell profile through `shell_integration::attach`, which appends
+Red ticks need an exit code, and only the shell has one. The shells start a
+PowerShell profile through `shell_integration::attach`, which appends
 `-NoExit -File <script>` (ADR 060).
 
 - The script is `crates/winter/shell-integration/winter.ps1`, embedded with
@@ -322,7 +323,7 @@ button (ADR 052).
 
 `settings.rs` draws the editor with a `ContentDialog` and sends
 `SettingsMessage`s; the draft, validation and preview are `config::Draft`, shared
-with the egui window (ADR 049). Save and Revert are in-content buttons so a save
+with the GTK and macOS editors (ADR 049). Save and Revert are in-content buttons so a save
 that fails keeps the dialog open and shows the error; the dialog's own Close
 button discards unsaved edits. A dirty draft is not overwritten by the poll —
 the dialog says the file changed and Save or Revert resolves it.

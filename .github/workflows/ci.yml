@@ -82,11 +82,6 @@ jobs:
       - name: Build the app bundle
         if: runner.os == 'macOS'
         run: just app
-      # The gate builds the GTK shell on Linux; the egui fallback is built
-      # separately so it cannot rot (ADR 075).
-      - name: Check the egui fallback
-        if: runner.os == 'Linux'
-        run: cargo check -p winter --no-default-features
 
   # The gate leaves out the `#[ignore]`d cases: they read the host's fonts and
   # are slow, which is the wrong trade for every contributor's `just gate`.

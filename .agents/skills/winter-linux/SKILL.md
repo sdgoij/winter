@@ -40,8 +40,8 @@ wsl.exe -d FedoraLinux-44 -- bash -lc 'cd /mnt/c/.../winterm && \
 ```
 
 Use `/home/t/winterm-target` when the checkout is under `/mnt`: nine-mount I/O
-makes an in-tree `target/` far slower. `--no-default-features` builds the egui
-fallback and needs no headers; the gate checks it on Linux.
+makes an in-tree `target/` far slower. There is no headers-free build any
+more: the GTK shell is the Linux shell (ADR 079), and the gate builds it.
 
 The grid is drawn through GTK's OpenGL context when libGL/libEGL exists;
 `WINTER_SOFTWARE=1` forces the CPU blit. Both paths are built either way.

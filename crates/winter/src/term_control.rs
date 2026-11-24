@@ -2,9 +2,9 @@
 //!
 //! `ControlCore` is the part of a Windows Terminal control that has no XAML: the
 //! terminal, its connection, the events it raises and the state the widget asks
-//! about. `TermControl` is the XAML half. This port's `TermControl` is `Pane` in
-//! `ui.rs`: it translates egui events and paints, and it owns the viewport and
-//! the selection, which ADR 019 keeps in the application (ADR 036).
+//! about. `TermControl` is the XAML half. This port's control is each shell's
+//! pane: it translates its toolkit's events and paints, and it owns the viewport
+//! and the selection, which ADR 019 keeps in the application (ADR 036).
 //!
 //! The connection is a trait object, so a test drives a whole terminal from a
 //! byte buffer with no pty in sight.

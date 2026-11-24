@@ -64,7 +64,7 @@ const CELLS: (i32, i32) = (100, 28);
 const PANE_LEFT: f64 = 8.0;
 /// How often the pty is polled, matching the WinUI shell's timer (ADR 006).
 const TICK: Duration = Duration::from_millis(16);
-/// The cursor's blink half-period, matching the egui and macOS shells.
+/// The cursor's blink half-period, matching the macOS and WinUI shells.
 const BLINK: Duration = Duration::from_millis(500);
 /// The height the strip asks for; the header bar may give it more.
 const STRIP_HEIGHT: i32 = 34;
@@ -1012,7 +1012,7 @@ impl Shell {
         };
 
         // A printable key is text, not a chord: the shared translation sends a
-        // character event for it, exactly as egui's and WinUI's toolkits do.
+        // character event for it, as the macOS and WinUI toolkits do.
         let chord = modifiers.ctrl || modifiers.alt || modifiers.command;
         let event = match (character, pressed, chord) {
             (Some(character), true, false) if input::produces_text(named, modifiers) => {
@@ -1664,7 +1664,7 @@ impl Shell {
         };
 
         // Shift keeps the wheel for the viewport; otherwise a tracking program
-        // owns it, the same rule the egui and WinUI shells apply.
+        // owns it, the same rule the macOS and WinUI shells apply.
         let forwards = input::forwards_to_application(tab.control.is_tracking_mouse(), shift);
         let pointer = (
             self.pointer.0.clamp(0, self.grid.0.max(1) - 1),
@@ -2417,8 +2417,7 @@ fn blend(from: (f64, f64, f64), to: (f64, f64, f64), t: f64) -> (f64, f64, f64) 
 /// Black or grey-white, whichever reads on `fill`.
 ///
 /// The weights are the usual luminance ones and the cut-off is where a mid grey
-/// stops reading as dark; `terminal_widget::contrasting_text` uses the same rule
-/// for the egui strip.
+/// stops reading as dark; each shell's strip uses the same rule.
 fn contrasting(fill: (f64, f64, f64)) -> (f64, f64, f64) {
     let luminance = 0.299 * fill.0 * 255.0 + 0.587 * fill.1 * 255.0 + 0.114 * fill.2 * 255.0;
     if luminance > 140.0 {
@@ -2728,7 +2727,7 @@ struct Fonts {
 
 /// Finds the host's monospace face and measures it at `size`.
 fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
-    let directories = crate::app::font_directories();
+    let directories = crate::fonts::font_directories();
     if directories.is_empty() {
         return None;
     }

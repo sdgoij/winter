@@ -1,6 +1,6 @@
 //! The window icon the executable carries.
 //!
-//! The build script embeds the drawing the egui shell also uses (ADR 058).
+//! The build script embeds the drawing the macOS bundle also draws (ADR 058).
 //! WinUI 3 gives its window a framework default rather than the executable's
 //! icon, so the embedded resource is loaded and handed to the window once the
 //! handle arrives.

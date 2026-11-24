@@ -12,7 +12,7 @@ use windows_reactor::{Canvas, Color, HorizontalAlignment, Rectangle, VerticalAli
 use crate::scrollbar;
 use crate::terminal_render::TerminalData;
 
-/// The track's width in DIPs, matching the egui shell's strip.
+/// The track's width in DIPs, matching the GTK shell's strip.
 pub(super) const WIDTH: f64 = scrollbar::WIDTH as f64;
 
 /// The height of a prompt tick, in DIPs.

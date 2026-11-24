@@ -7,19 +7,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         winter::macos::run()?;
     }
-    // The GTK shell is the Linux shell (ADR 075). `--no-default-features`
-    // leaves it out and the egui shell below runs instead.
-    #[cfg(all(target_os = "linux", feature = "gtk"))]
+    #[cfg(target_os = "linux")]
     {
         winter::linux::run()?;
     }
-    #[cfg(all(
-        not(windows),
-        not(target_os = "macos"),
-        not(all(target_os = "linux", feature = "gtk"))
-    ))]
-    {
-        winter::app::run()?;
-    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    compile_error!("Winter has a shell on Windows, macOS and Linux only");
     Ok(())
 }

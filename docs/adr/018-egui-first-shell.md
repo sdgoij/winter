@@ -1,6 +1,6 @@
 # ADR 018 — egui is the first shell; native backends come later
 
-- Status: Accepted
+- Status: Superseded by ADR 079 (the native shells are the only shells)
 - Date: 2026-11-22
 - Related: `crates/winter/src/ui.rs`, `plan.md` Phases 8–9; ADR 001,
   ADR 006, ADR 007, ADR 017

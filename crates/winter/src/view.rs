@@ -11,7 +11,7 @@
 //! into the scrollback.
 //!
 //! The module is toolkit-free (ADR 018). It knows about rows, columns and
-//! time; it does not know about pixels, a window, or egui.
+//! time; it does not know about pixels, a window, or a toolkit.
 
 use std::time::{Duration, Instant};
 

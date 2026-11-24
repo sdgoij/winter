@@ -149,10 +149,10 @@ fn write_png(path: &Path, size: usize) -> Result<(), String> {
 }
 
 fn build_own() -> Option<Retained<NSImage>> {
-    let data = crate::icon::data();
-    let width = data.width as isize;
-    let height = data.height as isize;
-    let bytes_per_row = width.checked_mul(4)?;
+    let size = crate::icon::SIZE;
+    let rgba = crate::icon::rgba(size);
+    let side = isize::try_from(size).ok()?;
+    let bytes_per_row = side.checked_mul(4)?;
 
     // SAFETY: null planes ask AppKit to allocate the buffer; the remaining
     // arguments describe the straight RGBA the icon drawing produces.
@@ -160,8 +160,8 @@ fn build_own() -> Option<Retained<NSImage>> {
         NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
             NSBitmapImageRep::alloc(),
             std::ptr::null_mut(),
-            width,
-            height,
+            side,
+            side,
             8,
             4,
             true,
@@ -174,19 +174,22 @@ fn build_own() -> Option<Retained<NSImage>> {
     }?;
 
     let destination = rep.bitmapData();
-    let needed = data.width as usize * data.height as usize * 4;
-    if destination.is_null() || data.rgba.len() < needed {
+    let needed = size * size * 4;
+    if destination.is_null() || rgba.len() < needed {
         return None;
     }
-    // SAFETY: the rep owns a buffer of the size asked for above, and the icon
-    // data is at least that long; the copy borrows both for its duration.
+    // SAFETY: the rep owns a buffer of the size asked for above, and `rgba` is
+    // at least that long; the copy borrows both for its duration.
     unsafe {
-        std::ptr::copy_nonoverlapping(data.rgba.as_ptr(), destination, needed);
+        std::ptr::copy_nonoverlapping(rgba.as_ptr(), destination, needed);
     }
 
     let image = NSImage::initWithSize(
         NSImage::alloc(),
-        NSSize::new(f64::from(data.width), f64::from(data.height)),
+        NSSize::new(
+            f64::from(u32::try_from(size).ok()?),
+            f64::from(u32::try_from(size).ok()?),
+        ),
     );
     image.addRepresentation(&rep);
     Some(image)

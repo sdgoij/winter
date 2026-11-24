@@ -2,7 +2,7 @@
 //!
 //! Upstream embeds an `.ico` through its packaging; this port has no binary
 //! asset in the tree, so the icon is computed from the same geometry at every
-//! size. The egui shell wraps [`rgba`] in a window icon, and the Windows build
+//! size. The macOS bundle draws its iconset from [`rgba`], and the Windows build
 //! script encodes [`ico`] and embeds it in the executable (ADR 058).
 //!
 //! This file is included by `build.rs` as well as by `icon.rs`, so it must stay

@@ -26,8 +26,8 @@ editor are the platform's, while the tab strip, scrollbar and grid stay
 `renderer`'s pixels (ADR 075), with pointer selection and drag scrolling,
 copy/paste, scrollback with prompt marks, tab reordering, input-method
 composition, a bell flash, notifications and an accessibility value; the grid
-is drawn on the GPU through GTK's OpenGL context (ADR 076), and egui remains
-the `--no-default-features` fallback (ADR 018).
+is drawn on the GPU through GTK's OpenGL context (ADR 076); there is no other
+Linux shell to fall back to (ADR 079).
 
 | Crate | What it is | State |
 |---|---|---|
@@ -243,8 +243,8 @@ sudo dnf install gtk4-devel     # or: sudo apt install libgtk-4-dev
 cargo run -p winter
 ```
 
-`--no-default-features` builds the egui shell instead, which needs no GTK
-headers and is the fallback if the toolkit is unavailable.
+There is no headers-free build: the GTK shell is the Linux shell (ADR 079), so
+the headers above are required to build the application there.
 
 The pane draws through GTK's OpenGL context when the host has one (ADR 076);
 `WINTER_SOFTWARE=1` forces the CPU blit. A capture includes the GL area, so

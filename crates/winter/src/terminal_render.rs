@@ -139,7 +139,7 @@ impl TerminalData {
 
 /// What the shells that present an input method or an accessibility value
 /// share: the composition, the candidate window's anchor and the visible text.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 impl TerminalData {
     /// Places the input method's marked text at the cursor.
     ///
@@ -187,7 +187,7 @@ impl TerminalData {
 /// uncommitted text. The caret counts characters, so the selection is converted
 /// here: a selection in the middle of a surrogate pair names the character that
 /// contains it, which is the only cell it can sit on.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
     let mut attr = types::TextAttribute::default();
     attr.set_underline_style(types::UnderlineStyle::SinglyUnderlined);
@@ -204,7 +204,7 @@ pub(crate) fn composition(text: &str, selected_utf16: usize) -> Composition {
 }
 
 /// The character index `units` UTF-16 units into `text`, clamped to its end.
-#[cfg(any(target_os = "macos", all(target_os = "linux", feature = "gtk"), test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn char_index(text: &str, units: usize) -> usize {
     let mut seen = 0;
     for (index, ch) in text.chars().enumerate() {

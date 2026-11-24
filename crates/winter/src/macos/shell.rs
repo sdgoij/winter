@@ -3,7 +3,7 @@
 //! Nothing here names AppKit except the [`Frame`] the pixels live in; the view
 //! translates events into these methods, and the controller turns the requests
 //! this module raises (a profile menu, the settings window, closing the window)
-//! into AppKit work. That keeps the rules the WinUI and egui shells share in the
+//! into AppKit work. That keeps the rules the WinUI and GTK shells share in the
 //! same shape, and leaves a headless test able to exercise the geometry.
 
 use std::path::{Path, PathBuf};
@@ -40,7 +40,7 @@ use super::metal;
 pub(crate) const INITIAL_GRID: (i32, i32) = (100, 28);
 /// How often the pty is polled, matching the WinUI shell (ADR 006).
 pub(crate) const TICK: Duration = Duration::from_millis(16);
-/// The cursor's blink half-period, matching the egui shell.
+/// The cursor's blink half-period, matching the GTK and WinUI shells.
 const BLINK: Duration = Duration::from_millis(500);
 
 /// One tab: its own terminal, viewport and find bar.

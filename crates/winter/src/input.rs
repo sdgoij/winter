@@ -1,10 +1,10 @@
 //! The shell's input vocabulary, independent of a window toolkit.
 //!
 //! ADR 009 says input translation takes portable events and a mode snapshot.
-//! This module is that portable event: `terminal_widget` translates egui's
-//! events into it today, and a native shell translates its own into it
-//! (ADR 040). The translation to `term` lives here so the rules — printable keys
-//! arrive twice, modifier sides, the AltGr chord — are written once.
+//! This module is that portable event: each shell translates its toolkit's
+//! events into it (ADR 040). The translation to `term` lives here so the rules
+//! — printable keys arrive twice, modifier sides, the AltGr chord — are written
+//! once.
 
 use term::input::{Key, KeyEvent, Modifiers as KeyModifiers, MouseButtons};
 
@@ -45,7 +45,7 @@ pub enum Event {
 
 /// The modifier state a toolkit reports.
 ///
-/// Both egui and WinUI report that *a* Ctrl or Alt is held, not which one. The
+/// The shells report that *a* Ctrl or Alt is held, not which one. The
 /// side is tracked from the key events themselves, which is what `term` needs
 /// for AltGr.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

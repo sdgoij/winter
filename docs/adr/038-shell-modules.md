@@ -1,6 +1,6 @@
 # ADR 038 — The egui shell is four modules, not one file
 
-- Status: Accepted
+- Status: Superseded by ADR 079 (the egui shell's modules are gone)
 - Date: 2026-11-22
 - Related: `crates/winter/src/{app,config,terminal_widget,window,icon}.rs`;
   ADRs 018, 019, 035, 036

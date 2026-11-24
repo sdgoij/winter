@@ -265,7 +265,7 @@ fn set_appearance(window: &NSWindow, dark: bool) {
 
 /// The host's monospaced face, preferring one with an italic.
 fn find_face() -> Option<renderer::FontFace> {
-    let directories = crate::app::font_directories();
+    let directories = crate::fonts::font_directories();
     let paths: Vec<&std::path::Path> = directories.iter().map(PathBuf::as_path).collect();
     let collection = renderer::FontCollection::from_directories(paths);
     collection

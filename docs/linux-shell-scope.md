@@ -1,7 +1,7 @@
 # A native Linux shell — scope
 
-Status: shipping — ADR 075. The GTK 4 shell is the Linux shell; the egui shell
-is the `--no-default-features` fallback. What remains is named under
+Status: shipping — ADR 075. The GTK 4 shell is the Linux shell, and ADR 079
+deleted the egui fallback, so the toolkit is required. What remains is named under
 [Remaining gaps](#remaining-gaps): primary selection, a cell-addressable
 accessibility tree, tab program icons and a sound sink.
 Related: ADR 075 (the shipping decision), ADR 062 (the parking it supersedes),
@@ -31,10 +31,10 @@ primary selection and IME.
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
 | 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
 | 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
-| 7. Cut-over | ✅ `gtk` is a default feature (ADR 075), CI installs `libgtk-4-dev`, and `--no-default-features` keeps egui |
+| 7. Cut-over | ✅ The GTK 4 shell is the Linux build and CI installs `libgtk-4-dev` (ADRs 075, 079) |
 
-`cargo run -p winter` builds the GTK shell on Linux; `--no-default-features`
-builds the egui one, which needs no GTK headers. `just linux` runs the GTK
+`cargo run -p winter` builds the GTK shell on Linux, and the headers above are
+required (ADR 079). `just linux` runs the GTK
 build from either host.
 
 ## What must not change
@@ -249,9 +249,8 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
    caret, the screen as the pane's accessible description, the bell flash and
    OSC 777 notifications. ⏳ Primary selection.
-7. **Cut-over.** ✅ Taken by ADR 075: `gtk` is the Linux default, the gate
-   installs the headers and builds it, and egui remains the
-   `--no-default-features` fallback.
+7. **Cut-over.** ✅ Taken by ADR 075: the GTK shell is the Linux build and the
+   gate installs the headers. ADR 079 removed the egui fallback with it.
 8. **Package.** ✅ Taken by ADR 077: the Linux archive is an app tree — the
    binary, a desktop entry named after the application id, the generated icon
    and a rootless installer for `~/.local` — and by ADR 078: the tag job also
@@ -280,8 +279,8 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 
 ## Open questions
 
-ADR 075 settles the fallback: egui stays built by `--no-default-features`, so a
-GTK problem always has a working shell to fall back to.
+ADR 079 removed the fallback: the GTK shell is the Linux shell, so a GTK
+problem is a Linux problem.
 
 - Should the settings window be the native document editor only, or also stay
   available as the shared `config::Draft` form for parity testing?

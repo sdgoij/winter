@@ -1,12 +1,13 @@
-//! The find bar's state and the rules both shells share.
+//! The find bar's state and the rules every shell shares.
 //!
 //! `buffer`'s `find_text` reports matches in document coordinates; this module
 //! keeps the query, the current match, the scroll that brings it into view and
-//! the conversion to the screen spans a renderer paints. The egui pane draws its
-//! own bar and the WinUI pane draws a `TextBox`, but both ask the same questions.
+//! the conversion to the screen spans a renderer paints. Each shell draws its
+//! own bar — a `TextBox` in WinUI, a `GtkSearchEntry` in the GTK shell, a field
+//! in AppKit — but all ask the same questions.
 
 use buffer::TextMatch;
-#[cfg(any(windows, target_os = "macos", feature = "gtk", test))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 use utils::{Point, PointSpan};
 
 use crate::term_control::Control;
@@ -90,9 +91,9 @@ pub(crate) fn next_match(current: Option<usize>, len: usize, forward: bool) -> O
 /// names the match whose span is reported as the focused one.
 ///
 /// Only the shells that hand these spans to a renderer call this: the WinUI
-/// pane, the macOS pane and the GTK pane. The egui pane paints its own rows. On
-/// the other platforms the function exists for its tests.
-#[cfg(any(windows, target_os = "macos", feature = "gtk", test))]
+/// pane, the macOS pane and the GTK pane. On the other platforms the function
+/// exists for its tests.
+#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 pub(crate) fn highlight_spans(
     matches: &[TextMatch],
     current: Option<usize>,
