@@ -13,6 +13,11 @@
 
 if ($env:WINTER_SHELL_INTEGRATION -eq '0') { return }
 
+# Windows PowerShell 5.1 decodes a BOM-less UTF-8 file with the system ANSI code
+# page, so `cat` and `Get-Content` turn an em dash into three mojibake
+# characters. PowerShell 7 already reads UTF-8; naming it costs nothing there.
+$PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'
+
 $Global:__winter_esc = [char]27
 $Global:__winter_bel = [char]7
 

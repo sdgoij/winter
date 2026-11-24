@@ -139,6 +139,13 @@ fn switch_is(argument: &OsStr, name: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_hook_reads_utf8_files() {
+        // Windows PowerShell 5.1 decodes a BOM-less UTF-8 file with the system
+        // ANSI code page; the hook names UTF-8 so `cat` is readable.
+        assert!(SCRIPT.contains("$PSDefaultParameterValues['Get-Content:Encoding'] = 'UTF8'"));
+    }
+
     fn script() -> PathBuf {
         PathBuf::from(r"C:\cache\winter\shell-integration.ps1")
     }
