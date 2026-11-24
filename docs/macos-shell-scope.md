@@ -44,8 +44,9 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
   OSC 777 notifications through `notify-rust`.
 - The shell's drawn icon (ADR 058) as the application icon.
-- A native settings window for the font size and the three defaults; it writes
-  the whole file through `config::Draft`, preserving sections it does not show.
+- A native settings window that edits the whole TOML document — font,
+  profiles, keybindings, schemes, themes and the defaults — and validates it
+  with the same reader startup uses before saving.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
   `WINTER_OPEN_SETTINGS=1` opens the settings window at startup and
@@ -59,8 +60,6 @@ Related: ADR 072 (the decision), ADR 062 (macOS is the next native shell), ADR
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
 - Panes, the command palette and a GPU content path.
-- The settings editor edits four values; profile, keybinding, scheme and theme
-  rows stay file-only here.
 
 ## Architecture
 

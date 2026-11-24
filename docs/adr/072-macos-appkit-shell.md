@@ -54,11 +54,12 @@ clipboard; `NSTimer` on the main run loop is the pty poll.
    `term_control`, `session`, `find`, `scrollbar`, `grid` and `terminal_render`
    are used unchanged. Windows-only logic stays in `winui`; macOS-only logic
    stays here.
-7. **The settings window edits the values this shell applies at once** — the font
-   size, the default profile, the default scheme and the theme — and preserves
-   every other section of the file through `config::Draft`. Editing profiles,
-   keybindings, schemes and themes remains a WinUI/egui capability and a named
-   follow-up here.
+7. **The settings window edits the whole settings document.** The window is an
+   editable `NSTextView` over the TOML file, so font, profiles, keybindings,
+   schemes, themes and the defaults are all reachable, and Save parses the text
+   with the reader startup uses before writing it. This is a deliberate
+   divergence from WinUI's structured rows (ADRs 028–032): a native document
+   editor gives every section at once without a second, drifting schema UI.
 8. **The menu bar is the platform's.** A Shell menu carries new/close/next/
    previous tab and Find; the Edit menu carries the standard `copy:`/`paste:`
    selectors with a nil target, so the responder chain gives them to the terminal

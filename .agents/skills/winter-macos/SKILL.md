@@ -22,7 +22,7 @@ and `terminal_render`; a rule that is not AppKit-specific belongs there.
 | `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
-| `settings.rs` | Native settings window over `config::Draft` |
+| `settings.rs` | Native settings window over the whole TOML document |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 
 The module declares the workspace's `unsafe` exemption for the AppKit boundary
@@ -73,6 +73,10 @@ second.
   alpha. `to_ne_bytes` produces `B,G,R,A`, which the rep reads as a nearly
   transparent image; the pane looks white over the window. Use
   `(pixel | 0xFF00_0000).to_be_bytes()` and `SourceOver`.
+- **The settings editor's `NSTextView` needs its smart substitutions off.**
+  macOS rewrites quotes, dashes and spellings as you type, which corrupts the
+  TOML keys. Turn off quote, dash, replacement and spelling correction, or the
+  file fails to parse after a save.
 - **The strip starts after the traffic lights.** The window is
   `FullSizeContentView` with a transparent hidden title bar; `LEFT_INSET` is the
   gap. A press on the empty strip drags the window; a press on a tab selects it

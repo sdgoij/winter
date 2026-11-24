@@ -1,10 +1,11 @@
-//! The settings window: AppKit controls over the shared settings draft.
+//! The settings window: AppKit controls over the whole settings document.
 //!
-//! The window edits the values this shell consumes at once — the font size and
-//! the three defaults — and writes the file through the same `settings::save`
-//! path startup reads. Profiles, keybindings, schemes and themes stay in the
-//! file for this shell: the draft keeps them unchanged, so a save never loses
-//! a row the window does not show (ADR 030's division, applied to macOS).
+//! The window is an editable view of the TOML file the shell reads: Font,
+//! profiles, keybindings, schemes, themes and the defaults are all there, so
+//! none of them stays file-only on macOS. Save parses the text with the same
+//! reader startup uses, writes it through `settings::save`, and reloads, so
+//! what runs is always the normalized file (ADR 030's rule; ADR 072 records
+//! why this shell edits the document rather than WinUI's rows).
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -14,34 +15,26 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSFont, NSPopUpButton, NSTextField, NSTextView, NSWindow,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSBezelStyle, NSBorderType, NSButton, NSColor, NSFont, NSScrollView, NSTextField, NSTextView,
+    NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
-use crate::config::Draft;
-
 use super::shell::Shell;
 
-const WIDTH: f64 = 520.0;
-const HEIGHT: f64 = 420.0;
+const WIDTH: f64 = 640.0;
+const HEIGHT: f64 = 540.0;
 const MARGIN: f64 = 20.0;
-const LABEL_WIDTH: f64 = 130.0;
-const FIELD_WIDTH: f64 = 300.0;
-const ROW: f64 = 30.0;
+/// The editor sits between this (from the bottom) and the hint at the top.
+const EDITOR_BOTTOM: f64 = 88.0;
+/// The hint and the editor leave this much at the top.
+const TOP_ROOM: f64 = 36.0;
 
 /// The controls the window owns once it has been built.
 struct Built {
     window: Retained<NSWindow>,
-    font: Retained<NSTextField>,
-    profile: Retained<NSPopUpButton>,
-    scheme: Retained<NSPopUpButton>,
-    theme: Retained<NSPopUpButton>,
+    document: Retained<NSTextView>,
     status: Retained<NSTextView>,
-    /// The row titles beside the "none" row, so a selection maps back to a name.
-    profile_names: RefCell<Vec<String>>,
-    scheme_names: RefCell<Vec<String>>,
-    theme_names: RefCell<Vec<String>>,
 }
 
 /// The settings window's instance state.
@@ -62,21 +55,14 @@ define_class!(
     impl SettingsWindow {
         #[unsafe(method(save:))]
         fn save(&self, _sender: Option<&AnyObject>) {
-            let document = {
-                let shell = self.ivars().shell.borrow();
-                match self.read_draft(&shell) {
-                    Ok(draft) => draft.document(shell.settings()),
-                    Err(error) => {
-                        self.set_status(&error);
-                        None
-                    }
+            let document = match self.read_document() {
+                Ok(document) => document,
+                Err(error) => {
+                    self.set_status(&error);
+                    return;
                 }
             };
-            let Some(document) = document else {
-                return;
-            };
-            let result = self.ivars().shell.borrow_mut().save_document(&document);
-            match result {
+            match self.ivars().shell.borrow_mut().save_document(&document) {
                 Ok(()) => {
                     self.sync();
                     self.set_status("Saved.");
@@ -124,34 +110,15 @@ impl SettingsWindow {
         }
     }
 
-    /// Re-reads the shell's settings into the controls.
+    /// Re-reads the shell's settings into the editor.
     pub(crate) fn sync(&self) {
         let shell = self.ivars().shell.borrow();
-        let settings = shell.settings();
         let Some(built) = &*self.ivars().built.borrow() else {
             return;
         };
-
         built
-            .font
-            .setStringValue(&NSString::from_str(&format!("{}", settings.font.size)));
-
-        *built.profile_names.borrow_mut() = settings.profiles.iter().map(|profile| profile.name.clone()).collect();
-        *built.scheme_names.borrow_mut() = settings.schemes.iter().map(|scheme| scheme.name.clone()).collect();
-        *built.theme_names.borrow_mut() = settings.themes.iter().map(|theme| theme.name.clone()).collect();
-
-        fill(
-            &built.profile,
-            &built.profile_names.borrow(),
-            settings.default_profile.as_deref(),
-        );
-        fill(
-            &built.scheme,
-            &built.scheme_names.borrow(),
-            settings.default_scheme.as_deref(),
-        );
-        fill(&built.theme, &built.theme_names.borrow(), settings.theme.as_deref());
-
+            .document
+            .setString(&NSString::from_str(&settings::to_toml(shell.settings())));
         built.status.setString(&NSString::from_str(&status_text(&shell)));
     }
 
@@ -174,25 +141,53 @@ impl SettingsWindow {
             let content = window.contentView().expect("a window has a content view");
             let content_height = content.bounds().size.height;
 
-            let font_label = label("Font size", MARGIN, 20.0, content_height, mtm);
-            let font = NSTextField::textFieldWithString(&NSString::from_str("14"), mtm);
-            font.setFrame(field_rect(0, content_height));
+            let hint = label(
+                "Settings file — Save validates the TOML and writes it.",
+                MARGIN,
+                content_height - 26.0,
+                WIDTH - 2.0 * MARGIN,
+                mtm,
+            );
 
-            let profile_label = label("Default profile", MARGIN, 20.0 + ROW, content_height, mtm);
-            let profile =
-                NSPopUpButton::initWithFrame_pullsDown(NSPopUpButton::alloc(mtm), field_rect(1, content_height), false);
+            let scroll = NSScrollView::initWithFrame(
+                NSScrollView::alloc(mtm),
+                NSRect::new(
+                    NSPoint::new(MARGIN, EDITOR_BOTTOM),
+                    NSSize::new(WIDTH - 2.0 * MARGIN, content_height - EDITOR_BOTTOM - TOP_ROOM),
+                ),
+            );
+            scroll.setHasVerticalScroller(true);
+            scroll.setBorderType(NSBorderType::BezelBorder);
 
-            let scheme_label = label("Default scheme", MARGIN, 20.0 + 2.0 * ROW, content_height, mtm);
-            let scheme =
-                NSPopUpButton::initWithFrame_pullsDown(NSPopUpButton::alloc(mtm), field_rect(2, content_height), false);
-
-            let theme_label = label("Theme", MARGIN, 20.0 + 3.0 * ROW, content_height, mtm);
-            let theme =
-                NSPopUpButton::initWithFrame_pullsDown(NSPopUpButton::alloc(mtm), field_rect(3, content_height), false);
+            let document = NSTextView::initWithFrame(NSTextView::alloc(mtm), scroll.contentView().bounds());
+            document.setMinSize(NSSize::new(0.0, 0.0));
+            document.setMaxSize(NSSize::new(f64::MAX, f64::MAX));
+            document.setVerticallyResizable(true);
+            document.setHorizontallyResizable(false);
+            document.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable);
+            document.setEditable(true);
+            document.setSelectable(true);
+            document.setRichText(false);
+            document.setAllowsUndo(true);
+            // TOML is punctuation: smart quotes, dashes and autocorrection would
+            // rewrite the keys the file needs to stay valid.
+            document.setAutomaticQuoteSubstitutionEnabled(false);
+            document.setAutomaticDashSubstitutionEnabled(false);
+            document.setAutomaticTextReplacementEnabled(false);
+            document.setAutomaticSpellingCorrectionEnabled(false);
+            if let Some(font) = NSFont::userFixedPitchFontOfSize(12.0) {
+                document.setFont(Some(&font));
+            }
+            // SAFETY: the text view owns its container for as long as it lives.
+            if let Some(container) = document.textContainer() {
+                container.setContainerSize(NSSize::new(scroll.contentSize().width, f64::MAX));
+                container.setWidthTracksTextView(true);
+            }
+            scroll.setDocumentView(Some(&document));
 
             let status = NSTextView::initWithFrame(
                 NSTextView::alloc(mtm),
-                NSRect::new(NSPoint::new(MARGIN, 62.0), NSSize::new(WIDTH - 2.0 * MARGIN, 180.0)),
+                NSRect::new(NSPoint::new(MARGIN, 48.0), NSSize::new(WIDTH - 2.0 * MARGIN, 34.0)),
             );
             status.setEditable(false);
             status.setSelectable(true);
@@ -200,19 +195,13 @@ impl SettingsWindow {
             status.setDrawsBackground(false);
             status.setFont(Some(&NSFont::systemFontOfSize(11.0)));
 
-            let save = button("Save", WIDTH - MARGIN - 80.0, 20.0, self, sel!(save:), mtm);
+            let save = button("Save", WIDTH - MARGIN - 90.0, 10.0, self, sel!(save:), mtm);
             save.setKeyEquivalent(&NSString::from_str("\r"));
-            let revert = button("Revert", WIDTH - MARGIN - 170.0, 20.0, self, sel!(revert:), mtm);
-            let close = button("Close", WIDTH - MARGIN - 250.0, 20.0, self, sel!(closeWindow:), mtm);
+            let revert = button("Revert", WIDTH - MARGIN - 190.0, 10.0, self, sel!(revert:), mtm);
+            let close = button("Close", WIDTH - MARGIN - 280.0, 10.0, self, sel!(closeWindow:), mtm);
 
-            content.addSubview(&font_label);
-            content.addSubview(&font);
-            content.addSubview(&profile_label);
-            content.addSubview(&profile);
-            content.addSubview(&scheme_label);
-            content.addSubview(&scheme);
-            content.addSubview(&theme_label);
-            content.addSubview(&theme);
+            content.addSubview(&hint);
+            content.addSubview(&scroll);
             content.addSubview(&status);
             content.addSubview(&save);
             content.addSubview(&revert);
@@ -220,31 +209,17 @@ impl SettingsWindow {
 
             Built {
                 window,
-                font,
-                profile,
-                scheme,
-                theme,
+                document,
                 status,
-                profile_names: RefCell::new(Vec::new()),
-                scheme_names: RefCell::new(Vec::new()),
-                theme_names: RefCell::new(Vec::new()),
             }
         }
     }
 
-    fn read_draft(&self, shell: &Shell) -> Result<Draft, String> {
+    fn read_document(&self) -> Result<settings::Settings, String> {
         let Some(built) = &*self.ivars().built.borrow() else {
             return Err("the settings window is not built".to_string());
         };
-
-        let mut draft = Draft::from_settings(shell.settings());
-        let text = built.font.stringValue().to_string();
-        draft.font_size = parse_font_size(&text)?;
-
-        draft.default_profile = selected(&built.profile, &built.profile_names.borrow());
-        draft.default_scheme = selected(&built.scheme, &built.scheme_names.borrow());
-        draft.theme = selected(&built.theme, &built.theme_names.borrow());
-        Ok(draft)
+        parse_document(&built.document.string().to_string())
     }
 
     fn set_status(&self, message: &str) {
@@ -265,21 +240,15 @@ impl SettingsWindow {
     }
 }
 
-fn label(text: &str, x: f64, top: f64, height: f64, mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
-    label.setFrame(NSRect::new(
-        NSPoint::new(x, height - top - 20.0),
-        NSSize::new(LABEL_WIDTH, 20.0),
-    ));
-    label
+/// Parses the text the editor holds, with the window's error shape.
+fn parse_document(text: &str) -> Result<settings::Settings, String> {
+    settings::parse(text).map_err(|error| format!("The document is not valid: {error}"))
 }
 
-fn field_rect(row: usize, height: f64) -> NSRect {
-    let top = 20.0 + ROW * row as f64;
-    NSRect::new(
-        NSPoint::new(MARGIN + LABEL_WIDTH, height - top - 24.0),
-        NSSize::new(FIELD_WIDTH, 24.0),
-    )
+fn label(text: &str, x: f64, y: f64, width: f64, mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
+    label.setFrame(NSRect::new(NSPoint::new(x, y), NSSize::new(width, 20.0)));
+    label
 }
 
 fn button(
@@ -295,7 +264,7 @@ fn button(
     let button = unsafe {
         let button = NSButton::initWithFrame(
             NSButton::alloc(mtm),
-            NSRect::new(NSPoint::new(x, y), NSSize::new(80.0, 28.0)),
+            NSRect::new(NSPoint::new(x, y), NSSize::new(90.0, 28.0)),
         );
         button.setTarget(Some(target.as_ref()));
         button.setAction(Some(action));
@@ -304,26 +273,6 @@ fn button(
     button.setTitle(&NSString::from_str(title));
     button.setBezelStyle(NSBezelStyle::Push);
     button
-}
-
-fn fill(popup: &NSPopUpButton, names: &[String], selected_name: Option<&str>) {
-    popup.removeAllItems();
-    popup.addItemWithTitle(&NSString::from_str("—"));
-    for name in names {
-        popup.addItemWithTitle(&NSString::from_str(name));
-    }
-    let index = selected_name
-        .and_then(|name| names.iter().position(|candidate| candidate == name))
-        .map_or(0, |index| index + 1);
-    popup.selectItemAtIndex(index as isize);
-}
-
-fn selected(popup: &NSPopUpButton, names: &[String]) -> Option<String> {
-    let index = popup.indexOfSelectedItem();
-    if index <= 0 {
-        return None;
-    }
-    names.get(index as usize - 1).cloned()
 }
 
 fn status_text(shell: &Shell) -> String {
@@ -348,34 +297,64 @@ fn status_text(shell: &Shell) -> String {
     text
 }
 
-/// A font size the settings window accepts.
-///
-/// The field is text until Save; a size outside the range a cell grid can use
-/// keeps the window open and names the value, rather than writing it and
-/// failing on the next start.
-fn parse_font_size(text: &str) -> Result<f32, String> {
-    let size = text
-        .trim()
-        .parse::<f32>()
-        .map_err(|_| format!("`{text}` is not a font size"))?;
-    if !size.is_finite() || !(4.0..=96.0).contains(&size) {
-        return Err(format!("`{text}` is outside 4–96 points"));
-    }
-    Ok(size)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_font_size_is_a_number_in_range() {
-        assert_eq!(parse_font_size(" 14 "), Ok(14.0));
-        assert_eq!(parse_font_size("4"), Ok(4.0));
-        assert_eq!(parse_font_size("96"), Ok(96.0));
-        assert!(parse_font_size("big").is_err());
-        assert!(parse_font_size("3.9").is_err());
-        assert!(parse_font_size("97").is_err());
-        assert!(parse_font_size("NaN").is_err());
+    fn the_editor_reads_the_sections_the_partial_window_could_not() {
+        let document = r##"
+version = 1
+default_profile = "shell"
+default_scheme = "Mine"
+theme = "Mine"
+
+[font]
+size = 18.0
+
+[[profiles]]
+name = "shell"
+command = "/bin/zsh"
+args = ["-l"]
+
+[[keybindings]]
+keys = "ctrl+shift+t"
+action = "newTab"
+
+[[schemes]]
+name = "Mine"
+foreground = "#ffffff"
+background = "#000000"
+
+[[themes]]
+name = "Mine"
+"##;
+
+        let parsed = parse_document(document).expect("a valid document");
+        assert_eq!(parsed.font.size, 18.0);
+        assert_eq!(parsed.profiles[0].name, "shell");
+        assert_eq!(parsed.profiles[0].args, ["-l"]);
+        assert!(
+            parsed
+                .keybindings
+                .iter()
+                .any(|binding| binding.keys.to_string() == "ctrl+shift+t" && binding.action == settings::Action::NewTab)
+        );
+        assert_eq!(parsed.schemes[0].name, "Mine");
+        assert_eq!(parsed.themes[0].name, "Mine");
+        assert_eq!(parsed.default_profile.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn an_invalid_document_names_the_problem() {
+        let error = parse_document("font = ").expect_err("a broken document");
+        assert!(error.contains("not valid"), "{error}");
+    }
+
+    #[test]
+    fn a_saved_document_reads_back_as_the_same_settings() {
+        let original = settings::Settings::default();
+        let text = settings::to_toml(&original);
+        assert_eq!(parse_document(&text).expect("the writer's own text"), original);
     }
 }
