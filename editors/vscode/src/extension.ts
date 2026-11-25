@@ -2,20 +2,35 @@
 //
 // VS Code owns the pane; this extension owns a process that owns the shell and
 // the pixels. Commands go to the process's stdin as one JSON object per line, and
-// frames come back as five u32s (width, height, cell width, cell height, length)
-// then RGBA bytes, which the webview paints with `putImageData`.
+// the process answers on stdout with tagged messages: kind 0 is a frame (width,
+// height, cell width, cell height, byte length, RGBA) and kind 1 is text for the
+// clipboard. The webview paints frames with `putImageData`.
 
 import * as cp from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-/** The frame header: five big-endian u32s. */
-const HEADER = 20;
+/** A frame message: `u32 0` then five `u32`s. */
+const FRAME_HEADER = 24;
+/** A text message: `u32 1` and a length. */
+const TEXT_HEADER = 8;
 /** How often a frame is asked for while a panel is showing. */
 const FRAME_INTERVAL = 33;
 
-type Message = { kind: "input"; text: string } | { kind: "resize"; cols: number; rows: number };
+type Message =
+  | { kind: "input"; text: string }
+  | { kind: "resize"; cols: number; rows: number }
+  | {
+      kind: "pointer";
+      action: "press" | "move" | "release";
+      col: number;
+      row: number;
+      button: number;
+      shift: boolean;
+    }
+  | { kind: "wheel"; col: number; row: number; lines: number; shift: boolean }
+  | { kind: "copy" };
 
 let server: cp.ChildProcessWithoutNullStreams | undefined;
 let panel: vscode.WebviewPanel | undefined;
@@ -47,10 +62,28 @@ function open(): void {
     stop();
   });
   panel.webview.onDidReceiveMessage((message: Message) => {
-    if (message.kind === "input") {
-      send({ cmd: "write", text: message.text });
-    } else if (message.kind === "resize") {
-      send({ cmd: "resize", cols: message.cols, rows: message.rows });
+    switch (message.kind) {
+      case "input":
+        send({ cmd: "write", text: message.text });
+        break;
+      case "resize":
+        send({ cmd: "resize", cols: message.cols, rows: message.rows });
+        break;
+      case "pointer":
+        send({
+          cmd: message.action,
+          col: message.col,
+          row: message.row,
+          button: message.button,
+          shift: message.shift,
+        });
+        break;
+      case "wheel":
+        send({ cmd: "wheel", col: message.col, row: message.row, lines: message.lines, shift: message.shift });
+        break;
+      case "copy":
+        send({ cmd: "copy" });
+        break;
     }
   });
 
@@ -81,18 +114,38 @@ function start(): void {
 function onData(chunk: Buffer): void {
   pending = Buffer.concat([pending, chunk]);
 
-  while (pending.length >= HEADER) {
-    const width = pending.readUInt32BE(0);
-    const height = pending.readUInt32BE(4);
-    const cellWidth = pending.readUInt32BE(8);
-    const cellHeight = pending.readUInt32BE(12);
-    const length = pending.readUInt32BE(16);
-    if (pending.length < HEADER + length) {
-      return;
+  while (pending.length >= 4) {
+    const kind = pending.readUInt32BE(0);
+
+    if (kind === 1) {
+      if (pending.length < TEXT_HEADER) {
+        return;
+      }
+      const length = pending.readUInt32BE(4);
+      if (pending.length < TEXT_HEADER + length) {
+        return;
+      }
+      const text = pending.subarray(TEXT_HEADER, TEXT_HEADER + length).toString("utf8");
+      pending = pending.subarray(TEXT_HEADER + length);
+      if (text.length > 0) {
+        void vscode.env.clipboard.writeText(text);
+      }
+      continue;
     }
 
-    const pixels = pending.subarray(HEADER, HEADER + length);
-    pending = pending.subarray(HEADER + length);
+    if (pending.length < FRAME_HEADER) {
+      return;
+    }
+    const width = pending.readUInt32BE(4);
+    const height = pending.readUInt32BE(8);
+    const cellWidth = pending.readUInt32BE(12);
+    const cellHeight = pending.readUInt32BE(16);
+    const length = pending.readUInt32BE(20);
+    if (pending.length < FRAME_HEADER + length) {
+      return;
+    }
+    const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length);
+    pending = pending.subarray(FRAME_HEADER + length);
     void panel?.webview.postMessage({ kind: "frame", width, height, cellWidth, cellHeight, pixels });
   }
 }
@@ -148,7 +201,7 @@ function html(): string {
 <meta charset="utf-8">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #0c0c0c; overflow: hidden; }
-  #screen { display: block; outline: none; image-rendering: auto; }
+  #screen { display: block; outline: none; user-select: none; -webkit-user-select: none; image-rendering: auto; }
 </style>
 </head>
 <body>
@@ -158,6 +211,7 @@ function html(): string {
   const canvas = document.getElementById("screen");
   const context = canvas.getContext("2d");
   let cell = { width: 9, height: 17 };
+  let scale = 1;
   let last = { cols: 0, rows: 0 };
 
   window.addEventListener("message", (event) => {
@@ -182,7 +236,7 @@ function html(): string {
 
   // The pane is told a grid that fits it, so the server repaints at that size.
   function fit() {
-    const scale = Math.max(0.25, Math.min(2, (window.innerWidth - 8) / Math.max(1, canvas.width)));
+    scale = Math.max(0.25, Math.min(2, (window.innerWidth - 8) / Math.max(1, canvas.width)));
     canvas.style.width = Math.floor(canvas.width * scale) + "px";
     canvas.style.height = Math.floor(canvas.height * scale) + "px";
 
@@ -196,6 +250,70 @@ function html(): string {
 
   window.addEventListener("resize", fit);
 
+  // A pointer position in cells, clamped to the grid the canvas shows.
+  function cellAt(event) {
+    const rect = canvas.getBoundingClientRect();
+    const columns = Math.max(1, Math.round(canvas.width / cell.width));
+    const rows = Math.max(1, Math.round(canvas.height / cell.height));
+    const col = Math.floor((event.clientX - rect.left) / scale / cell.width);
+    const row = Math.floor((event.clientY - rect.top) / scale / cell.height);
+    return {
+      col: Math.min(columns - 1, Math.max(0, col)),
+      row: Math.min(rows - 1, Math.max(0, row)),
+    };
+  }
+
+  canvas.addEventListener("mousedown", (event) => {
+    canvas.focus();
+    event.preventDefault();
+    vscode.postMessage({
+      kind: "pointer",
+      action: "press",
+      button: event.button,
+      shift: event.shiftKey,
+      ...cellAt(event),
+    });
+  });
+
+  window.addEventListener("mousemove", (event) => {
+    // DOM: bit 0 is the left button, bit 1 the right, bit 2 the middle.
+    const held = (event.buttons & 1) ? 0 : (event.buttons & 4) ? 1 : (event.buttons & 2) ? 2 : -1;
+    if (held < 0) {
+      return;
+    }
+    vscode.postMessage({
+      kind: "pointer",
+      action: "move",
+      button: held,
+      shift: event.shiftKey,
+      ...cellAt(event),
+    });
+  });
+
+  window.addEventListener("mouseup", (event) => {
+    vscode.postMessage({
+      kind: "pointer",
+      action: "release",
+      button: event.button,
+      shift: event.shiftKey,
+      ...cellAt(event),
+    });
+  });
+
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      vscode.postMessage({
+        kind: "wheel",
+        lines: event.deltaY < 0 ? 3 : -3,
+        shift: event.shiftKey,
+        ...cellAt(event),
+      });
+    },
+    { passive: false },
+  );
+
   const escapes = {
     Enter: "\\r", Backspace: "\\x7f", Tab: "\\t", Escape: "\\x1b",
     ArrowUp: "\\x1b[A", ArrowDown: "\\x1b[B", ArrowRight: "\\x1b[C", ArrowLeft: "\\x1b[D",
@@ -204,6 +322,16 @@ function html(): string {
   };
 
   window.addEventListener("keydown", (event) => {
+    // Ctrl+Shift+C and Cmd+C copy; the plain Ctrl+C must still interrupt.
+    const copy =
+      (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "c") ||
+      (event.metaKey && event.key.toLowerCase() === "c");
+    if (copy) {
+      event.preventDefault();
+      vscode.postMessage({ kind: "copy" });
+      return;
+    }
+
     let text = escapes[event.key];
     if (!text && event.ctrlKey && event.key.length === 1) {
       text = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) & 0x1f);
@@ -227,7 +355,6 @@ function html(): string {
   });
 
   canvas.focus();
-  canvas.addEventListener("click", () => canvas.focus());
 </script>
 </body>
 </html>`;

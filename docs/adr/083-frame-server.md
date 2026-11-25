@@ -26,17 +26,25 @@ it owns the frame.
    shell.** It measures a face (ADR 029), spawns the shell on a pty and builds
    one [`Surface`] over it. It holds no terminal logic: what the screen says is
    `winter`'s.
-2. **Commands are JSON lines on stdin**: `write`, `resize`, `render` and `quit`.
-   A line this build does not know is skipped, not fatal — a host may be newer
-   than the server, and dropping the session is worse than ignoring a line.
-3. **Frames are binary on stdout**: five big-endian `u32`s — width, height, cell
-   width, cell height, byte length — then RGBA bytes with alpha forced opaque.
+2. **Commands are JSON lines on stdin**: `write`, `resize`, `render`, `press`,
+   `move`, `release`, `wheel`, `copy` and `quit`. A line this build does not know
+   is skipped, not fatal — a host may be newer than the server, and dropping the
+   session is worse than ignoring a line.
+3. **Answers are tagged**: kind 0 is a frame — five big-endian `u32`s (width,
+   height, cell width, cell height, byte length) then RGBA with alpha forced
+   opaque — and kind 1 is text, which is how a copy reaches the host's clipboard.
    The cell size is in the header because a host with a pane has pixels, not a
    grid; without it, turning a pane's size into `cols`/`rows` would mean guessing
    the font's metrics.
-4. **`editors/vscode` is the other half**: a command, a webview with a canvas,
+4. **The pointer policy lives in the server.** A press, move, release or wheel
+   is forwarded to a program that tracks the mouse, unless Shift is held; when it
+   is not forwarded, a press starts a selection, a move extends it and the wheel
+   scrolls. That is `forwards_to_application` and `Surface::press`/`drag` — the
+   same rule the shells apply (ADR 019), written once here rather than in the
+   webview.
+5. **`editors/vscode` is the other half**: a command, a webview with a canvas,
    and a child process. It asks for a frame every 33 ms and after input.
-5. **The demo uses one process per terminal.** Tabs, panes and remoting are not
+6. **The demo uses one process per terminal.** Tabs, panes and remoting are not
    modelled; a second terminal is a second process.
 
 ## Rationale
@@ -56,9 +64,10 @@ it owns the frame.
 - **Continuous rendering.** The demo asks for a frame every 33 ms while a panel
   is showing; `Surface::requires_continuous_redraw` and the dirty regions are
   not used yet, and the cursor does not blink.
-- **No selection, scrollback or mouse reporting.** The pointer belongs to the
-  host (ADR 019) and this host does not implement it, so `Surface::mouse` and
-  the selection are unused here.
+- **No selection UI of its own.** Selection, copy, scrollback and mouse
+  reporting are the server's, because they are the terminal's rules; the webview
+  only turns pixels into cells. Dragging past the edge does not autoscroll —
+  `Surface::drag_scroll` exists, but the webview clamps the pointer to the grid.
 - **Frames are large.** A 900 by 510 pane is about 1.8 MB per frame; that is
   nothing over a local pipe and wrong for a remote connection.
 - **The editor half is outside the cargo gate.** `editors/vscode` is TypeScript

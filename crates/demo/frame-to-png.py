@@ -22,8 +22,10 @@ def main(source: str, target: str) -> None:
     with open(source, "rb") as handle:
         data = handle.read()
 
-    width, height, cell_width, cell_height, length = struct.unpack(">IIIII", data[:20])
-    pixels = data[20 : 20 + length]
+    kind, width, height, cell_width, cell_height, length = struct.unpack(">IIIIII", data[:24])
+    if kind != 0:
+        raise SystemExit(f"not a frame: kind {kind}")
+    pixels = data[24 : 24 + length]
     assert len(pixels) == width * height * 4, (len(pixels), width, height)
 
     stride = width * 4

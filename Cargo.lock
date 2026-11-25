@@ -2498,6 +2498,7 @@ dependencies = [
  "renderer",
  "serde_json",
  "server",
+ "term",
  "utils",
  "winter",
 ]

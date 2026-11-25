@@ -153,7 +153,7 @@ impl View {
         self.scroll
     }
 
-    /// Returns the selection, if there is one.
+    /// The selection, when there is one.
     pub const fn selection(&self) -> Option<&Selection> {
         self.selection.as_ref()
     }

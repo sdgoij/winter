@@ -36,10 +36,23 @@ code --extensionDevelopmentPath="$PWD"
 ## What it does
 
 - Spawns `winter-frame`, which starts your shell on a pty.
-- Sends `{"cmd":"write","text":…}`, `{"cmd":"resize","cols":…,"rows":…}`,
-  `{"cmd":"render","cursor":true}` and `{"cmd":"quit"}` as JSON lines.
-- Reads frames: `u32` width, height, cell width, cell height and byte length,
-  then RGBA bytes, painted with `putImageData`.
+- Sends `write`, `resize`, `render`, `press`, `move`, `release`, `wheel`,
+  `copy` and `quit` as JSON lines.
+- Reads tagged messages: kind 0 is a frame (`u32` width, height, cell width,
+  cell height, byte length, then RGBA), painted with `putImageData`; kind 1 is
+  text for the clipboard.
+
+## Controls
+
+- **Type** — keys, `Ctrl+<letter>` as control codes, paste from the clipboard.
+- **Select** — click a cell, drag to extend, double-click for a word, triple
+  click for the row. The server decides what a click means (`Surface::press`).
+- **Copy** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>, or
+  <kbd>Cmd</kbd>+<kbd>C</kbd>. Plain `Ctrl+C` still interrupts.
+- **Scroll** — the wheel. A program that tracks the mouse gets the wheel
+  instead, exactly as `winter`'s shells behave; hold Shift to keep it here.
+- **Click in a tracking program** — forwarded as a mouse report, unless Shift is
+  held, which keeps the pointer for selection.
 
 The server is found by walking up from the workspace folder to
 `target/debug/winter-frame`, or wherever `winter.serverPath` points.
@@ -55,7 +68,7 @@ The server is found by walking up from the workspace folder to
 
 ## What it does not do
 
-- No selection, copy, scrollback or mouse reporting: the pointer belongs to the
-  host (ADR 019), and this host does not implement it.
-- No dirty-region or blink optimisation: it asks for a frame every 33 ms.
 - No IME: the webview's `keydown` is turned into text or an escape sequence.
+- No dirty-region or blink optimisation: it asks for a frame every 33 ms.
+- No drag-autoscroll: a drag clamps to the grid, so dragging past the edge does
+  not scroll the history.

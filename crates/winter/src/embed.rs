@@ -159,10 +159,82 @@ impl Surface {
         self.control.send_mouse(event)
     }
 
+    /// Whether the program is tracking the mouse, so the pointer belongs to it.
+    pub fn is_tracking_mouse(&self) -> bool {
+        self.control.is_tracking_mouse()
+    }
+
     /// Scrolls the view by `lines`, clamped to the history there is.
     pub fn scroll_by(&mut self, lines: i32) {
         let max = self.control.max_scroll();
         self.view.scroll_by(lines, max);
+    }
+
+    /// Starts a selection at a screen cell and returns how many clicks it was.
+    ///
+    /// The terminal has to have been pumped for this to name cells that exist:
+    /// [`render`](Self::render) pumps, and a host that asks about the screen
+    /// before painting calls [`pump`](Self::pump) itself.
+    ///
+    /// A double click selects the word under the cell and a triple click the
+    /// whole row, which is the rule every shell applies (ADR 019). The host
+    /// counts pixels; this decides what the click means.
+    pub fn press(&mut self, cell: (i32, i32), now: Instant) -> usize {
+        let (column, row) = cell;
+        let document = self.document_row(row);
+        let position = (column, document);
+        let clicks = self.view.click(position, now);
+
+        match clicks {
+            2 => {
+                let text = self.control.row_text(document);
+                self.view.select_word(&text, position);
+            }
+            3 => self.view.select_line(document, self.size.0),
+            _ => self.view.select(position, false),
+        }
+        clicks
+    }
+
+    /// Moves the selection's end to a screen cell, for a drag.
+    pub fn drag(&mut self, cell: (i32, i32)) {
+        let end = (cell.0, self.document_row(cell.1));
+        self.view.extend(end);
+    }
+
+    /// Scrolls while a drag holds the pointer outside the pane.
+    ///
+    /// `outside` is negative above the grid, positive below it and zero
+    /// inside; the rate is the view's bound, so a fast pointer cannot outrun
+    /// the screen.
+    pub fn drag_scroll(&mut self, outside: i32, now: Instant) {
+        let max = self.control.max_scroll();
+        self.view.drag_scroll(outside, max, now);
+    }
+
+    /// Drops the selection.
+    pub fn clear_selection(&mut self) {
+        self.view.clear_selection();
+    }
+
+    /// The selected text, copied through the buffer's own copy path.
+    pub fn selection_text(&mut self) -> Option<String> {
+        let selection = *self.view.selection()?;
+        self.control.selection_text(&selection)
+    }
+
+    /// Moves whatever the connection has produced into the terminal.
+    ///
+    /// [`render`](Self::render) does this too; a host that answers a question
+    /// about the screen before painting — a copy, a selection — pumps first.
+    pub fn pump(&mut self) {
+        self.control.pump();
+    }
+
+    /// The document row a screen row shows, history included.
+    fn document_row(&mut self, screen_row: i32) -> i32 {
+        let history = self.control.max_scroll();
+        input::screen_to_document(history, self.view.scroll(), screen_row)
     }
 
     /// Resizes the terminal to `columns` by `rows` cells.
@@ -257,6 +329,8 @@ fn target_size(cell: (u16, u16), columns: i32, rows: i32) -> (u16, u16) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use renderer::{CellShaping, CellSizeInDIP, FontId, GlyphBitmap};
     use utils::Size;
 
@@ -424,5 +498,60 @@ mod tests {
         assert!(written.ends_with(b"c"), "{written:?}");
         assert_eq!(surface.take_events(now), [TerminalEvent::Bell]);
         assert!(surface.take_events(now).is_empty());
+    }
+
+    #[test]
+    fn a_drag_selects_the_cells_between_the_press_and_the_pointer() {
+        let (mut surface, queue) = surface(20, 2);
+        queue.feed(b"hello world");
+        surface.pump();
+        let now = Instant::now();
+
+        surface.press((1, 0), now);
+        surface.drag((4, 0));
+
+        assert_eq!(surface.selection_text().as_deref(), Some("ello"));
+    }
+
+    #[test]
+    fn a_double_click_selects_the_word_under_the_cell() {
+        let (mut surface, queue) = surface(20, 2);
+        queue.feed(b"hello world");
+        surface.pump();
+        let now = Instant::now();
+
+        surface.press((7, 0), now);
+        let clicks = surface.press((7, 0), now + Duration::from_millis(1));
+
+        assert_eq!(clicks, 2);
+        assert_eq!(surface.selection_text().as_deref(), Some("world"));
+    }
+
+    #[test]
+    fn a_triple_click_selects_the_row() {
+        let (mut surface, queue) = surface(20, 2);
+        queue.feed(b"hello world");
+        surface.pump();
+        let now = Instant::now();
+
+        surface.press((7, 0), now);
+        surface.press((7, 0), now);
+        assert_eq!(surface.press((7, 0), now), 3);
+
+        let text = surface.selection_text().expect("a selection");
+        assert!(text.starts_with("hello world"), "{text:?}");
+    }
+
+    #[test]
+    fn clearing_the_selection_leaves_nothing_to_copy() {
+        let (mut surface, queue) = surface(20, 2);
+        queue.feed(b"hello");
+        surface.pump();
+
+        surface.press((1, 0), Instant::now());
+        assert!(surface.selection_text().is_some());
+
+        surface.clear_selection();
+        assert!(surface.selection_text().is_none());
     }
 }
