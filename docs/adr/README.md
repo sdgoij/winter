@@ -117,3 +117,4 @@ Rules:
 | [079](079-native-shells-only.md) | The native shells are the only shells: egui and `eframe` are deleted, the `gtk` feature goes, and the settings draft and font directories become toolkit-free public modules | Accepted |
 | [080](080-shells-are-crates.md) | Each shell is its own crate — `winter` is the shell-independent core, `gtk4`/`cocoa`/`winui` the shells, `app` the binary — and a package cycle is why they cannot stay together | Accepted |
 | [081](081-windows-gui-subsystem.md) | The Windows binary is linked as a GUI-subsystem executable, so a double-click opens the window and not a console; the trace file carries diagnostics | Accepted |
+| [082](082-embedding-surface.md) | `winter::embed::Surface` composes the terminal and its frame for a host with no window; the connection trait takes cells rather than a `PtySize`, the pty-less double is a production `Queue`, and the pty, notification and settings parts are features | Accepted |

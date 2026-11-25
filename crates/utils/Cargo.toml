@@ -7,11 +7,16 @@ authors.workspace = true
 publish.workspace = true
 description = "Terminal Implementation Library — geometry, types, and utilities"
 
+[features]
+# `create_temp_file` is the only user of `uuid`; a build with no filesystem
+# (a wasm host) leaves both out.
+temp-file = ["dep:uuid"]
+
 [dependencies]
 bitflags.workspace = true
 serde = { workspace = true, optional = true }
 thiserror.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

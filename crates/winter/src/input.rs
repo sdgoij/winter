@@ -254,6 +254,7 @@ pub const fn mouse_buttons(primary: bool, middle: bool, secondary: bool) -> Mous
 ///
 /// Only the keys a window chord can name are mapped; a key with no name here
 /// cannot be bound and always reaches the terminal.
+#[cfg(feature = "settings")]
 pub fn settings_key(key: Key) -> Option<settings::Key> {
     Some(match key {
         Key::Char(character) => settings::Key::Char(character.to_ascii_lowercase()),
@@ -282,6 +283,7 @@ pub fn settings_key(key: Key) -> Option<settings::Key> {
 /// A chord must match exactly, so `Ctrl+Shift+T` does not answer to `ctrl+t`.
 /// A shell that cannot perform the action declines it and lets the key reach
 /// the terminal, which is how a copy with nothing selected still interrupts.
+#[cfg(feature = "settings")]
 pub fn chord_action(bindings: &[settings::Keybinding], key: Key, modifiers: Modifiers) -> Option<settings::Action> {
     let key = settings_key(key)?;
     let chord = settings::Modifiers {
@@ -574,6 +576,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "settings")]
     fn chord_modifiers(ctrl: bool, shift: bool) -> Modifiers {
         Modifiers {
             shift,
@@ -583,6 +586,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "settings")]
     #[test]
     fn a_bound_chord_names_its_action() {
         let bindings = settings::DEFAULT_KEYBINDINGS;
@@ -597,6 +601,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "settings")]
     #[test]
     fn a_chord_must_match_exactly() {
         let bindings = settings::DEFAULT_KEYBINDINGS;
@@ -612,6 +617,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "settings")]
     #[test]
     fn a_key_the_file_cannot_name_is_never_a_chord() {
         let bindings = settings::DEFAULT_KEYBINDINGS;

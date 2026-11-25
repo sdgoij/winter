@@ -329,7 +329,7 @@ mod tests {
     };
     use utils::Size;
 
-    use crate::term_connection::tests::Buffer;
+    use crate::term_connection::Queue;
 
     #[test]
     fn a_marked_selection_counts_characters_not_utf16_units() {
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn a_frame_of_a_control_reaches_the_shared_pixels() {
-        let mut control = Control::new(Box::new(Buffer::with_output(b"hi")), (4, 2));
+        let mut control = Control::new(Box::new(Queue::with_output(b"hi")), (4, 2));
         control.pump();
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn an_image_band_reaches_the_renderers_buffer() {
-        let mut control = Control::new(Box::new(Buffer::with_output(b"\x1bP0;1;0q#1;2;0;100;0~\x1b\\")), (4, 2));
+        let mut control = Control::new(Box::new(Queue::with_output(b"\x1bP0;1;0q#1;2;0;100;0~\x1b\\")), (4, 2));
         control.pump();
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn a_composition_sits_at_the_cursor_and_clears_with_its_text() {
-        let mut control = Control::new(Box::new(Buffer::with_output(b"ab")), (4, 2));
+        let mut control = Control::new(Box::new(Queue::with_output(b"ab")), (4, 2));
         control.pump();
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 4, 2);
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn the_visible_screen_reads_as_plain_text() {
-        let mut control = Control::new(Box::new(Buffer::with_output(b"one\r\ntwo")), (6, 3));
+        let mut control = Control::new(Box::new(Queue::with_output(b"one\r\ntwo")), (6, 3));
         control.pump();
 
         let mut data = TerminalData::new(font(), RenderSettings::new(), 6, 3);
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn a_selection_crossing_history_is_in_screen_rows() {
-        let mut control = Control::new(Box::new(Buffer::with_output(b"one\r\ntwo\r\nthree")), (6, 2));
+        let mut control = Control::new(Box::new(Queue::with_output(b"one\r\ntwo\r\nthree")), (6, 2));
         control.pump();
 
         let mut view = View::new();

@@ -8,7 +8,9 @@ use std::path::PathBuf;
 /// Returns the directories this platform keeps fonts in, keeping the ones that
 /// exist.
 pub fn font_directories() -> Vec<PathBuf> {
-    let mut directories = Vec::new();
+    // The annotation is load-bearing on a target with no directory block: with
+    // no `push`, nothing else says what the vector holds.
+    let mut directories: Vec<PathBuf> = Vec::new();
 
     #[cfg(windows)]
     {

@@ -2605,7 +2605,7 @@ mod tests {
 
     #[test]
     fn a_scheme_reaches_the_pane_and_survives_a_resize() {
-        use winter::term_connection::tests::Buffer;
+        use winter::term_connection::Queue;
 
         let text = r##"
             version = 1
@@ -2623,7 +2623,7 @@ mod tests {
         let file = settings::parse(text).expect("settings");
         let terminal = TerminalSettings::resolve(&file);
 
-        let mut control = Control::new(Box::new(Buffer::with_output(b"")), (20, 5));
+        let mut control = Control::new(Box::new(Queue::with_output(b"")), (20, 5));
         control.apply_scheme(terminal.scheme.as_ref());
         assert_eq!(control.default_colors(), (0x0020_1020, 0x00E0_E0E0));
 
@@ -2636,7 +2636,7 @@ mod tests {
 
     #[test]
     fn the_renderer_is_handed_the_panes_palette() {
-        use winter::term_connection::tests::Buffer;
+        use winter::term_connection::Queue;
 
         let file = settings::parse(
             r##"
@@ -2652,7 +2652,7 @@ mod tests {
         .expect("settings");
         let terminal = TerminalSettings::resolve(&file);
 
-        let mut control = Control::new(Box::new(Buffer::with_output(b"")), (20, 5));
+        let mut control = Control::new(Box::new(Queue::with_output(b"")), (20, 5));
         control.apply_scheme(terminal.scheme.as_ref());
 
         let mut renderer = Renderer::new(
@@ -2703,11 +2703,11 @@ mod tests {
     #[test]
     fn an_id_names_its_tab_and_nothing_once_it_closes() {
         fn tab(id: u64) -> Tab {
-            use winter::term_connection::tests::Buffer;
+            use winter::term_connection::Queue;
 
             Tab {
                 id,
-                control: Control::new(Box::new(Buffer::with_output(b"")), (20, 5)),
+                control: Control::new(Box::new(Queue::with_output(b"")), (20, 5)),
                 view: ViewState::new(),
                 title: format!("tab {id}"),
                 program: "cmd.exe".to_string(),

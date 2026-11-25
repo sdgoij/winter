@@ -7,17 +7,37 @@ authors.workspace = true
 publish.workspace = true
 description = "The Winter terminal's shell-independent core"
 
+[features]
+default = ["pty", "notifications", "settings"]
+
+# A host that owns the process itself — an embedding, an agent's tool, a wasm
+# build — supplies its own `Connection` and needs none of the parts that name a
+# pty: the session, the resolved command line, the shell-integration hook
+# (ADR 082).
+pty = ["dep:server"]
+
+# Desktop notifications reach the platform's notification service. Without the
+# feature the host still receives `TerminalEvent::Notification` and decides for
+# itself what to do with it.
+notifications = ["dep:notify-rust"]
+
+# The TOML file and everything that names one: the settings draft, the profile a
+# shell opens a tab from, the chord lookup and `apply_scheme`. An embedding
+# starts from a measured font and a grid rather than a file, so it turns this off
+# and leaves the `settings` crate out of the build (ADR 082).
+settings = ["dep:settings"]
+
 [dependencies]
 audio.workspace = true
 buffer.workspace = true
 host.workspace = true
 renderer.workspace = true
-server.workspace = true
-settings.workspace = true
+server = { workspace = true, optional = true }
+settings = { workspace = true, optional = true }
 term.workspace = true
 types.workspace = true
 utils.workspace = true
-notify-rust.workspace = true
+notify-rust = { workspace = true, optional = true }
 # The drawn icon (ADR 058); dependency-free so the binary's build script can
 # compile the same geometry.
 winter-icon = { path = "../icon" }

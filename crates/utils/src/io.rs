@@ -70,6 +70,10 @@ pub fn path_exists(path: &Path) -> bool {
 }
 
 /// Creates a temporary file and returns its path.
+///
+/// Behind the `temp-file` feature: `uuid` is what names the file, and a build
+/// with no filesystem has no use for either (ADR 082).
+#[cfg(feature = "temp-file")]
 pub fn create_temp_file(prefix: &str, suffix: &str) -> Result<PathBuf, IoError> {
     let tmp = std::env::temp_dir();
     let name = format!("{}-{}-{}", prefix, uuid::Uuid::new_v4(), suffix);

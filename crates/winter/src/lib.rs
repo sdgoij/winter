@@ -19,6 +19,14 @@
 //!   the only module allowed `unsafe` (ADR 033).
 //! - [`config`] holds the settings draft every editor edits, and [`fonts`] the
 //!   directories a face is composed from.
+//! - [`embed`] composes the terminal and its frame for a host that is not a
+//!   shell — an editor panel, a wasm canvas, an agent's tool — and is the one
+//!   door such a host needs (ADR 082).
+//!
+//! The `pty`, `notifications` and `settings` features are on by default and are
+//! what a shell needs. An embedding turns them off: it owns the process, it
+//! decides what a bell or a desktop notification means, and it starts from a
+//! measured font and a grid rather than a settings file.
 //!
 //! The shells are crates of their own and depend on this one (ADR 080):
 //! `winter-gtk4` is the GTK 4 shell (ADRs 075, 076), `winter-cocoa` the AppKit
@@ -28,15 +36,20 @@
 //! The emulation and console crates are portable and are tested without a
 //! window.
 
+#[cfg(feature = "settings")]
 pub mod config;
+pub mod embed;
 pub mod find;
 pub mod fonts;
 pub mod grid;
 pub mod icon;
 pub mod input;
+#[cfg(feature = "notifications")]
 pub mod notifications;
 pub mod scrollbar;
+#[cfg(feature = "pty")]
 pub mod session;
+#[cfg(feature = "pty")]
 pub mod shell_integration;
 #[allow(unsafe_code)]
 pub mod sound;
@@ -44,6 +57,7 @@ pub mod tabs;
 pub mod term_connection;
 pub mod term_control;
 pub mod term_events;
+#[cfg(all(feature = "pty", feature = "settings"))]
 pub mod term_settings;
 pub mod terminal_render;
 pub mod trace;

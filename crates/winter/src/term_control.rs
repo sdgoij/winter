@@ -12,7 +12,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use server::pty::PtySize;
 use term::Terminal;
 use term::input::{KeyEvent, MouseEvent};
 use types::InputModes;
@@ -70,6 +69,7 @@ impl Control {
     /// At creation the scheme fills the table before the shell can write to it,
     /// so a program's OSC 10/11 arrives later and wins. On a reload the file is
     /// the later word, so the table is rebuilt and a program's OSC colours go.
+    #[cfg(feature = "settings")]
     pub fn apply_scheme(&mut self, scheme: Option<&settings::Scheme>) {
         let handle = self.color_table();
         let Ok(mut table) = handle.lock() else {
@@ -185,8 +185,7 @@ impl Control {
     pub fn resize(&mut self, columns: i32, rows: i32) {
         self.size = (columns, rows);
         self.terminal.resize(columns, rows);
-        let size = PtySize::new(cell_count(columns), cell_count(rows));
-        let _ = self.connection.resize(size);
+        let _ = self.connection.resize(columns, rows);
     }
 
     /// The grid size in cells.
@@ -333,21 +332,16 @@ impl Control {
     }
 }
 
-/// Turns a cell count into the `u16` a pty size carries.
-fn cell_count(value: i32) -> u16 {
-    value.clamp(1, i32::from(u16::MAX)) as u16
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::term_connection::tests::Buffer;
+    use crate::term_connection::Queue;
     use term::input::WheelAxis;
 
     /// A control whose connection produces `output`, and a handle to that
     /// connection so the test can see what was sent.
-    fn control_with(output: &[u8]) -> (Control, Buffer) {
-        let connection = Buffer::with_output(output);
+    fn control_with(output: &[u8]) -> (Control, Queue) {
+        let connection = Queue::with_output(output);
         (Control::new(Box::new(connection.clone()), (80, 24)), connection)
     }
 
@@ -393,7 +387,7 @@ mod tests {
         assert_eq!(control.take_events(now), [TerminalEvent::Bell]);
 
         // The fake produces output once; a second bell arrives as new bytes.
-        connection.send(b"\x07");
+        connection.feed(b"\x07");
         control.pump();
         assert_eq!(
             control.take_events(now + crate::visual_bell::FLASH + Duration::from_millis(1)),
@@ -417,7 +411,7 @@ mod tests {
 
     #[test]
     fn an_exit_is_reported_once() {
-        let connection = Buffer::ended();
+        let connection = Queue::ended();
         let mut control = Control::new(Box::new(connection), (80, 24));
 
         control.pump();
@@ -445,17 +439,10 @@ mod tests {
         control.resize(100, 30);
 
         assert_eq!(control.size(), (100, 30));
-        assert_eq!(connection.resized(), [PtySize::new(100, 30)]);
+        assert_eq!(connection.resized(), [(100, 30)]);
 
         let view = View::new();
         assert_eq!(control.snapshot(&view).width, 100);
-    }
-
-    #[test]
-    fn a_cell_count_is_clamped_for_the_pty() {
-        assert_eq!(cell_count(0), 1);
-        assert_eq!(cell_count(120), 120);
-        assert_eq!(cell_count(i32::MAX), u16::MAX);
     }
 
     #[test]
@@ -491,7 +478,7 @@ mod tests {
         assert!(connection.written().is_empty());
 
         // DECSET 1000 turns the same event into an X10 report at the pointer.
-        connection.send(b"\x1b[?1000h");
+        connection.feed(b"\x1b[?1000h");
         control.pump();
         assert!(control.is_tracking_mouse());
         assert!(control.send_mouse(&MouseEvent::wheel((3, 2), WheelAxis::Vertical, 120)));

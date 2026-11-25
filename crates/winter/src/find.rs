@@ -7,7 +7,6 @@
 //! in AppKit — but all ask the same questions.
 
 use buffer::TextMatch;
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 use utils::{Point, PointSpan};
 
 use crate::term_control::Control;
@@ -88,12 +87,9 @@ pub fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<u
 /// Converts document matches to the screen spans a renderer paints.
 ///
 /// `history` and `scroll` place the screen in the document, and `current`
-/// names the match whose span is reported as the focused one.
-///
-/// Only the shells that hand these spans to a renderer call this: the WinUI
-/// pane, the macOS pane and the GTK pane. On the other platforms the function
-/// exists for its tests.
-#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
+/// names the match whose span is reported as the focused one. The renderer that
+/// paints the spans is `terminal_render`, so this is core code and not a shell
+/// utility.
 pub fn highlight_spans(
     matches: &[TextMatch],
     current: Option<usize>,

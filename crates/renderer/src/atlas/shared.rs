@@ -8,7 +8,7 @@
 //! The handle is single-threaded on purpose: a window toolkit paints on its UI
 //! thread, and the rasteriser it holds is not `Send`.
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
 use super::common::{IBackend, RenderingPayload};
@@ -31,6 +31,15 @@ impl SharedBackend {
     /// Runs `read` over the last frame's pixels, row-major `0xAARRGGBB`.
     pub fn with_pixels<T>(&self, read: impl FnOnce(&[u32]) -> T) -> T {
         read(self.inner.borrow().pixels())
+    }
+
+    /// Borrows the last frame's pixels, row-major `0xAARRGGBB`.
+    ///
+    /// A host that copies the frame past the call cannot use [`with_pixels`],
+    /// because the borrow ends with the closure; this hands the borrow back
+    /// instead (ADR 082).
+    pub fn pixels(&self) -> Ref<'_, [u32]> {
+        Ref::map(self.inner.borrow(), |backend| backend.pixels())
     }
 
     /// Returns the last frame's width in pixels.
