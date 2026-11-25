@@ -108,7 +108,7 @@ function start(): void {
   server.stderr.on("data", (chunk: Buffer) => console.error(`winter-frame: ${chunk.toString()}`));
   server.stdout.on("data", (chunk: Buffer) => onData(chunk));
 
-  timer = setInterval(() => send({ cmd: "render", cursor: true }), FRAME_INTERVAL);
+  timer = setInterval(() => send({ cmd: "render" }), FRAME_INTERVAL);
 }
 
 function onData(chunk: Buffer): void {
@@ -216,7 +216,8 @@ function html(): string {
 
   window.addEventListener("message", (event) => {
     const message = event.data;
-    if (message.kind !== "frame") {
+    // A zero width is the server saying nothing changed: keep the picture.
+    if (message.kind !== "frame" || message.width === 0) {
       return;
     }
 

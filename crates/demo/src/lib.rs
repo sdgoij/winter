@@ -110,11 +110,8 @@ pub enum Command {
         /// The grid's new height.
         rows: i32,
     },
-    /// Paint and send a frame.
-    Render {
-        /// Whether the cursor is in its "on" blink phase.
-        cursor: bool,
-    },
+    /// Paint and send a frame, if anything changed.
+    Render,
     /// A button press at a cell.
     Press {
         /// The cell's column.
@@ -193,9 +190,7 @@ pub fn parse(line: &str) -> Option<Command> {
             columns: i32::try_from(value.get("cols")?.as_i64()?).ok()?,
             rows: i32::try_from(value.get("rows")?.as_i64()?).ok()?,
         },
-        "render" => Command::Render {
-            cursor: value.get("cursor").and_then(serde_json::Value::as_bool).unwrap_or(true),
-        },
+        "render" => Command::Render,
         "press" => {
             let (column, row) = cell()?;
             Command::Press {
@@ -247,7 +242,12 @@ pub fn parse(line: &str) -> Option<Command> {
 /// A frame is `u32 0`, width, height, cell width, cell height, byte length, then
 /// that many RGBA bytes. A text answer is `u32 1`, byte length, then UTF-8 —
 /// which is how a copy reaches the host's clipboard.
+///
+/// A frame with a zero width is the answer to a render whose terminal did not
+/// change: the host keeps the picture it already has.
 pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface) -> io::Result<()> {
+    let start = Instant::now();
+
     for line in input.lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -264,10 +264,13 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
         match command {
             Command::Write(text) => surface.write(&text),
             Command::Resize { columns, rows } => surface.resize(columns, rows).map_err(io::Error::other)?,
-            Command::Render { cursor } => {
-                write_frame(surface, output, cursor)?;
-                output.flush()?;
-                if surface.take_events(Instant::now()).contains(&TerminalEvent::Exited) {
+            Command::Render => {
+                let now = Instant::now();
+                let cursor = cursor_on(surface, start, now);
+                if write_frame(surface, output, cursor)? {
+                    output.flush()?;
+                }
+                if surface.take_events(now).contains(&TerminalEvent::Exited) {
                     break;
                 }
             }
@@ -343,6 +346,17 @@ fn forwards(surface: &Surface, shift: bool) -> bool {
     input::forwards_to_application(surface.is_tracking_mouse(), shift)
 }
 
+/// The cursor phase at `now`, or `true` while the cursor is not drawn.
+///
+/// The half-period is the shells' 500 ms, and the phase is constant while the
+/// cursor is hidden, so an idle pane stops asking for frames.
+fn cursor_on(surface: &Surface, start: Instant, now: Instant) -> bool {
+    if !surface.cursor_visible() {
+        return true;
+    }
+    (now.saturating_duration_since(start).as_millis() / 500).is_multiple_of(2)
+}
+
 fn mouse_button(button: i32) -> MouseButton {
     match button {
         1 => MouseButton::Middle,
@@ -367,9 +381,18 @@ fn with_shift(mut event: MouseEvent, shift: bool) -> MouseEvent {
     event
 }
 
-/// Paints a frame and writes its tagged header and pixels.
-pub fn write_frame(surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<()> {
-    surface.render(cursor).map_err(io::Error::other)?;
+/// Paints a frame and writes it, or writes a zero-width header when nothing
+/// changed.
+///
+/// Returns whether a frame was painted; a host that reads a zero-width header
+/// keeps the picture it already has.
+pub fn write_frame(surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<bool> {
+    if !surface.render(cursor).map_err(io::Error::other)? {
+        output.write_all(&0u32.to_be_bytes())?;
+        output.write_all(&[0u8; 20])?;
+        return Ok(false);
+    }
+
     let (width, height) = surface.frame_size();
     let (cell_width, cell_height) = surface.cell_size();
     let pixels = surface.pixels();
@@ -387,7 +410,8 @@ pub fn write_frame(surface: &mut Surface, output: &mut impl Write, cursor: bool)
     output.write_all(&u32::from(cell_width).to_be_bytes())?;
     output.write_all(&u32::from(cell_height).to_be_bytes())?;
     output.write_all(&(rgba.len() as u32).to_be_bytes())?;
-    output.write_all(&rgba)
+    output.write_all(&rgba)?;
+    Ok(true)
 }
 
 /// Writes a text answer, which is how a copy reaches the host.
@@ -489,12 +513,10 @@ mod tests {
     }
 
     #[test]
-    fn a_render_command_asks_for_a_frame_and_names_the_cursor() {
-        assert_eq!(parse(r#"{"cmd":"render"}"#), Some(Command::Render { cursor: true }));
-        assert_eq!(
-            parse(r#"{"cmd":"render","cursor":false}"#),
-            Some(Command::Render { cursor: false })
-        );
+    fn a_render_command_asks_for_a_frame() {
+        assert_eq!(parse(r#"{"cmd":"render"}"#), Some(Command::Render));
+        // A host may still send the phase it used to own; it is ignored now.
+        assert_eq!(parse(r#"{"cmd":"render","cursor":false}"#), Some(Command::Render));
     }
 
     #[test]
@@ -590,6 +612,33 @@ mod tests {
         .expect("serve");
 
         assert_eq!((width(&out), height(&out)), (64, 48));
+    }
+
+    #[test]
+    fn an_idle_render_answers_with_a_zero_width_header() {
+        let (mut surface, _queue) = fixture(4, 2);
+        let mut painted = Vec::new();
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut painted, &mut surface).expect("serve");
+        assert_eq!(width(&painted), 32);
+
+        let mut idle = Vec::new();
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut idle, &mut surface).expect("serve");
+
+        assert_eq!(idle.len(), FRAME_HEADER, "an idle answer is a header and nothing else");
+        assert_eq!(kind(&idle), 0);
+        assert_eq!(width(&idle), 0);
+    }
+
+    #[test]
+    fn output_after_an_idle_answer_paints_again() {
+        let (mut surface, queue) = fixture(4, 2);
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut Vec::new(), &mut surface).expect("serve");
+
+        queue.feed(b"hi");
+        let mut out = Vec::new();
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut out, &mut surface).expect("serve");
+
+        assert_eq!(width(&out), 32);
     }
 
     #[test]

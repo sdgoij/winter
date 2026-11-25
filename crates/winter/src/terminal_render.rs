@@ -131,6 +131,14 @@ impl TerminalData {
         self.document_height
     }
 
+    /// Whether the cursor is drawn in the pane at all.
+    ///
+    /// A host uses this to stop asking for frames when only the blink phase
+    /// would differ: with the cursor hidden, every phase is the same picture.
+    pub const fn cursor_visible(&self) -> bool {
+        self.cursor.in_viewport
+    }
+
     /// The prompt marks the scrollbar draws.
     pub fn marks(&self) -> &[grid::MarkTick] {
         &self.marks

@@ -33,9 +33,10 @@ it owns the frame.
 3. **Answers are tagged**: kind 0 is a frame — five big-endian `u32`s (width,
    height, cell width, cell height, byte length) then RGBA with alpha forced
    opaque — and kind 1 is text, which is how a copy reaches the host's clipboard.
-   The cell size is in the header because a host with a pane has pixels, not a
-   grid; without it, turning a pane's size into `cols`/`rows` would mean guessing
-   the font's metrics.
+   A frame with a zero width is the answer to a render that changed nothing: the
+   host keeps the picture it has. The cell size is in the header because a host
+   with a pane has pixels, not a grid; without it, turning a pane's size into
+   `cols`/`rows` would mean guessing the font's metrics.
 4. **The pointer policy lives in the server.** A press, move, release or wheel
    is forwarded to a program that tracks the mouse, unless Shift is held; when it
    is not forwarded, a press starts a selection, a move extends it and the wheel
@@ -61,9 +62,11 @@ it owns the frame.
 
 ## Consequences
 
-- **Continuous rendering.** The demo asks for a frame every 33 ms while a panel
-  is showing; `Surface::requires_continuous_redraw` and the dirty regions are
-  not used yet, and the cursor does not blink.
+- **An idle pane costs 24 bytes a poll.** `Surface::render` skips the paint when
+  nothing changed — no bytes, no resize, no scroll, no selection and the same
+  cursor phase — so the host's 33 ms poll answers with a zero-width header. The
+  cursor phase is the server's: 500 ms, like every shell, and constant while the
+  cursor is hidden, so a full-screen program stops asking for frames entirely.
 - **No selection UI of its own.** Selection, copy, scrollback and mouse
   reporting are the server's, because they are the terminal's rules; the webview
   only turns pixels into cells. Dragging past the edge does not autoscroll —

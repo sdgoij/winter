@@ -40,7 +40,11 @@ code --extensionDevelopmentPath="$PWD"
   `copy` and `quit` as JSON lines.
 - Reads tagged messages: kind 0 is a frame (`u32` width, height, cell width,
   cell height, byte length, then RGBA), painted with `putImageData`; kind 1 is
-  text for the clipboard.
+  text for the clipboard. A frame with a **zero width** means nothing changed,
+  and the host keeps the picture it has.
+- Idles cheaply: it asks for a frame every 33 ms, but an unchanged pane answers
+  with 24 bytes. The cursor blinks on a 500 ms half-period, and stops asking for
+  frames at all while it is hidden.
 
 ## Controls
 
@@ -69,6 +73,5 @@ The server is found by walking up from the workspace folder to
 ## What it does not do
 
 - No IME: the webview's `keydown` is turned into text or an escape sequence.
-- No dirty-region or blink optimisation: it asks for a frame every 33 ms.
 - No drag-autoscroll: a drag clamps to the grid, so dragging past the edge does
   not scroll the history.

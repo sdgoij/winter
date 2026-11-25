@@ -107,7 +107,10 @@ impl Control {
     }
 
     /// Moves bytes from the connection into the parser and answers the program.
-    pub fn pump(&mut self) {
+    ///
+    /// Returns whether any bytes arrived, which is what tells a host that the
+    /// screen may have changed since its last frame.
+    pub fn pump(&mut self) -> bool {
         let mut bytes = Vec::new();
         if self.connection.drain_into(&mut bytes) {
             self.exited = true;
@@ -118,7 +121,7 @@ impl Control {
             self.exited = true;
         }
         if bytes.is_empty() {
-            return;
+            return false;
         }
 
         crate::trace::bytes("in", &bytes);
@@ -132,6 +135,8 @@ impl Control {
         {
             self.title = Some(title.to_string());
         }
+
+        true
     }
 
     /// Sends text to the program, as if it had been typed.
