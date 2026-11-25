@@ -81,9 +81,13 @@ it owns the frame.
 
 - **An idle pane costs 24 bytes a poll.** `Surface::render` skips the paint when
   nothing changed — no bytes, no resize, no scroll, no selection and the same
-  cursor phase — so the host's 33 ms poll answers with a zero-width header. The
-  cursor phase is the server's: 500 ms, like every shell, and constant while the
-  cursor is hidden, so a full-screen program stops asking for frames entirely.
+  cursor phase — so the host's poll answers with a zero-width header. That
+  header is written and **flushed** like any other answer: a buffered stdout
+  that only flushed when the pane had changed leaves the host waiting for a
+  reply that never leaves the process, which is a stall of one watchdog period
+  per keystroke. The cursor phase is the server's: 500 ms, like every shell, and
+  constant while the cursor is hidden, so a full-screen program stops asking for
+  frames entirely.
 - **No selection UI of its own.** Selection, copy, scrollback and mouse
   reporting are the server's, because they are the terminal's rules; the webview
   only turns pixels into cells. Dragging past the edge does not autoscroll —

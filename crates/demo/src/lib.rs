@@ -347,9 +347,12 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
             Command::Render => {
                 let now = Instant::now();
                 let cursor = cursor_on(surface, start, now);
-                if frames.write(surface, output, cursor)? {
-                    output.flush()?;
-                }
+                frames.write(surface, output, cursor)?;
+                // The answer goes to the host every time, changed or not: a
+                // zero-width header is the answer to a render that painted
+                // nothing, and a host that waits for the reply would wait
+                // forever if this only flushed when the pane had changed.
+                output.flush()?;
                 if surface.take_events(now).contains(&TerminalEvent::Exited) {
                     break;
                 }
@@ -1077,6 +1080,44 @@ mod tests {
         assert_eq!(idle.len(), FRAME_HEADER, "an idle answer is a header and nothing else");
         assert_eq!(kind(&idle), 0);
         assert_eq!(width(&idle), 0);
+    }
+
+    /// Writes nothing until it is flushed, like the buffered stdout a server
+    /// runs on. What a host can see is the published half.
+    #[derive(Default)]
+    struct Buffered {
+        pending: Vec<u8>,
+        published: Vec<u8>,
+    }
+
+    impl std::io::Write for Buffered {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.pending.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.published.append(&mut self.pending);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_idle_answer_is_flushed_to_the_host() {
+        let (mut surface, _queue) = fixture(4, 2);
+        let mut out = Buffered::default();
+
+        // The first render paints; the second has nothing to do, and its answer
+        // is a zero-width header. The first must not hide the second.
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut out, &mut surface).expect("serve");
+        out.published.clear();
+        out.flush().expect("flush");
+
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut out, &mut surface).expect("serve");
+
+        assert_eq!(out.published.len(), FRAME_HEADER, "an idle answer left the writer");
+        assert_eq!(out.published.len() + out.pending.len(), FRAME_HEADER);
+        assert_eq!(width(&out.published), 0);
     }
 
     #[test]
