@@ -51,6 +51,10 @@ pub fn default_shell() -> PathBuf {
 }
 
 /// The first of `names` that `find` resolves, in order.
+///
+/// Windows only: the other platforms name one program in `$SHELL` and search
+/// nothing, so this has no caller there.
+#[cfg(windows)]
 fn first_found(names: &[&str], find: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
     names.iter().find_map(|name| find(name))
 }
@@ -1022,6 +1026,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(windows)]
     fn the_first_name_that_resolves_wins() {
         let found = first_found(&["pwsh.exe", "powershell.exe"], |name| {
             (name == "powershell.exe").then(|| PathBuf::from(name))
@@ -1030,6 +1035,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn no_candidate_resolving_is_no_shell() {
         assert_eq!(first_found(&["pwsh.exe", "powershell.exe"], |_| None), None);
     }

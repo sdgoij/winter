@@ -49,8 +49,10 @@ test-crate crate:
     cargo test -p {{crate}}
 
 # Doc tests. There are none yet; the recipe exists so a broken example fails.
+# The addon is a cdylib, which cargo cannot run doc tests from, and says so on
+# every run; it is excluded rather than warned about.
 doc:
-    cargo test --workspace --doc
+    cargo test --workspace --doc --exclude winter-node
 
 # Every gate, in the order CI runs them.
 gate: fmt clippy deny test doc
