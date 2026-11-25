@@ -25,7 +25,8 @@ it owns the frame.
 1. **`crates/demo` (`winter-demo`, binary `winter-frame`) is a host, not a
    shell.** It measures a face (ADR 029), spawns the shell on a pty and builds
    one [`Surface`] over it. It holds no terminal logic: what the screen says is
-   `winter`'s.
+   `winter`'s. The shell is PowerShell on Windows — 7 before 5.1 — and `$SHELL`
+   on macOS and Linux, with `--shell` naming one instead.
 2. **Commands are JSON lines on stdin**: `write`, `resize`, `render`, `press`,
    `move`, `release`, `wheel`, `copy` and `quit`. A line this build does not know
    is skipped, not fatal — a host may be newer than the server, and dropping the

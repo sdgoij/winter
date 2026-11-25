@@ -109,8 +109,10 @@ function start(context: vscode.ExtensionContext): void {
     return;
   }
 
-  log?.appendLine(`server: ${binary}`);
-  server = cp.spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const shell = vscode.workspace.getConfiguration("winter").get<string>("shell");
+  const args = shell ? ["--shell", shell] : [];
+  log?.appendLine(`server: ${binary} ${args.join(" ")}`.trimEnd());
+  server = cp.spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] });
   server.on("error", (error) => {
     log?.appendLine(`spawn failed: ${error.message}`);
     void vscode.window.showErrorMessage(`Winter: ${error.message}`);

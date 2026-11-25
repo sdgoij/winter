@@ -31,6 +31,11 @@
           "type": "number",
           "default": 14,
           "description": "The point size the server measures its face at. Takes effect on the next opened terminal."
+        },
+        "winter.shell": {
+          "type": "string",
+          "default": "",
+          "description": "Program the server runs. Defaults to PowerShell on Windows (7 before 5.1) and $SHELL on macOS and Linux."
         }
       }
     }

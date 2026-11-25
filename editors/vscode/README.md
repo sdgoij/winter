@@ -19,6 +19,10 @@ opened at the repository root, with this extension loaded.
 In that second window, run **Winter: Open Terminal** from the command palette
 (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>).
 
+The shell is PowerShell on Windows — 7 (`pwsh`) when it is on `PATH`, then
+Windows PowerShell, then `cmd.exe` — and `$SHELL` on macOS and Linux, with
+`/bin/sh` as the last resort. `winter.shell` names a program instead.
+
 > Opening `editors/vscode` in a normal window is not enough: VS Code only loads
 > an extension when it is installed or started as a development extension
 > (F5 / `--extensionDevelopmentPath`). Without that, the command does not exist.
@@ -70,8 +74,11 @@ workspace folder) to `target/debug/winter-frame`, or wherever
 - **"no frame server"** — build it (`cargo build -p winter-demo`) or set
   `winter.serverPath`. The lookup starts at the extension's own folder, so a
   development host with no workspace folder still finds `target/debug`.
+- **`cargo build` says "Access is denied"** — a server from an earlier session is
+  still running and Windows will not replace a running `.exe`. Close the Winter
+  tab (or end `winter-frame.exe`) and build again.
 - **Blank canvas** — look at the `winter-frame` stderr lines in the extension
-  host log (`Help → Toggle Developer Tools`).
+  host log (`Help → Toggle Developer Tools`), or the **Winter** output channel.
 
 ## What it does not do
 
