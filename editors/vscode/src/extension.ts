@@ -20,6 +20,8 @@ import * as vscode from "vscode";
 const FRAME_HEADER = 24;
 /** A text message: `u32 1` and a length. */
 const TEXT_HEADER = 8;
+/** A diagnostic line: `u32 3` and a length. */
+const DIAGNOSTIC = 3;
 /** How often a frame is asked for while a panel is showing. */
 const FRAME_INTERVAL = 33;
 
@@ -29,6 +31,7 @@ type Message =
   | {
       kind: "key";
       name: string;
+      code: string;
       text: string;
       shift: boolean;
       ctrl: boolean;
@@ -118,6 +121,7 @@ function open(context: vscode.ExtensionContext): void {
         send({
           cmd: "key",
           name: message.name,
+          code: message.code,
           text: message.text,
           shift: message.shift,
           ctrl: message.ctrl,
@@ -251,6 +255,21 @@ function onData(chunk: Buffer): void {
       if (text.length > 0) {
         void vscode.env.clipboard.writeText(text);
       }
+      continue;
+    }
+
+    // A diagnostic answer is for the log, not for the clipboard.
+    if (kind === DIAGNOSTIC) {
+      if (pending.length < TEXT_HEADER) {
+        return;
+      }
+      const length = pending.readUInt32BE(4);
+      if (pending.length < TEXT_HEADER + length) {
+        return;
+      }
+      const text = pending.subarray(TEXT_HEADER, TEXT_HEADER + length).toString("utf8");
+      pending = pending.subarray(TEXT_HEADER + length);
+      log?.appendLine(text);
       continue;
     }
 
@@ -588,6 +607,9 @@ function html(): string {
     vscode.postMessage({
       kind: "key",
       name,
+      // The physical key, which is what a Win32 input record names; the name
+      // above follows the layout, so it cannot say which key is held.
+      code: event.code || "",
       text: typed,
       shift: event.shiftKey,
       ctrl: event.ctrlKey,

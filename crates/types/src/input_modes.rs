@@ -71,10 +71,22 @@ impl Default for InputModes {
     }
 }
 
+/// `KittyKeyboardProtocolFlags::ReportAllKeysAsEscapeCodes`.
+const KITTY_REPORT_ALL_KEYS: u8 = 1 << 3;
+
 impl InputModes {
     /// Returns whether any mouse tracking mode is enabled.
     pub const fn is_tracking_mouse(&self) -> bool {
         self.default_mouse || self.button_event_mouse || self.any_event_mouse
+    }
+
+    /// Whether the program asked for every key as an escape code.
+    ///
+    /// A key it asked for travels as a key, so its release has an encoding too;
+    /// one it did not ask for travels as the character it typed, which is why a
+    /// host that only has text for a printable key still gets a press through.
+    pub const fn reports_all_keys(&self) -> bool {
+        self.kitty_flags & KITTY_REPORT_ALL_KEYS != 0
     }
 }
 

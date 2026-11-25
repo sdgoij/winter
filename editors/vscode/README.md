@@ -41,15 +41,22 @@ code --extensionDevelopmentPath="$PWD"
 
 - Spawns `winter-frame`, which starts your shell on a pty.
 - Sends `key`, `paste`, `write`, `resize`, `render`, `press`, `move`, `release`,
-  `wheel`, `copy` and `quit` as JSON lines. A key travels as its **name and
-  modifiers**, not as the characters a webview guessed: the terminal applies the
-  input modes and the keyboard protocol the program asked for, so function keys,
-  Shift+Tab and modified arrows work.
+  `wheel`, `copy`, `modes` and `quit` as JSON lines. A key travels as its
+  **name, its physical `code` and its modifiers**, not as the characters a
+  webview guessed: the terminal applies the input modes and the keyboard
+  protocol the program asked for, so function keys, Shift+Tab and modified
+  arrows work. A ConPTY asks for Win32 input records, and the record's virtual
+  key and scan code come from the physical code — a record without them is one
+  text byte, which the console answers with a press and a release together, so
+  a held key would move for a single frame.
 - Reads tagged messages: kind 0 is a whole frame (`u32` width, height, cell
   width, cell height, byte length, then RGBA), painted with `putImageData`; kind
   1 is text for the clipboard; kind 2 is a **band** — the rows that changed, with
-  their top edge — so a keystroke sends about 60 KB instead of 1.8 MB. A frame
-  with a **zero width** means nothing changed, and the host keeps what it has.
+  their top edge — so a keystroke sends about 60 KB instead of 1.8 MB; kind 3 is
+  a diagnostic line, logged to the **Winter** output channel. A frame with a
+  **zero width** means nothing changed, and the host keeps what it has. `modes`
+  asks for kind 3: it is what a program asked of the input path, which is how to
+  answer "why did that key do that".
 - Keeps **one frame in flight**: it asks for a frame, waits for the canvas to
   report it painted, and only then asks again, no sooner than 33 ms later. An
   idle pane therefore costs 24 bytes a poll, a full-screen program sets the

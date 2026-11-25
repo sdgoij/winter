@@ -1505,11 +1505,12 @@ impl Shell {
 
     /// Translates an event with the active terminal's modes and sends it.
     fn send_input(&mut self, event: &input::Event) {
-        let win32 = self
-            .tabs
-            .active()
-            .is_some_and(|tab| tab.control.input_modes().win32_input);
-        let outcome = input::translate(event, &mut self.sides, win32);
+        // A printable key travels as the character it typed, unless the program
+        // asked for every key: then the key and its release travel instead.
+        let modes = self.tabs.active().map(|tab| tab.control.input_modes());
+        let win32 = modes.is_some_and(|modes| modes.win32_input);
+        let keys = modes.is_some_and(|modes| modes.reports_all_keys());
+        let outcome = input::translate(event, &mut self.sides, win32, keys);
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };

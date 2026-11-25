@@ -142,9 +142,12 @@ impl Surface {
     ///
     /// The rules — a printable key arriving twice, modifier sides, AltGr — are
     /// [`crate::input`]'s, so a host does not re-derive them (ADR 009, 040).
+    /// Whether a printable key travels as its character or as a key is the
+    /// program's: one that asked for every key (the kitty protocol's
+    /// report-all-keys) needs the release as well, and only the key carries it.
     pub fn key(&mut self, event: &Event) {
-        let win32 = self.control.input_modes().win32_input;
-        let outcome = input::translate(event, &mut self.sides, win32);
+        let modes = self.control.input_modes();
+        let outcome = input::translate(event, &mut self.sides, modes.win32_input, modes.reports_all_keys());
 
         // Typing returns the view to the live screen, as every shell does.
         if outcome.activity {
@@ -351,6 +354,16 @@ impl Surface {
     pub fn title(&self) -> Option<&str> {
         self.control.title()
     }
+
+    /// What the program has asked of the input path.
+    ///
+    /// A host that wants to know why a key encoded as it did asks here: the
+    /// Win32 record mode and the kitty keyboard protocol's flags are the
+    /// program's requests, and a console host may consume the sequence that
+    /// made them before any terminal sees it.
+    pub fn input_modes(&self) -> types::InputModes {
+        self.control.input_modes()
+    }
 }
 
 /// The pixel size of a `columns` by `rows` grid of `cell`-sized cells.
@@ -464,6 +477,37 @@ mod tests {
         assert!(
             second_row.iter().any(|&pixel| pixel & 0x00FF_FFFF > 0x0080_8080),
             "the fed text was not painted"
+        );
+    }
+
+    #[test]
+    fn a_program_that_asks_for_every_key_gets_the_release_too() {
+        use term::input::Key;
+
+        let (mut surface, queue) = surface(20, 2);
+        // What a game pushes: disambiguate, report event types, and report every
+        // key as an escape code.
+        queue.feed(b"\x1b[>11u");
+        surface.render(true).expect("a frame");
+
+        let event = |pressed: bool| Event::Key {
+            key: Key::Char('d'),
+            pressed,
+            repeat: false,
+            modifiers: input::Modifiers::default(),
+            virtual_key: 0,
+            scan_code: 0,
+            repeat_count: 1,
+            codepoint: Some('d'),
+        };
+
+        surface.key(&event(true));
+        surface.key(&event(false));
+
+        assert_eq!(
+            queue.take_written(),
+            b"\x1b[100u\x1b[100;1:3u",
+            "the press and its release are both kitty escape codes"
         );
     }
 

@@ -116,6 +116,10 @@ pub enum Command {
         name: String,
         /// The text the key produced, when it produced any.
         text: String,
+        /// The key's physical name: `KeyD`, `ArrowUp`. This is what a Win32
+        /// virtual key describes, so a program that asked for Win32 records
+        /// gets a key it can hold down rather than one frame of text.
+        code: String,
         /// Whether Shift is held.
         shift: bool,
         /// Whether Ctrl is held.
@@ -177,6 +181,14 @@ pub enum Command {
     },
     /// Answer with the selection, for the clipboard.
     Copy,
+    /// Answer with what the terminal believes the program asked for.
+    ///
+    /// A program's request for Win32 records or for the kitty keyboard protocol
+    /// changes what a key becomes, and a host cannot see the request itself — a
+    /// console host may consume it before any terminal sees the sequence. This
+    /// is how a host asks, and what the answer to "why does this key do that"
+    /// starts with.
+    Modes,
     /// End the session.
     Quit,
 }
@@ -213,6 +225,11 @@ pub fn parse(line: &str) -> Option<Command> {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+            code: value
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
             shift: shift(),
             ctrl: flag("ctrl"),
             alt: flag("alt"),
@@ -228,6 +245,7 @@ pub fn parse(line: &str) -> Option<Command> {
             rows: i32::try_from(value.get("rows")?.as_i64()?).ok()?,
         },
         "render" => Command::Render,
+        "modes" => Command::Modes,
         "press" => {
             let (column, row) = cell()?;
             Command::Press {
@@ -304,13 +322,23 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
             Command::Key {
                 name,
                 text,
+                code,
                 shift,
                 ctrl,
                 alt,
                 pressed,
                 repeat,
             } => {
-                if let Some(event) = key_event(&name, &text, shift, ctrl, alt, pressed, repeat) {
+                if let Some(event) = key_event(&KeyInput {
+                    name: &name,
+                    text: &text,
+                    code: &code,
+                    shift,
+                    ctrl,
+                    alt,
+                    pressed,
+                    repeat,
+                }) {
                     surface.key(&event);
                 }
             }
@@ -387,6 +415,10 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
                 write_text(output, &text)?;
                 output.flush()?;
             }
+            Command::Modes => {
+                write_diagnostic(output, &format!("{:?}", surface.input_modes()))?;
+                output.flush()?;
+            }
             Command::Quit => break,
         }
     }
@@ -398,23 +430,45 @@ fn forwards(surface: &Surface, shift: bool) -> bool {
     input::forwards_to_application(surface.is_tracking_mouse(), shift)
 }
 
-/// The encoder event a toolkit key names, or `None` for a key with no encoded
-/// form outside win32 input mode.
-///
-/// A printable key arrives twice in a toolkit — as a key and as text — and the
-/// terminal decides which of the two it wants (ADR 056). Everything else is a
-/// key: the terminal's [`Surface::key`] applies the input modes, the kitty
-/// keyboard protocol's flags and the modifier sides, so the host never encodes
-/// a key itself.
-fn key_event(
-    name: &str,
-    text: &str,
+/// One key as the toolkit reported it.
+struct KeyInput<'a> {
+    /// The toolkit's name for the key.
+    name: &'a str,
+    /// The text the key produced.
+    text: &'a str,
+    /// The key's physical name, in the standard PC-101 layout.
+    code: &'a str,
+    /// Whether Shift is held.
     shift: bool,
+    /// Whether Ctrl is held.
     ctrl: bool,
+    /// Whether Alt is held.
     alt: bool,
+    /// Whether this is the press rather than the release.
     pressed: bool,
+    /// Whether this is an auto-repeat.
     repeat: bool,
-) -> Option<input::Event> {
+}
+
+/// The encoder event a toolkit key names, or `None` for a key with no encoded
+/// form.
+///
+/// A printable key arrives twice in a toolkit — as a key and as the text it
+/// typed — and only the terminal knows which of the two the program wants: one
+/// reading characters gets the text, one that asked for every key (or for Win32
+/// records) gets the key and, with it, the release. Both travel in one event and
+/// [`Surface::key`] decides (ADR 056).
+fn key_event(input: &KeyInput<'_>) -> Option<input::Event> {
+    let KeyInput {
+        name,
+        text,
+        code,
+        shift,
+        ctrl,
+        alt,
+        pressed,
+        repeat,
+    } = *input;
     let modifiers = input::Modifiers {
         shift,
         ctrl,
@@ -423,14 +477,10 @@ fn key_event(
     };
     let key = named_key(name)?;
 
-    if pressed && !ctrl && !alt && input::produces_text(key, modifiers) {
+    // More than one character is not a key: a composition, or text a toolkit
+    // typed on its own, has only the text to carry it.
+    if pressed && text.chars().count() > 1 {
         return Some(input::Event::Text(text.to_string()));
-    }
-
-    // A typing key's release has nothing to encode unless the program asked for
-    // win32 input records, and a release it never saw a press for is noise.
-    if !pressed && matches!(key, Key::Char(_) | Key::Space) && !ctrl && !alt {
-        return None;
     }
 
     Some(input::Event::Key {
@@ -438,13 +488,181 @@ fn key_event(
         pressed,
         repeat,
         modifiers,
-        virtual_key: 0,
-        scan_code: 0,
+        // A Win32 record names the key by this, which is how a program holds it
+        // down: a record without one is a lone text byte, and the console answers
+        // that with a press and a release together.
+        virtual_key: virtual_key(code),
+        // The same key in the console's other numbering. A record that leaves it
+        // zero is not the record a console host expects.
+        scan_code: scan_code(code),
         repeat_count: 0,
-        // The text a key types travels as `Event::Text`; a key that reaches
-        // here types nothing, so there is no character to pair with it.
-        codepoint: None,
+        // The character the key typed, for the encodings that carry one: the
+        // legacy text path, and Win32's record. A release carries none — the
+        // console recovers it from the virtual key (ADR 056).
+        codepoint: if pressed && input::produces_text(key, modifiers) {
+            text.chars().next()
+        } else {
+            None
+        },
     })
+}
+
+/// The PC-101 make code of each letter, in alphabet order.
+const LETTER_SCAN: [u16; 26] = [
+    0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F,
+    0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
+];
+
+/// The PC-101 make code of each digit key, in the order `1` to `9` then `0`.
+const DIGIT_SCAN: [u16; 10] = [0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B];
+
+/// The console's scan code for a toolkit's physical key code, or zero.
+///
+/// Set 1 make codes: the other half of the identity a Win32 record carries, and
+/// the number a console host's own records use. The keypad is left out — the
+/// virtual key already distinguishes it — and so is anything this table does not
+/// name, which the console reads as "no scan code".
+fn scan_code(code: &str) -> u16 {
+    match code {
+        "Enter" | "NumpadEnter" => 0x1C,
+        "Escape" => 0x01,
+        "Tab" => 0x0F,
+        "Backspace" => 0x0E,
+        "Space" => 0x39,
+        "Minus" => 0x0C,
+        "Equal" => 0x0D,
+        "BracketLeft" => 0x1A,
+        "BracketRight" => 0x1B,
+        "Backslash" => 0x2B,
+        "Semicolon" => 0x27,
+        "Quote" => 0x28,
+        "Backquote" => 0x29,
+        "Comma" => 0x33,
+        "Period" => 0x34,
+        "Slash" => 0x35,
+        "ArrowLeft" => 0x4B,
+        "ArrowUp" => 0x48,
+        "ArrowRight" => 0x4D,
+        "ArrowDown" => 0x50,
+        "Home" => 0x47,
+        "End" => 0x4F,
+        "PageUp" => 0x49,
+        "PageDown" => 0x51,
+        "Insert" => 0x52,
+        "Delete" => 0x53,
+        _ => {
+            if let Some(letter) = code
+                .strip_prefix("Key")
+                .and_then(|rest| rest.as_bytes().first().copied())
+                && letter.is_ascii_uppercase()
+            {
+                return LETTER_SCAN[usize::from(letter - b'A')];
+            }
+            if let Some(digit) = code
+                .strip_prefix("Digit")
+                .and_then(|rest| rest.as_bytes().first().copied())
+                && digit.is_ascii_digit()
+            {
+                let index = if digit == b'0' { 9 } else { usize::from(digit - b'1') };
+                return DIGIT_SCAN[index];
+            }
+            if let Some(number) = code.strip_prefix('F').and_then(|rest| rest.parse::<usize>().ok()) {
+                return match number {
+                    1..=10 => 0x3B + (number as u16 - 1),
+                    11 => 0x57,
+                    12 => 0x58,
+                    _ => 0,
+                };
+            }
+            0
+        }
+    }
+}
+
+/// The Win32 virtual key a toolkit's physical key code names.
+///
+/// The names are the DOM's `KeyboardEvent.code`, which is the physical key in the
+/// standard PC-101 layout — the layout Win32's virtual keys describe. A key this
+/// table does not know has no virtual key, and its press falls back to the
+/// character it typed (ADR 056).
+fn virtual_key(code: &str) -> u16 {
+    match code {
+        "Enter" | "NumpadEnter" => 0x0D,
+        "Escape" => 0x1B,
+        "Tab" => 0x09,
+        "Backspace" => 0x08,
+        "Space" => 0x20,
+        "ArrowLeft" => 0x25,
+        "ArrowUp" => 0x26,
+        "ArrowRight" => 0x27,
+        "ArrowDown" => 0x28,
+        "Home" => 0x24,
+        "End" => 0x23,
+        "PageUp" => 0x21,
+        "PageDown" => 0x22,
+        "Insert" => 0x2D,
+        "Delete" => 0x2E,
+        "CapsLock" => 0x14,
+        "ShiftLeft" => 0xA0,
+        "ShiftRight" => 0xA1,
+        "ControlLeft" => 0xA2,
+        "ControlRight" => 0xA3,
+        "AltLeft" => 0xA4,
+        "AltRight" => 0xA5,
+        "MetaLeft" => 0x5B,
+        "MetaRight" => 0x5C,
+        "Minus" => 0xBD,
+        "Equal" => 0xBB,
+        "BracketLeft" => 0xDB,
+        "BracketRight" => 0xDD,
+        "Backslash" => 0xDC,
+        "Semicolon" => 0xBA,
+        "Quote" => 0xDE,
+        "Backquote" => 0xC0,
+        "Comma" => 0xBC,
+        "Period" => 0xBE,
+        "Slash" => 0xBF,
+        "NumpadAdd" => 0x6B,
+        "NumpadSubtract" => 0x6D,
+        "NumpadMultiply" => 0x6A,
+        "NumpadDivide" => 0x6F,
+        "NumpadDecimal" => 0x6E,
+        _ => ranged_virtual_key(code).unwrap_or(0),
+    }
+}
+
+/// The virtual key of a code that names a letter, a digit or a function key.
+///
+/// These are the only families whose code is a prefix and a number, and their
+/// virtual keys are contiguous from a base.
+fn ranged_virtual_key(code: &str) -> Option<u16> {
+    if let Some(letter) = code
+        .strip_prefix("Key")
+        .and_then(|rest| rest.as_bytes().first().copied())
+        && letter.is_ascii_uppercase()
+    {
+        return Some(0x41 + u16::from(letter - b'A'));
+    }
+    if let Some(digit) = code
+        .strip_prefix("Digit")
+        .and_then(|rest| rest.as_bytes().first().copied())
+        && digit.is_ascii_digit()
+    {
+        return Some(0x30 + u16::from(digit - b'0'));
+    }
+    if let Some(digit) = code
+        .strip_prefix("Numpad")
+        .and_then(|rest| rest.as_bytes().first().copied())
+        && digit.is_ascii_digit()
+    {
+        return Some(0x60 + u16::from(digit - b'0'));
+    }
+    if let Some(number) = code.strip_prefix('F').and_then(|rest| rest.parse::<u16>().ok())
+        && (1..=24).contains(&number)
+    {
+        return Some(0x70 + number - 1);
+    }
+    None
 }
 
 /// The terminal key a toolkit name stands for.
@@ -639,6 +857,16 @@ fn rgba(pixels: &[u32]) -> Vec<u8> {
 /// Writes a text answer, which is how a copy reaches the host.
 pub fn write_text(output: &mut impl Write, text: &str) -> io::Result<()> {
     output.write_all(&1u32.to_be_bytes())?;
+    output.write_all(&(text.len() as u32).to_be_bytes())?;
+    output.write_all(text.as_bytes())
+}
+
+/// Writes a diagnostic answer: `u32 3` and a length.
+///
+/// A host logs it. It is neither a frame nor clipboard text, so it cannot be
+/// pasted into the program by a host that confuses the two.
+pub fn write_diagnostic(output: &mut impl Write, text: &str) -> io::Result<()> {
+    output.write_all(&3u32.to_be_bytes())?;
     output.write_all(&(text.len() as u32).to_be_bytes())?;
     output.write_all(text.as_bytes())
 }
@@ -1015,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn a_typing_keys_release_is_not_sent() {
+    fn a_typing_keys_release_is_not_sent_to_a_program_reading_characters() {
         let (mut surface, queue) = fixture(20, 2);
 
         serve(
@@ -1026,6 +1254,62 @@ mod tests {
         .expect("serve");
 
         assert!(queue.take_written().is_empty());
+    }
+
+    #[test]
+    fn a_release_reaches_a_program_that_asked_for_every_key() {
+        let (mut surface, queue) = fixture(20, 2);
+        // What a game pushes: disambiguate, report event types, report all keys.
+        queue.feed(b"\x1b[>11u");
+
+        serve(
+            br#"{"cmd":"key","name":"d","text":"d","pressed":true}
+{"cmd":"key","name":"d","text":"d","pressed":false}"#
+                .as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        // The press and its release: a program that tracks a held key has no
+        // other way to learn it was let go.
+        assert_eq!(queue.take_written(), b"\x1b[100u\x1b[100;1:3u");
+    }
+
+    #[test]
+    fn a_physical_key_becomes_a_win32_record_the_program_can_hold() {
+        let (mut surface, queue) = fixture(20, 2);
+        // A ConPTY asks for Win32 input records before its client runs.
+        queue.feed(b"\x1b[?9001h");
+
+        serve(
+            br#"{"cmd":"key","name":"d","code":"KeyD","text":"d","pressed":true}
+{"cmd":"key","name":"d","code":"KeyD","text":"d","pressed":false}"#
+                .as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        // Vk 0x44 and scan 0x20 with the character going down, then the release
+        // carrying no character: a text byte instead would be one frame of
+        // movement.
+        assert_eq!(queue.take_written(), b"\x1b[68;32;100;1;0;1_\x1b[68;32;0;0;0;1_");
+    }
+
+    #[test]
+    fn a_modes_command_answers_with_what_the_program_asked_for() {
+        let (mut surface, queue) = fixture(20, 2);
+        // The game's push: disambiguate, report event types, report all keys.
+        queue.feed(b"\x1b[>11u");
+        let mut out = Vec::new();
+
+        serve(br#"{"cmd":"modes"}"#.as_slice(), &mut out, &mut surface).expect("serve");
+
+        assert_eq!(kind(&out), 3, "a modes answer is a diagnostic, not a frame");
+        let length = u32::from_be_bytes(out[4..8].try_into().expect("four bytes")) as usize;
+        let text = String::from_utf8(out[8..8 + length].to_vec()).expect("utf-8");
+        assert!(text.contains("kitty_flags: 11"), "{text}");
     }
 
     #[test]

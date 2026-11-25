@@ -130,7 +130,13 @@ pub const fn key_character(key: Key, modifiers: Modifiers) -> Option<char> {
 /// record carries the key-down and key-up separately, so a printable key is
 /// sent as a key rather than left to its character event; otherwise conhost
 /// synthesises a press and a release together and a held key is never held.
-pub fn translate(event: &Event, sides: &mut ModifierSides, win32: bool) -> Outcome {
+///
+/// `keys` says the program asked for every key as an escape code — the kitty
+/// protocol's report-all-keys — which asks the same of a printable key: the key
+/// and its release, not only the character it typed. A program that reads key
+/// events to hold a key down (a game, a text editor's repeat) needs the release,
+/// and the character event never carries one.
+pub fn translate(event: &Event, sides: &mut ModifierSides, win32: bool, keys: bool) -> Outcome {
     match event {
         Event::Text(text) => Outcome {
             keys: text.chars().map(text_key).collect(),
@@ -156,11 +162,12 @@ pub fn translate(event: &Event, sides: &mut ModifierSides, win32: bool) -> Outco
 
             // A printable key is typed by the character event. This event can
             // carry that character when the shell paired the two; win32 mode
-            // needs it in the record, and the legacy encoding sends it as text.
+            // needs it in the record, every key an escape code needs it as a
+            // key, and the legacy encoding sends it as text.
             let text = produces_text(*key, *modifiers);
-            let record = win32 && *virtual_key != 0;
+            let record = (win32 && *virtual_key != 0) || keys;
 
-            let keys = if text && !record {
+            let reported = if text && !record {
                 match (codepoint, pressed) {
                     (Some(character), true) => vec![KeyEvent {
                         key: Key::Unidentified,
@@ -184,7 +191,7 @@ pub fn translate(event: &Event, sides: &mut ModifierSides, win32: bool) -> Outco
             };
 
             Outcome {
-                keys,
+                keys: reported,
                 paste: None,
                 activity: *pressed,
             }
@@ -357,7 +364,7 @@ mod tests {
 
         let mut sides = ModifierSides::default();
         let enter = key_character(Key::Enter, Modifiers::default());
-        let outcome = translate(&record(Key::Enter, 0x0D, enter, true), &mut sides, true);
+        let outcome = translate(&record(Key::Enter, 0x0D, enter, true), &mut sides, true, false);
         let bytes = terminal.handle_key(&outcome.keys[0]).expect("a record");
 
         assert_eq!(bytes, "\u{1b}[13;0;13;1;0;1_", "the Uc field is the CR\n");
@@ -366,7 +373,7 @@ mod tests {
     #[test]
     fn text_becomes_one_key_event_per_character() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&Event::Text("ab".to_string()), &mut sides, false);
+        let outcome = translate(&Event::Text("ab".to_string()), &mut sides, false, false);
 
         assert!(outcome.activity);
         assert_eq!(outcome.keys.len(), 2);
@@ -378,7 +385,7 @@ mod tests {
     #[test]
     fn a_printable_key_without_a_chord_is_left_to_the_text_event() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&key(Key::Char('q'), Modifiers::default()), &mut sides, false);
+        let outcome = translate(&key(Key::Char('q'), Modifiers::default()), &mut sides, false, false);
 
         // Nothing is sent, but the press still returns the view to the live
         // screen.
@@ -389,7 +396,7 @@ mod tests {
     #[test]
     fn a_paired_character_is_text_without_win32_mode() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&record(Key::Char('q'), 0x51, Some('q'), true), &mut sides, false);
+        let outcome = translate(&record(Key::Char('q'), 0x51, Some('q'), true), &mut sides, false, false);
 
         // The character event's payload, not an empty key event.
         assert_eq!(outcome.keys.len(), 1);
@@ -400,7 +407,7 @@ mod tests {
     #[test]
     fn a_win32_record_carries_the_virtual_key_and_character() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&record(Key::Char('s'), 0x53, Some('s'), true), &mut sides, true);
+        let outcome = translate(&record(Key::Char('s'), 0x53, Some('s'), true), &mut sides, true, false);
 
         assert_eq!(outcome.keys.len(), 1);
         let event = &outcome.keys[0];
@@ -413,7 +420,7 @@ mod tests {
     #[test]
     fn a_win32_release_is_sent() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&record(Key::Char('s'), 0x53, None, false), &mut sides, true);
+        let outcome = translate(&record(Key::Char('s'), 0x53, None, false), &mut sides, true, false);
 
         assert_eq!(outcome.keys.len(), 1);
         assert!(!outcome.keys[0].pressed);
@@ -424,7 +431,7 @@ mod tests {
     #[test]
     fn a_win32_key_without_a_virtual_key_stays_text() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&record(Key::Char('q'), 0, Some('q'), true), &mut sides, true);
+        let outcome = translate(&record(Key::Char('q'), 0, Some('q'), true), &mut sides, true, false);
 
         // A portable toolkit has no Win32 key identity; an empty record would
         // type nothing, so the character is sent as text instead.
@@ -445,11 +452,40 @@ mod tests {
             ),
             &mut sides,
             false,
+            false,
         );
 
         assert_eq!(outcome.keys.len(), 1);
         assert_eq!(outcome.keys[0].key, Key::Char('q'));
         assert!(outcome.keys[0].modifiers.left_ctrl);
+    }
+
+    #[test]
+    fn a_program_that_wants_every_key_gets_the_release_too() {
+        // A game holds a key down from the press and lets go on the release. The
+        // character event never carries a release, so a printable key has to
+        // travel as a key once the program asks for all of them — otherwise the
+        // key is down forever.
+        let mut sides = ModifierSides::default();
+        let pressed = translate(&record(Key::Char('d'), 0, Some('d'), true), &mut sides, false, true);
+        let released = translate(&record(Key::Char('d'), 0, Some('d'), false), &mut sides, false, true);
+
+        assert_eq!(pressed.keys.len(), 1);
+        assert_eq!(pressed.keys[0].key, Key::Char('d'));
+        assert_eq!(pressed.keys[0].codepoint, Some('d'));
+        assert!(pressed.keys[0].pressed);
+
+        assert_eq!(released.keys.len(), 1);
+        assert_eq!(released.keys[0].key, Key::Char('d'));
+        assert!(!released.keys[0].pressed);
+    }
+
+    #[test]
+    fn a_release_is_still_nothing_when_the_program_reads_characters() {
+        let mut sides = ModifierSides::default();
+        let released = translate(&record(Key::Char('d'), 0, Some('d'), false), &mut sides, false, false);
+
+        assert!(released.keys.is_empty());
     }
 
     #[test]
@@ -468,6 +504,7 @@ mod tests {
             },
             &mut sides,
             false,
+            false,
         );
 
         assert_eq!(outcome.keys.len(), 1);
@@ -478,7 +515,7 @@ mod tests {
     #[test]
     fn the_right_alt_makes_an_alt_gr_chord() {
         let mut sides = ModifierSides::default();
-        translate(&key(Key::RightAlt, Modifiers::default()), &mut sides, false);
+        translate(&key(Key::RightAlt, Modifiers::default()), &mut sides, false, false);
 
         let chord = translate(
             &key(
@@ -491,6 +528,7 @@ mod tests {
             ),
             &mut sides,
             false,
+            false,
         );
 
         assert!(chord.keys[0].modifiers.is_alt_gr());
@@ -499,7 +537,7 @@ mod tests {
     #[test]
     fn a_paste_is_reported_as_paste_not_keys() {
         let mut sides = ModifierSides::default();
-        let outcome = translate(&Event::Paste("pasted".to_string()), &mut sides, false);
+        let outcome = translate(&Event::Paste("pasted".to_string()), &mut sides, false, false);
 
         assert_eq!(outcome.paste.as_deref(), Some("pasted"));
         assert!(outcome.keys.is_empty());

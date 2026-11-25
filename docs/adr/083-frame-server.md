@@ -27,20 +27,21 @@ it owns the frame.
    one [`Surface`] over it. It holds no terminal logic: what the screen says is
    `winter`'s. The shell is PowerShell on Windows — 7 before 5.1 — and `$SHELL`
    on macOS and Linux, with `--shell` naming one instead.
-2. **Commands are JSON lines on stdin**: `write`, `resize`, `render`, `press`,
-   `move`, `release`, `wheel`, `copy` and `quit`. A line this build does not know
-   is skipped, not fatal — a host may be newer than the server, and dropping the
-   session is worse than ignoring a line.
+2. **Commands are JSON lines on stdin**: `write`, `key`, `paste`, `resize`,
+   `render`, `press`, `move`, `release`, `wheel`, `copy`, `modes` and `quit`. A
+   line this build does not know is skipped, not fatal — a host may be newer than
+   the server, and dropping the session is worse than ignoring a line.
 3. **Answers are tagged**: kind 0 is a whole frame — five big-endian `u32`s
    (width, height, cell width, cell height, byte length) then RGBA with alpha
    forced opaque; kind 1 is text, which is how a copy reaches the host's
    clipboard; kind 2 is a band — its top pixel row, width, height, an unused
    word, then the band's RGBA — because a shell mostly changes one row and
-   shipping the pane for it is what made the demo sluggish. A frame with a zero
-   width is the answer to a render that changed nothing: the host keeps the
-   picture it has. The cell size is in the header because a host with a pane has
-   pixels, not a grid; without it, turning a pane's size into `cols`/`rows` would
-   mean guessing the font's metrics.
+   shipping the pane for it is what made the demo sluggish; kind 3 is a
+   diagnostic line, which is how a host asks what the program requested of the
+   input path. A frame with a zero width is the answer to a render that changed
+   nothing: the host keeps the picture it has. The cell size is in the header
+   because a host with a pane has pixels, not a grid; without it, turning a
+   pane's size into `cols`/`rows` would mean guessing the font's metrics.
 4. **The pointer policy lives in the server.** A press, move, release or wheel
    is forwarded to a program that tracks the mouse, unless Shift is held; when it
    is not forwarded, a press starts a selection, a move extends it and the wheel
@@ -48,11 +49,15 @@ it owns the frame.
    same rule the shells apply (ADR 019), written once here rather than in the
    webview.
 5. **Keys go through the terminal's encoder.** The webview reports a key's name,
-   the text it typed and the modifiers; the server builds the event and calls
-   `Surface::key`, which applies the input modes and the program's kitty-keyboard
-   flags (ADRs 009, 056). Writing the characters instead loses function keys,
-   modifier sides and both encodings — which is what a program that pushes
-   `REPORT_ALL_KEYS_AS_ESCAPE_CODES` is asking for.
+   its physical `code`, the text it typed and the modifiers; the server builds
+   the event and calls `Surface::key`, which applies the input modes and the
+   program's kitty-keyboard flags (ADRs 009, 056). Writing the characters
+   instead loses function keys, modifier sides and both encodings — which is what
+   a program that pushes `REPORT_ALL_KEYS_AS_ESCAPE_CODES` is asking for. A
+   ConPTY asks for Win32 input records instead, and a record names the key by its
+   virtual key and scan code: a record without them is a lone text byte, and the
+   console answers a text byte with a press and a release together, so a held key
+   moves for one frame. The physical `code` is what turns into both.
 6. **`editors/vscode` is the other half**: a command, a webview with a canvas,
    and a child process. It keeps **one frame in flight** — it asks for the next
    frame only after the pane reports it painted the last, and no sooner than

@@ -1039,14 +1039,15 @@ impl Shell {
 
     /// Sends one portable event through the shared translation rules.
     fn send_input(&mut self, event: &InputEvent) {
-        let win32 = self
-            .tabs
-            .active()
-            .is_some_and(|tab| tab.control.input_modes().win32_input);
+        // A printable key travels as the character it typed, unless the program
+        // asked for every key: then the key and its release travel instead.
+        let modes = self.tabs.active().map(|tab| tab.control.input_modes());
+        let win32 = modes.is_some_and(|modes| modes.win32_input);
+        let keys = modes.is_some_and(|modes| modes.reports_all_keys());
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
-        let outcome = input::translate(event, &mut tab.sides, win32);
+        let outcome = input::translate(event, &mut tab.sides, win32, keys);
         if outcome.activity {
             tab.view.scroll_to_bottom();
         }
