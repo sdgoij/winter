@@ -16,7 +16,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use renderer::{CellSizeInDIP, FontDueRasterizer, FontInfo, Settings};
-use term::input::{MouseButton, MouseButtons, MouseEvent, WHEEL_DELTA, WheelAxis};
+use term::input::{Key, MouseButton, MouseButtons, MouseEvent, WHEEL_DELTA, WheelAxis};
 use utils::Size;
 use winter::embed::{Setup, Surface};
 use winter::input;
@@ -110,6 +110,25 @@ pub enum Command {
         /// The grid's new height.
         rows: i32,
     },
+    /// A key from the toolkit, with the identity the encoder needs.
+    Key {
+        /// The toolkit's name for the key: `ArrowUp`, `F5`, `Enter`, `a`.
+        name: String,
+        /// The text the key produced, when it produced any.
+        text: String,
+        /// Whether Shift is held.
+        shift: bool,
+        /// Whether Ctrl is held.
+        ctrl: bool,
+        /// Whether Alt is held.
+        alt: bool,
+        /// Whether this is the press rather than the release.
+        pressed: bool,
+        /// Whether this is an auto-repeat rather than the first press.
+        repeat: bool,
+    },
+    /// Text to paste through the terminal's bracketed-paste filter.
+    Paste(String),
     /// Paint and send a frame, if anything changed.
     Render,
     /// A button press at a cell.
@@ -170,6 +189,7 @@ pub enum Command {
 pub fn parse(line: &str) -> Option<Command> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     let shift = || value.get("shift").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let flag = |name: &str| value.get(name).and_then(serde_json::Value::as_bool).unwrap_or(false);
     let cell = || {
         Some((
             i32::try_from(value.get("col")?.as_i64()?).ok()?,
@@ -186,6 +206,23 @@ pub fn parse(line: &str) -> Option<Command> {
 
     Some(match value.get("cmd")?.as_str()? {
         "write" => Command::Write(value.get("text")?.as_str()?.to_string()),
+        "key" => Command::Key {
+            name: value.get("name")?.as_str()?.to_string(),
+            text: value
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            shift: shift(),
+            ctrl: flag("ctrl"),
+            alt: flag("alt"),
+            pressed: value
+                .get("pressed")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true),
+            repeat: flag("repeat"),
+        },
+        "paste" => Command::Paste(value.get("text")?.as_str()?.to_string()),
         "resize" => Command::Resize {
             columns: i32::try_from(value.get("cols")?.as_i64()?).ok()?,
             rows: i32::try_from(value.get("rows")?.as_i64()?).ok()?,
@@ -264,6 +301,20 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
 
         match command {
             Command::Write(text) => surface.write(&text),
+            Command::Key {
+                name,
+                text,
+                shift,
+                ctrl,
+                alt,
+                pressed,
+                repeat,
+            } => {
+                if let Some(event) = key_event(&name, &text, shift, ctrl, alt, pressed, repeat) {
+                    surface.key(&event);
+                }
+            }
+            Command::Paste(text) => surface.paste(&text),
             Command::Resize { columns, rows } => surface.resize(columns, rows).map_err(io::Error::other)?,
             Command::Render => {
                 let now = Instant::now();
@@ -345,6 +396,85 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
 /// Whether the pointer belongs to the program rather than to this host.
 fn forwards(surface: &Surface, shift: bool) -> bool {
     input::forwards_to_application(surface.is_tracking_mouse(), shift)
+}
+
+/// The encoder event a toolkit key names, or `None` for a key with no encoded
+/// form outside win32 input mode.
+///
+/// A printable key arrives twice in a toolkit — as a key and as text — and the
+/// terminal decides which of the two it wants (ADR 056). Everything else is a
+/// key: the terminal's [`Surface::key`] applies the input modes, the kitty
+/// keyboard protocol's flags and the modifier sides, so the host never encodes
+/// a key itself.
+fn key_event(
+    name: &str,
+    text: &str,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+    pressed: bool,
+    repeat: bool,
+) -> Option<input::Event> {
+    let modifiers = input::Modifiers {
+        shift,
+        ctrl,
+        alt,
+        command: false,
+    };
+    let key = named_key(name)?;
+
+    if pressed && !ctrl && !alt && input::produces_text(key, modifiers) {
+        return Some(input::Event::Text(text.to_string()));
+    }
+
+    // A typing key's release has nothing to encode unless the program asked for
+    // win32 input records, and a release it never saw a press for is noise.
+    if !pressed && matches!(key, Key::Char(_) | Key::Space) && !ctrl && !alt {
+        return None;
+    }
+
+    Some(input::Event::Key {
+        key,
+        pressed,
+        repeat,
+        modifiers,
+        virtual_key: 0,
+        scan_code: 0,
+        repeat_count: 0,
+        // The text a key types travels as `Event::Text`; a key that reaches
+        // here types nothing, so there is no character to pair with it.
+        codepoint: None,
+    })
+}
+
+/// The terminal key a toolkit name stands for.
+fn named_key(name: &str) -> Option<Key> {
+    if let Some(number) = name.strip_prefix('F').and_then(|digits| digits.parse().ok()) {
+        return Some(Key::Function(number));
+    }
+
+    let mut characters = name.chars();
+    match (characters.next(), characters.next()) {
+        (Some(' '), None) => Some(Key::Space),
+        (Some(character), None) => Some(Key::Char(character)),
+        _ => Some(match name {
+            "Enter" | "NumpadEnter" => Key::Enter,
+            "Tab" => Key::Tab,
+            "Escape" => Key::Escape,
+            "Backspace" => Key::Backspace,
+            "Delete" => Key::Delete,
+            "Insert" => Key::Insert,
+            "Home" => Key::Home,
+            "End" => Key::End,
+            "PageUp" => Key::PageUp,
+            "PageDown" => Key::PageDown,
+            "ArrowUp" => Key::Up,
+            "ArrowDown" => Key::Down,
+            "ArrowLeft" => Key::Left,
+            "ArrowRight" => Key::Right,
+            _ => return None,
+        }),
+    }
 }
 
 /// The cursor phase at `now`, or `true` while the cursor is not drawn.
@@ -838,5 +968,97 @@ mod tests {
         .expect("serve");
 
         assert!(out.is_empty(), "nothing after a quit may be served");
+    }
+
+    #[test]
+    fn a_typed_key_goes_down_the_text_path() {
+        let (mut surface, queue) = fixture(20, 2);
+
+        serve(
+            br#"{"cmd":"key","name":"a","text":"a","pressed":true}"#.as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        assert_eq!(queue.take_written(), b"a");
+    }
+
+    #[test]
+    fn a_control_key_and_an_arrow_are_encoded_by_the_terminal() {
+        let (mut surface, queue) = fixture(20, 2);
+
+        serve(
+            br#"{"cmd":"key","name":"c","text":"c","ctrl":true,"pressed":true}
+{"cmd":"key","name":"ArrowUp","text":"","pressed":true}"#
+                .as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        assert_eq!(queue.take_written(), b"\x03\x1b[A");
+    }
+
+    #[test]
+    fn a_function_key_is_encoded() {
+        let (mut surface, queue) = fixture(20, 2);
+
+        serve(
+            br#"{"cmd":"key","name":"F5","text":"","pressed":true}"#.as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        assert!(!queue.take_written().is_empty(), "F5 encoded nothing");
+    }
+
+    #[test]
+    fn a_typing_keys_release_is_not_sent() {
+        let (mut surface, queue) = fixture(20, 2);
+
+        serve(
+            br#"{"cmd":"key","name":"a","text":"a","pressed":false}"#.as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        assert!(queue.take_written().is_empty());
+    }
+
+    #[test]
+    fn a_paste_goes_through_the_bracketed_filter() {
+        let (mut surface, queue) = fixture(20, 2);
+        // DECSET 2004 asks the terminal to bracket a paste.
+        queue.feed(b"\x1b[?2004h");
+
+        serve(
+            br#"{"cmd":"paste","text":"two words"}"#.as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        assert_eq!(queue.take_written(), b"\x1b[200~two words\x1b[201~");
+    }
+
+    #[test]
+    fn the_encoding_follows_the_programs_keyboard_flags() {
+        let (mut surface, queue) = fixture(20, 2);
+        // The kitty protocol's push with "disambiguate" set.
+        queue.feed(b"\x1b[>1u");
+
+        serve(
+            br#"{"cmd":"key","name":"ArrowUp","text":"","pressed":true}"#.as_slice(),
+            &mut Vec::new(),
+            &mut surface,
+        )
+        .expect("serve");
+
+        let written = queue.take_written();
+        assert!(written.starts_with(b"\x1b["), "{written:?}");
+        assert_ne!(written, b"\x1b[A", "the legacy encoding was used: {written:?}");
     }
 }

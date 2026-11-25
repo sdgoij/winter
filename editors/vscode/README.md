@@ -40,8 +40,11 @@ code --extensionDevelopmentPath="$PWD"
 ## What it does
 
 - Spawns `winter-frame`, which starts your shell on a pty.
-- Sends `write`, `resize`, `render`, `press`, `move`, `release`, `wheel`,
-  `copy` and `quit` as JSON lines.
+- Sends `key`, `paste`, `write`, `resize`, `render`, `press`, `move`, `release`,
+  `wheel`, `copy` and `quit` as JSON lines. A key travels as its **name and
+  modifiers**, not as the characters a webview guessed: the terminal applies the
+  input modes and the keyboard protocol the program asked for, so function keys,
+  Shift+Tab and modified arrows work.
 - Reads tagged messages: kind 0 is a whole frame (`u32` width, height, cell
   width, cell height, byte length, then RGBA), painted with `putImageData`; kind
   1 is text for the clipboard; kind 2 is a **band** — the rows that changed, with
@@ -53,7 +56,8 @@ code --extensionDevelopmentPath="$PWD"
 
 ## Controls
 
-- **Type** — keys, `Ctrl+<letter>` as control codes, paste from the clipboard.
+- **Type** — keys, `Ctrl+<letter>` as control codes, paste from the clipboard
+  through the terminal's bracketed-paste filter.
 - **Select** — click a cell, drag to extend, double-click for a word, triple
   click for the row. The server decides what a click means (`Surface::press`).
 - **Copy** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>, or

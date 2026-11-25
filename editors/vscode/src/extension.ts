@@ -27,6 +27,17 @@ type Message =
   | { kind: "input"; text: string }
   | { kind: "resize"; cols: number; rows: number }
   | {
+      kind: "key";
+      name: string;
+      text: string;
+      shift: boolean;
+      ctrl: boolean;
+      alt: boolean;
+      pressed: boolean;
+      repeat: boolean;
+    }
+  | { kind: "paste"; text: string }
+  | {
       kind: "pointer";
       action: "press" | "move" | "release";
       col: number;
@@ -74,6 +85,21 @@ function open(context: vscode.ExtensionContext): void {
     switch (message.kind) {
       case "input":
         send({ cmd: "write", text: message.text });
+        break;
+      case "key":
+        send({
+          cmd: "key",
+          name: message.name,
+          text: message.text,
+          shift: message.shift,
+          ctrl: message.ctrl,
+          alt: message.alt,
+          pressed: message.pressed,
+          repeat: message.repeat,
+        });
+        break;
+      case "paste":
+        send({ cmd: "paste", text: message.text });
         break;
       case "resize":
         send({ cmd: "resize", cols: message.cols, rows: message.rows });
@@ -431,25 +457,45 @@ function html(): string {
       return;
     }
 
-    let text = escapes[event.key];
-    if (!text && event.ctrlKey && event.key.length === 1) {
-      text = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) & 0x1f);
-    }
-    if (!text && event.key.length === 1 && !event.metaKey) {
-      text = event.key;
-    }
-    if (!text) {
+    // The command key belongs to the editor on macOS; sending it as text would
+    // type the letter of a shortcut. (The copy chord above is the exception.)
+    if (event.metaKey) {
       return;
     }
+
     event.preventDefault();
-    vscode.postMessage({ kind: "input", text });
+    sendKey(event, true);
   });
+
+  window.addEventListener("keyup", (event) => {
+    if (event.metaKey) {
+      return;
+    }
+    sendKey(event, false);
+  });
+
+  // The terminal encodes a key, not the webview: it knows the input modes and
+  // the keyboard protocol the program asked for.
+  function sendKey(event, pressed) {
+    const name = event.key;
+    const typed = escapes[name] || (name.length === 1 && !event.ctrlKey ? name : "");
+    vscode.postMessage({
+      kind: "key",
+      name,
+      text: typed,
+      shift: event.shiftKey,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      pressed,
+      repeat: pressed && event.repeat,
+    });
+  }
 
   window.addEventListener("paste", (event) => {
     const text = event.clipboardData && event.clipboardData.getData("text");
     if (text) {
       event.preventDefault();
-      vscode.postMessage({ kind: "input", text });
+      vscode.postMessage({ kind: "paste", text });
     }
   });
 

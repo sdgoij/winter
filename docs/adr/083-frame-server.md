@@ -47,9 +47,15 @@ it owns the frame.
    scrolls. That is `forwards_to_application` and `Surface::press`/`drag` — the
    same rule the shells apply (ADR 019), written once here rather than in the
    webview.
-5. **`editors/vscode` is the other half**: a command, a webview with a canvas,
+5. **Keys go through the terminal's encoder.** The webview reports a key's name,
+   the text it typed and the modifiers; the server builds the event and calls
+   `Surface::key`, which applies the input modes and the program's kitty-keyboard
+   flags (ADRs 009, 056). Writing the characters instead loses function keys,
+   modifier sides and both encodings — which is what a program that pushes
+   `REPORT_ALL_KEYS_AS_ESCAPE_CODES` is asking for.
+6. **`editors/vscode` is the other half**: a command, a webview with a canvas,
    and a child process. It asks for a frame every 33 ms and after input.
-6. **The demo uses one process per terminal.** Tabs, panes and remoting are not
+7. **The demo uses one process per terminal.** Tabs, panes and remoting are not
    modelled; a second terminal is a second process.
 
 ## Rationale
