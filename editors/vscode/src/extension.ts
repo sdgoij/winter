@@ -4,14 +4,18 @@
 // the pixels. Commands go to the process's stdin as one JSON object per line, and
 // the process answers on stdout with tagged messages: kind 0 is a frame (width,
 // height, cell width, cell height, byte length, RGBA) and kind 1 is text for the
-// clipboard. The webview paints frames with `putImageData`.
+// clipboard.
+//
+// The pixels travel base64-encoded: a webview's `postMessage` does not promise
+// that a `Buffer` or a typed array survives as bytes, and a frame that arrives
+// as an object is a blank canvas with no error to show.
 
 import * as cp from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-/** A frame message: `u32 0` then five `u32`s. */
+/** A frame message: `u32 0` then five `u32`s, then base64 RGBA. */
 const FRAME_HEADER = 24;
 /** A text message: `u32 1` and a length. */
 const TEXT_HEADER = 8;
@@ -34,10 +38,14 @@ type Message =
 
 let server: cp.ChildProcessWithoutNullStreams | undefined;
 let panel: vscode.WebviewPanel | undefined;
+let log: vscode.OutputChannel | undefined;
 let timer: NodeJS.Timeout | undefined;
 let pending = Buffer.alloc(0);
+let announced = false;
 
 export function activate(context: vscode.ExtensionContext): void {
+  log = vscode.window.createOutputChannel("Winter");
+  context.subscriptions.push(log);
   context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open(context)));
   context.subscriptions.push(new vscode.Disposable(() => stop()));
 }
@@ -100,13 +108,17 @@ function start(context: vscode.ExtensionContext): void {
     return;
   }
 
+  log?.appendLine(`server: ${binary}`);
   server = cp.spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
-  server.on("error", (error) => void vscode.window.showErrorMessage(`Winter: ${error.message}`));
-  server.on("exit", (code) => {
-    server = undefined;
-    void vscode.window.showInformationMessage(`Winter: the frame server exited (${code ?? "signal"}).`);
+  server.on("error", (error) => {
+    log?.appendLine(`spawn failed: ${error.message}`);
+    void vscode.window.showErrorMessage(`Winter: ${error.message}`);
   });
-  server.stderr.on("data", (chunk: Buffer) => console.error(`winter-frame: ${chunk.toString()}`));
+  server.on("exit", (code, signal) => {
+    log?.appendLine(`server exited: ${code ?? signal}`);
+    server = undefined;
+  });
+  server.stderr.on("data", (chunk: Buffer) => log?.append(chunk.toString()));
   server.stdout.on("data", (chunk: Buffer) => onData(chunk));
 
   timer = setInterval(() => send({ cmd: "render" }), FRAME_INTERVAL);
@@ -145,8 +157,13 @@ function onData(chunk: Buffer): void {
     if (pending.length < FRAME_HEADER + length) {
       return;
     }
-    const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length);
+    const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
     pending = pending.subarray(FRAME_HEADER + length);
+
+    if (!announced && width > 0) {
+      announced = true;
+      log?.appendLine(`first frame: ${width}x${height}, ${length} bytes`);
+    }
     void panel?.webview.postMessage({ kind: "frame", width, height, cellWidth, cellHeight, pixels });
   }
 }
@@ -164,6 +181,7 @@ function stop(): void {
   server?.stdin.end();
   server = undefined;
   pending = Buffer.alloc(0);
+  announced = false;
 }
 
 function serverName(): string {
@@ -213,15 +231,20 @@ function html(): string {
 <meta charset="utf-8">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #0c0c0c; overflow: hidden; }
+  body { position: relative; }
   #screen { display: block; outline: none; user-select: none; -webkit-user-select: none; image-rendering: auto; }
+  #status { position: absolute; left: 10px; top: 8px; margin: 0; color: #cccccc;
+            font: 12px/1.4 monospace; white-space: pre-wrap; }
 </style>
 </head>
 <body>
 <canvas id="screen" tabindex="0"></canvas>
+<pre id="status">waiting for the first frame…</pre>
 <script>
   const vscode = acquireVsCodeApi();
   const canvas = document.getElementById("screen");
   const context = canvas.getContext("2d");
+  const status = document.getElementById("status");
   let cell = { width: 9, height: 17 };
   let scale = 1;
   let last = { cols: 0, rows: 0 };
@@ -233,19 +256,49 @@ function html(): string {
       return;
     }
 
-    cell = { width: message.cellWidth, height: message.cellHeight };
-    if (canvas.width !== message.width || canvas.height !== message.height) {
-      canvas.width = message.width;
-      canvas.height = message.height;
-    }
+    try {
+      cell = { width: message.cellWidth, height: message.cellHeight };
+      if (canvas.width !== message.width || canvas.height !== message.height) {
+        canvas.width = message.width;
+        canvas.height = message.height;
+      }
 
-    // A typed array survives the message as one; anything else arrived as JSON.
-    const bytes = message.pixels instanceof Uint8Array
-      ? new Uint8ClampedArray(message.pixels.buffer, message.pixels.byteOffset, message.pixels.byteLength)
-      : Uint8ClampedArray.from(Object.values(message.pixels));
-    context.putImageData(new ImageData(bytes, message.width, message.height), 0, 0);
-    fit();
+      const bytes = decode(message.pixels);
+      if (!bytes) {
+        status.textContent = "frame: unexpected pixel payload (" + typeof message.pixels + ")";
+        return;
+      }
+      if (bytes.length !== message.width * message.height * 4) {
+        status.textContent =
+          "frame: " + bytes.length + " bytes for " + message.width + "x" + message.height;
+        return;
+      }
+
+      context.putImageData(new ImageData(bytes, message.width, message.height), 0, 0);
+      status.textContent = "";
+      fit();
+    } catch (error) {
+      status.textContent = "frame error: " + error;
+    }
   });
+
+  function decode(pixels) {
+    if (typeof pixels === "string") {
+      const raw = atob(pixels);
+      const bytes = new Uint8ClampedArray(raw.length);
+      for (let index = 0; index < raw.length; index += 1) {
+        bytes[index] = raw.charCodeAt(index);
+      }
+      return bytes;
+    }
+    if (pixels instanceof Uint8Array) {
+      return new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+    }
+    if (pixels && pixels.type === "Buffer" && Array.isArray(pixels.data)) {
+      return Uint8ClampedArray.from(pixels.data);
+    }
+    return null;
+  }
 
   // The pane is told a grid that fits it, so the server repaints at that size.
   function fit() {
