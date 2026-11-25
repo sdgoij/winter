@@ -13,8 +13,8 @@ npm install                    # once
 
 Then open **`editors/vscode`** in VS Code and press <kbd>F5</kbd>. That runs the
 `Run Winter demo` launch configuration, which compiles the extension, builds the
-server, and opens an **Extension Development Host** — a second VS Code window
-with this extension loaded.
+server, and opens an **Extension Development Host** — a second VS Code window,
+opened at the repository root, with this extension loaded.
 
 In that second window, run **Winter: Open Terminal** from the command palette
 (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>).
@@ -58,15 +58,17 @@ code --extensionDevelopmentPath="$PWD"
 - **Click in a tracking program** — forwarded as a mouse report, unless Shift is
   held, which keeps the pointer for selection.
 
-The server is found by walking up from the workspace folder to
-`target/debug/winter-frame`, or wherever `winter.serverPath` points.
+The server is found by walking up from the extension's own folder (and from any
+workspace folder) to `target/debug/winter-frame`, or wherever
+`winter.serverPath` points.
 
 ## Troubleshooting
 
 - **No command in the palette** — you are in the wrong window. Press F5 and use
   the window titled `[Extension Development Host]`.
 - **"no frame server"** — build it (`cargo build -p winter-demo`) or set
-  `winter.serverPath`.
+  `winter.serverPath`. The lookup starts at the extension's own folder, so a
+  development host with no workspace folder still finds `target/debug`.
 - **Blank canvas** — look at the `winter-frame` stderr lines in the extension
   host log (`Help → Toggle Developer Tools`).
 

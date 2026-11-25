@@ -38,7 +38,7 @@ let timer: NodeJS.Timeout | undefined;
 let pending = Buffer.alloc(0);
 
 export function activate(context: vscode.ExtensionContext): void {
-  context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open()));
+  context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open(context)));
   context.subscriptions.push(new vscode.Disposable(() => stop()));
 }
 
@@ -46,7 +46,7 @@ export function deactivate(): void {
   stop();
 }
 
-function open(): void {
+function open(context: vscode.ExtensionContext): void {
   if (panel) {
     panel.reveal();
     return;
@@ -87,14 +87,15 @@ function open(): void {
     }
   });
 
-  start();
+  start(context);
 }
 
-function start(): void {
-  const binary = resolveBinary();
+function start(context: vscode.ExtensionContext): void {
+  const binary = resolveBinary(context);
   if (!binary) {
     void vscode.window.showErrorMessage(
-      "Winter: no frame server. Run `cargo build -p winter-demo` in the workspace, or set `winter.serverPath`.",
+      `Winter: no ${serverName()}. Run \`cargo build -p winter-demo\` in the repository, or set ` +
+        `\`winter.serverPath\`. Searched upward from ${context.extensionPath}.`,
     );
     return;
   }
@@ -165,18 +166,29 @@ function stop(): void {
   pending = Buffer.alloc(0);
 }
 
-function resolveBinary(): string | undefined {
+function serverName(): string {
+  return process.platform === "win32" ? "winter-frame.exe" : "winter-frame";
+}
+
+function resolveBinary(context: vscode.ExtensionContext): string | undefined {
   const configured = vscode.workspace.getConfiguration("winter").get<string>("serverPath");
   if (configured) {
     return configured;
   }
 
-  const name = process.platform === "win32" ? "winter-frame.exe" : "winter-frame";
-  // This extension lives in `editors/vscode`, below the Cargo root, so walk up
-  // from each workspace folder instead of only looking at the folder itself.
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    let directory = folder.uri.fsPath;
-    for (let depth = 0; depth < 4; depth += 1) {
+  const name = serverName();
+  // The extension's own folder comes first: a development host can open with no
+  // workspace folder at all, and `editors/vscode` always sits below the Cargo
+  // root, so walking up from here finds `target/debug` either way.
+  const roots = [
+    context.extensionPath,
+    process.cwd(),
+    ...(vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+  ];
+
+  for (const root of roots) {
+    let directory = root;
+    for (let depth = 0; depth < 5; depth += 1) {
       for (const profile of ["debug", "release"]) {
         const candidate = path.join(directory, "target", profile, name);
         if (fs.existsSync(candidate)) {
