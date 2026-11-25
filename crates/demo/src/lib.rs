@@ -792,7 +792,11 @@ impl Frames {
 
         let start = top as usize * width as usize;
         let end = start + rows as usize * width as usize;
-        let rgba = rgba(&pixels[start..end]);
+        // The pixels are deflated: a full-screen program repaints its whole pane
+        // every frame, and raw RGBA is more than a webview can decode and paint
+        // over a message channel at speed. The header's length is the length on
+        // the wire; the host inflates before painting.
+        let payload = deflate(&rgba(&pixels[start..end]));
 
         if full {
             output.write_all(&0u32.to_be_bytes())?;
@@ -807,8 +811,8 @@ impl Frames {
             output.write_all(&rows.to_be_bytes())?;
             output.write_all(&0u32.to_be_bytes())?;
         }
-        output.write_all(&(rgba.len() as u32).to_be_bytes())?;
-        output.write_all(&rgba)?;
+        output.write_all(&(payload.len() as u32).to_be_bytes())?;
+        output.write_all(&payload)?;
 
         self.previous.clear();
         self.previous.extend_from_slice(&pixels);
@@ -841,6 +845,15 @@ fn changed_rows(previous: &[u32], current: &[u32], width: u32) -> Option<(usize,
     }
 
     first.map(|first| (first, last))
+}
+
+/// The pixels, deflated.
+///
+/// Level 1 because this runs on every frame of a full-screen program: it is the
+/// cheapest level that still turns flat colour into a fraction of its size, and
+/// the host pays only the inflate (ADR 083).
+fn deflate(pixels: &[u8]) -> Vec<u8> {
+    miniz_oxide::deflate::compress_to_vec(pixels, 1)
 }
 
 /// The RGBA bytes of a run of pixels, with alpha forced opaque.
@@ -965,6 +978,15 @@ mod tests {
         String::from_utf8(message[TEXT_HEADER..TEXT_HEADER + length].to_vec()).expect("utf-8")
     }
 
+    /// The pixels a frame carries, after the deflate the host undoes.
+    fn pixels_of(frame: &[u8]) -> Vec<u8> {
+        miniz_oxide::inflate::decompress_to_vec(&frame[FRAME_HEADER..]).expect("deflated pixels")
+    }
+
+    fn payload_length(frame: &[u8]) -> usize {
+        u32::from_be_bytes(frame[20..24].try_into().expect("four bytes")) as usize
+    }
+
     #[test]
     fn a_render_command_asks_for_a_frame() {
         assert_eq!(parse(r#"{"cmd":"render"}"#), Some(Command::Render));
@@ -1037,17 +1059,32 @@ mod tests {
         assert_eq!((width(&out), height(&out)), (32, 32));
         assert_eq!(u32::from_be_bytes(out[12..16].try_into().expect("four bytes")), 8);
         assert_eq!(u32::from_be_bytes(out[16..20].try_into().expect("four bytes")), 16);
-        let length = u32::from_be_bytes(out[20..24].try_into().expect("four bytes")) as usize;
-        assert_eq!(length, 32 * 32 * 4);
-        assert_eq!(out.len(), FRAME_HEADER + length);
+        assert_eq!(out.len(), FRAME_HEADER + payload_length(&out));
 
-        let rgba = &out[FRAME_HEADER..];
+        let rgba = pixels_of(&out);
+        assert_eq!(rgba.len(), 32 * 32 * 4, "the frame is the pane's pixels");
         let inked = rgba[16 * 32 * 4..]
             .as_chunks::<4>()
             .0
             .iter()
             .any(|pixel| pixel[0] > 0x80 && pixel[3] == 255);
         assert!(inked, "the fed text did not reach the frame");
+    }
+
+    #[test]
+    fn a_frame_travels_deflated() {
+        let (mut surface, _queue) = fixture(8, 4);
+        let mut out = Vec::new();
+
+        serve(br#"{"cmd":"render"}"#.as_slice(), &mut out, &mut surface).expect("serve");
+
+        let raw = 64 * 64 * 4;
+        assert_eq!(pixels_of(&out).len(), raw);
+        assert!(
+            payload_length(&out) < raw / 2,
+            "an empty pane deflated to {} of {raw} bytes",
+            payload_length(&out)
+        );
     }
 
     #[test]
@@ -1145,9 +1182,8 @@ mod tests {
         // couple of rows — far less than the eight-row pane.
         let rows = u32::from_be_bytes(out[12..16].try_into().expect("four bytes"));
         assert!((16..128).contains(&rows), "band of {rows} rows");
-        let length = u32::from_be_bytes(out[20..24].try_into().expect("four bytes")) as usize;
-        assert_eq!(length, 32 * rows as usize * 4);
-        assert_eq!(out.len(), FRAME_HEADER + length);
+        assert_eq!(out.len(), FRAME_HEADER + payload_length(&out));
+        assert_eq!(pixels_of(&out).len(), 32 * rows as usize * 4);
     }
 
     #[test]

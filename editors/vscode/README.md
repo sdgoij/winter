@@ -50,9 +50,10 @@ code --extensionDevelopmentPath="$PWD"
   text byte, which the console answers with a press and a release together, so
   a held key would move for a single frame.
 - Reads tagged messages: kind 0 is a whole frame (`u32` width, height, cell
-  width, cell height, byte length, then RGBA), painted with `putImageData`; kind
+  width, cell height, byte length, then deflated RGBA), inflated with
+  `DecompressionStream` and painted with `putImageData`; kind
   1 is text for the clipboard; kind 2 is a **band** — the rows that changed, with
-  their top edge — so a keystroke sends about 60 KB instead of 1.8 MB; kind 3 is
+  their top edge — so a keystroke sends about 10 KB instead of 53 KB; kind 3 is
   a diagnostic line, logged to the **Winter** output channel. A frame with a
   **zero width** means nothing changed, and the host keeps what it has. `modes`
   asks for kind 3: it is what a program asked of the input path, which is how to

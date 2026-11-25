@@ -12,6 +12,7 @@ name = "winter-frame"
 path = "src/main.rs"
 
 [dependencies]
+miniz_oxide.workspace = true
 renderer.workspace = true
 serde_json.workspace = true
 server.workspace = true

@@ -1,7 +1,8 @@
 """Decodes a frame from `winter-frame` and writes it as a PNG.
 
-Debug helper for the demo: the protocol is a u32 big-endian width, height and
-byte length followed by that many RGBA bytes.
+Debug helper for the demo: the protocol is a u32 big-endian width, height, cell
+width, cell height and compressed length followed by that many bytes of
+deflated RGBA.
 """
 
 import struct
@@ -25,7 +26,8 @@ def main(source: str, target: str) -> None:
     kind, width, height, cell_width, cell_height, length = struct.unpack(">IIIIII", data[:24])
     if kind != 0:
         raise SystemExit(f"not a frame: kind {kind}")
-    pixels = data[24 : 24 + length]
+    # Raw deflate (RFC 1951), which is what the server writes.
+    pixels = zlib.decompress(data[24 : 24 + length], -15)
     assert len(pixels) == width * height * 4, (len(pixels), width, height)
 
     stride = width * 4

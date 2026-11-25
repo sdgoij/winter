@@ -464,13 +464,20 @@ function html(): string {
     vscode.postMessage({ kind: "painted" });
   }
 
-  window.addEventListener("message", (event) => {
-    const message = event.data;
+  // The chain every message is handled through, so paints stay in order.
+  let painting = Promise.resolve();
 
+  window.addEventListener("message", (event) => {
+    // One at a time: inflating is asynchronous, and two bands painted out of
+    // order would leave the canvas wrong.
+    painting = painting.then(() => handle(event.data));
+  });
+
+  async function handle(message) {
     // A band is the rows from "top": the rest of the canvas is already right.
     if (message.kind === "patch") {
       try {
-        paintPatch(message);
+        await paintPatch(message);
       } catch (error) {
         status.textContent = "patch error: " + error;
       }
@@ -484,36 +491,32 @@ function html(): string {
     }
 
     try {
-      paintFrame(message);
+      await paintFrame(message);
     } catch (error) {
       status.textContent = "frame error: " + error;
     }
     painted();
-  });
+  }
 
-  function paintPatch(message) {
-    const bytes = decode(message.pixels);
-    if (!bytes || bytes.length !== message.width * message.height * 4) {
+  async function paintPatch(message) {
+    const bytes = await pixels(message);
+    if (bytes.length !== message.width * message.height * 4) {
       status.textContent =
-        "patch: " + (bytes ? bytes.length : "no") + " bytes for " + message.width + "x" + message.height;
+        "patch: " + bytes.length + " bytes for " + message.width + "x" + message.height;
       return;
     }
     context.putImageData(new ImageData(bytes, message.width, message.height), 0, message.top);
     status.textContent = "";
   }
 
-  function paintFrame(message) {
+  async function paintFrame(message) {
     cell = { width: message.cellWidth, height: message.cellHeight };
     if (canvas.width !== message.width || canvas.height !== message.height) {
       canvas.width = message.width;
       canvas.height = message.height;
     }
 
-    const bytes = decode(message.pixels);
-    if (!bytes) {
-      status.textContent = "frame: unexpected pixel payload (" + typeof message.pixels + ")";
-      return;
-    }
+    const bytes = await pixels(message);
     if (bytes.length !== message.width * message.height * 4) {
       status.textContent =
         "frame: " + bytes.length + " bytes for " + message.width + "x" + message.height;
@@ -525,22 +528,21 @@ function html(): string {
     fit();
   }
 
-  function decode(pixels) {
-    if (typeof pixels === "string") {
-      const raw = atob(pixels);
-      const bytes = new Uint8ClampedArray(raw.length);
-      for (let index = 0; index < raw.length; index += 1) {
-        bytes[index] = raw.charCodeAt(index);
-      }
-      return bytes;
+  // The pixels arrive deflated. A full-screen program repaints 1.8 MB of RGBA
+  // every frame, and decoding that from base64 a byte at a time is what a pane
+  // cannot do at speed; inflating is native and the byte loop then runs over a
+  // fraction of the bytes.
+  async function pixels(message) {
+    if (typeof message.pixels !== "string" || typeof DecompressionStream === "undefined") {
+      throw new Error("cannot inflate a " + typeof message.pixels + " payload");
     }
-    if (pixels instanceof Uint8Array) {
-      return new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+    const raw = atob(message.pixels);
+    const deflated = new Uint8Array(raw.length);
+    for (let index = 0; index < raw.length; index += 1) {
+      deflated[index] = raw.charCodeAt(index);
     }
-    if (pixels && pixels.type === "Buffer" && Array.isArray(pixels.data)) {
-      return Uint8ClampedArray.from(pixels.data);
-    }
-    return null;
+    const stream = new Blob([deflated]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8ClampedArray(await new Response(stream).arrayBuffer());
   }
 
   // The pane is told a grid that fits it, so the server repaints at that size.

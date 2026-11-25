@@ -32,16 +32,19 @@ it owns the frame.
    line this build does not know is skipped, not fatal — a host may be newer than
    the server, and dropping the session is worse than ignoring a line.
 3. **Answers are tagged**: kind 0 is a whole frame — five big-endian `u32`s
-   (width, height, cell width, cell height, byte length) then RGBA with alpha
-   forced opaque; kind 1 is text, which is how a copy reaches the host's
+   (width, height, cell width, cell height, compressed length) then the frame's
+   RGBA, deflated; kind 1 is text, which is how a copy reaches the host's
    clipboard; kind 2 is a band — its top pixel row, width, height, an unused
-   word, then the band's RGBA — because a shell mostly changes one row and
-   shipping the pane for it is what made the demo sluggish; kind 3 is a
+   word, then the band's deflated RGBA — because a shell mostly changes one row
+   and shipping the pane for it is what made the demo sluggish; kind 3 is a
    diagnostic line, which is how a host asks what the program requested of the
    input path. A frame with a zero width is the answer to a render that changed
-   nothing: the host keeps the picture it has. The cell size is in the header
-   because a host with a pane has pixels, not a grid; without it, turning a
-   pane's size into `cols`/`rows` would mean guessing the font's metrics.
+   nothing: the host keeps the picture it has, and the answer is flushed so a
+   host that waits for it gets it. The cell size is in the header because a host
+   with a pane has pixels, not a grid; without it, turning a pane's size into
+   `cols`/`rows` would mean guessing the font's metrics. The pixels are deflated
+   because a full-screen program repaints its whole pane every frame and a
+   webview cannot decode 1.8 MB of base64 per frame at 30 Hz.
 4. **The pointer policy lives in the server.** A press, move, release or wheel
    is forwarded to a program that tracks the mouse, unless Shift is held; when it
    is not forwarded, a press starts a selection, a move extends it and the wheel
@@ -92,12 +95,14 @@ it owns the frame.
   reporting are the server's, because they are the terminal's rules; the webview
   only turns pixels into cells. Dragging past the edge does not autoscroll —
   `Surface::drag_scroll` exists, but the webview clamps the pointer to the grid.
-- **A keystroke costs 60 KB, not 1.8 MB.** The server keeps the frame it last
-  sent and diffs the new one, then sends the band of whole cell rows that
-  changed; more than half the pane, a resize or the first frame goes whole. On a
-  900 by 510 pane, one typed character is a 61,200-byte band against a
-  1,836,000-byte frame; output that scrolls still sends the frame, which is what
-  the heuristic gives up.
+- **A keystroke costs 10 KB, a game frame 53 KB.** The server keeps the frame it
+  last sent and diffs the new one, then sends the band of whole cell rows that
+  changed; more than half the pane, a resize or the first frame goes whole. Both
+  are deflated at level 1: on a 900 by 510 pane one typed character is a
+  61,200-byte band that travels as about 10 KB, and a full-screen program's
+  1,836,000-byte frame as about 53 KB — 1.4 MB/s of base64 instead of 9.9. The
+  cost is about a millisecond of deflate per frame; output that scrolls still
+  sends the frame, which is what the heuristic gives up.
 - **A host that polls on a timer queues frames it will never show.** Answers
   come back in the order the commands arrived, so a render asked for while the
   previous one is still being painted is not dropped — it waits. A 900 by 510
