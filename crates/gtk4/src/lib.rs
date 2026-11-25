@@ -79,11 +79,39 @@ const GLYPH: f64 = 9.0;
 const ELLIPSIS: char = '…';
 
 /// Starts the GTK shell and runs it until its window closes.
+///
+/// `--new-instance` opts out of GtkApplication's session-bus handoff, so a
+/// rebuilt shell can run beside an installed one instead of activating it (and
+/// showing the old build's window).
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let app = Application::builder().application_id("org.winter.Winter").build();
+    let (new_instance, arguments) = take_new_instance(std::env::args_os().collect());
+
+    let flags = if new_instance {
+        gtk::gio::ApplicationFlags::NON_UNIQUE
+    } else {
+        gtk::gio::ApplicationFlags::default()
+    };
+    let app = Application::builder()
+        .application_id("org.winter.Winter")
+        .flags(flags)
+        .build();
     app.connect_activate(activate);
-    app.run();
+    app.run_with_args_os(&arguments);
     Ok(())
+}
+
+/// Takes `--new-instance` out of the argument list.
+///
+/// GApplication parses the process arguments itself and exits with `Unknown
+/// option` for a flag it does not declare, so the shell cannot leave this one
+/// in place.
+fn take_new_instance(arguments: Vec<std::ffi::OsString>) -> (bool, Vec<std::ffi::OsString>) {
+    let new_instance = arguments.iter().any(|argument| argument == "--new-instance");
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--new-instance")
+        .collect();
+    (new_instance, arguments)
 }
 
 fn activate(app: &Application) {
@@ -99,11 +127,19 @@ fn activate(app: &Application) {
     let document = loaded.settings;
     let font_size = document.font.size;
 
-    let Some(fonts) = fonts(font_size, CELLS) else {
+    // The window is sized in logical pixels, but the face is rasterised for the
+    // screen's scale, so a HiDPI monitor gets physical pixels (ADR 072's macOS
+    // trap applies here too).
+    let scale = display_scale();
+    let Some(fonts) = fonts(font_size, CELLS, scale) else {
         eprintln!("winter: no monospace face found in the usual font directories");
         app.quit();
         return;
     };
+    let cell_dip = (
+        (f64::from(fonts.cell.0) / f64::from(scale)).ceil(),
+        (f64::from(fonts.cell.1) / f64::from(scale)).ceil(),
+    );
     let template = TerminalSettings::resolve(&document);
     let first = match Tab::spawn(&template, CELLS) {
         Ok(tab) => tab,
@@ -145,9 +181,9 @@ fn activate(app: &Application) {
         .title(&template.title)
         // The window is sized for whole cells inside the pane's inset and the
         // scrollbar, so the first prompt is laid out at the size the pty opens
-        // with (ADR 072's macOS trap applies here too).
-        .default_width(PANE_LEFT as i32 + i32::from(fonts.cell.0) * CELLS.0 + scrollbar::WIDTH as i32)
-        .default_height(i32::from(fonts.cell.1) * CELLS.1)
+        // with.
+        .default_width(PANE_LEFT as i32 + (cell_dip.0 * f64::from(CELLS.0)) as i32 + scrollbar::WIDTH as i32)
+        .default_height((cell_dip.1 * f64::from(CELLS.1)) as i32)
         .build();
 
     // The title bar is the tab strip (ADRs 051, 061). A header bar centres its
@@ -235,6 +271,7 @@ fn activate(app: &Application) {
         migrated_from,
         settings_error,
         font_size,
+        scale,
         bindings,
         menu,
         chrome: fonts.chrome,
@@ -764,6 +801,10 @@ struct Shell {
     settings_error: Option<String>,
     /// The face's size in points.
     font_size: f32,
+    /// The composition scale the face was rasterised for. GTK reports the
+    /// window's size in logical pixels, so the cell, the grid and the renderer's
+    /// target are all multiplied by this to reach physical pixels.
+    scale: f32,
     /// The chords the window matches before the terminal sees a key.
     bindings: Rc<[settings::Keybinding]>,
     /// The profile menu the strip's button pops up.
@@ -942,7 +983,7 @@ impl Shell {
 
     /// Replaces the face, the renderer and the cell with ones at `font_size`.
     fn rebuild_fonts(&mut self) {
-        let Some(fonts) = fonts(self.font_size, self.grid) else {
+        let Some(fonts) = fonts(self.font_size, self.grid, self.scale) else {
             return;
         };
         self.cell = fonts.cell;
@@ -1074,8 +1115,9 @@ impl Shell {
     /// The caret's box in the pane's coordinates, for the candidate window.
     fn caret_rect(&self) -> gdk::Rectangle {
         let point = self.renderer.data().cursor_screen();
-        let width = i32::from(self.cell.0).max(1);
-        let height = i32::from(self.cell.1).max(1);
+        let (width, height) = self.dip_cell();
+        let width = width.round().max(1.0) as i32;
+        let height = height.round().max(1.0) as i32;
         gdk::Rectangle::new(PANE_LEFT as i32 + point.x() * width, point.y() * height, width, height)
     }
 
@@ -1222,8 +1264,7 @@ impl Shell {
 
     /// The cell a point in the pane names.
     fn cell_at(&self, point: (f64, f64)) -> Option<(i32, i32)> {
-        let width = f64::from(self.cell.0);
-        let height = f64::from(self.cell.1);
+        let (width, height) = self.dip_cell();
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
@@ -1231,6 +1272,13 @@ impl Shell {
         let row = (point.1 / height).floor() as i32;
         let (columns, rows) = self.grid;
         (column >= 0 && row >= 0 && column < columns && row < rows).then_some((column, row))
+    }
+
+    /// The cell in the pane's logical pixels, which is the unit the toolkit's
+    /// pointer positions are reported in. The cell itself is physical pixels.
+    fn dip_cell(&self) -> (f64, f64) {
+        let scale = f64::from(finite_scale(self.scale));
+        (f64::from(self.cell.0) / scale, f64::from(self.cell.1) / scale)
     }
 
     /// Records the pointer's cell and forwards the move a tracking program
@@ -1366,7 +1414,8 @@ impl Shell {
         }
 
         let (columns, rows) = self.grid;
-        let height = f64::from(self.cell.1) * f64::from(rows.max(0));
+        let (cell_width, cell_height) = self.dip_cell();
+        let height = cell_height * f64::from(rows.max(0));
         let outside = if point.1 < 0.0 {
             -1
         } else if height > 0.0 && point.1 >= height {
@@ -1374,7 +1423,7 @@ impl Shell {
         } else {
             0
         };
-        let column = cell_index(point.0 - PANE_LEFT, self.cell.0);
+        let column = cell_index(point.0 - PANE_LEFT, cell_width);
 
         let Some(tab) = self.tabs.active_mut() else {
             return;
@@ -1386,7 +1435,7 @@ impl Shell {
             let column = column.clamp(0, columns.max(1) - 1);
             Some((column, input::screen_to_document(max, tab.view.scroll(), row)))
         } else {
-            let row = cell_index(point.1, self.cell.1);
+            let row = cell_index(point.1, cell_height);
             (column >= 0 && row >= 0 && column < columns.max(1) && row < rows.max(1)).then(|| {
                 let history = tab.control.max_scroll();
                 (column, input::screen_to_document(history, tab.view.scroll(), row))
@@ -1656,7 +1705,7 @@ impl Shell {
 
     /// Scrolls the viewport, or hands the wheel to a tracking program.
     fn wheel(&mut self, delta: f64, unit: gdk::ScrollUnit, shift: bool) -> glib::Propagation {
-        let rows = wheel_rows(delta, unit, self.cell.1, &mut self.wheel_pixels);
+        let rows = wheel_rows(delta, unit, self.dip_cell().1, &mut self.wheel_pixels);
         if rows == 0 {
             return glib::Propagation::Proceed;
         }
@@ -1683,6 +1732,7 @@ impl Shell {
 
     /// Fits the grid to the area and paints one frame.
     fn paint(&mut self, context: &cairo::Context, width: i32, height: i32) {
+        self.sync_scale();
         self.fit(width, height);
         if self.gpu {
             self.paint_background(context, width, height);
@@ -1740,13 +1790,21 @@ impl Shell {
                 pixels_wide as i32,
                 pixels_high as i32,
                 4 * pixels_wide as i32,
-            ) && context.set_source_surface(&surface, PANE_LEFT, 0.0).is_ok()
-            {
-                context.paint().ok();
+            ) {
+                // The pixels are physical, the context is logical: one image
+                // pixel covers 1/scale of a logical pixel.
+                let scale = f64::from(finite_scale(self.scale));
+                context.save().ok();
+                context.translate(PANE_LEFT, 0.0);
+                context.scale(1.0 / scale, 1.0 / scale);
+                if context.set_source_surface(&surface, 0.0, 0.0).is_ok() {
+                    context.paint().ok();
+                }
+                context.restore().ok();
             }
         }
 
-        let grid_height = f64::from(self.cell.1) * f64::from(self.grid.1);
+        let grid_height = self.dip_cell().1 * f64::from(self.grid.1);
         if let Some(alpha) = bell {
             context.set_source_rgba(1.0, 1.0, 1.0, f64::from(alpha) * 0.12);
             context.rectangle(PANE_LEFT, 0.0, f64::from(width) - PANE_LEFT, grid_height);
@@ -1778,7 +1836,8 @@ impl Shell {
         if !self.gpu {
             return;
         }
-        // The GL area is inset by the margins, so its size is the grid.
+        // The GL area is inset by the margins, so its logical size is the grid.
+        self.sync_scale();
         self.fit_grid(width, height);
 
         let blink_on = self.blink_on;
@@ -2024,18 +2083,30 @@ impl Shell {
     /// Fits the terminal and the renderer to whole cells inside the pane's
     /// inset and the scrollbar.
     fn fit(&mut self, width: i32, height: i32) {
-        let usable = (width - PANE_LEFT as i32 - scrollbar::WIDTH as i32).max(0);
-        let columns = (usable / i32::from(self.cell.0)).max(1);
-        let rows = (height / i32::from(self.cell.1)).max(1);
+        let usable = f64::from(width) - PANE_LEFT - f64::from(scrollbar::WIDTH);
+        let columns = cells_across(usable, self.cell.0, self.scale).max(1);
+        let rows = cells_across(f64::from(height), self.cell.1, self.scale).max(1);
         self.apply_grid(columns, rows);
     }
 
     /// Fits the terminal to whole cells when the GL area is already exactly the
     /// grid, so no inset is subtracted.
     fn fit_grid(&mut self, width: i32, height: i32) {
-        let columns = (width / i32::from(self.cell.0)).max(1);
-        let rows = (height / i32::from(self.cell.1)).max(1);
+        let columns = cells_across(f64::from(width), self.cell.0, self.scale).max(1);
+        let rows = cells_across(f64::from(height), self.cell.1, self.scale).max(1);
         self.apply_grid(columns, rows);
+    }
+
+    /// Rebuilds the face when the widget's scale factor changed: the window
+    /// moved to a monitor with a different density, or the desktop changed its
+    /// scale. The new face is physical pixels at the new scale, and the next
+    /// `fit` recomputes the grid from logical pixels.
+    fn sync_scale(&mut self) {
+        let scale = finite_scale(self.area.scale_factor() as f32);
+        if (scale - self.scale).abs() > f32::EPSILON {
+            self.scale = scale;
+            self.rebuild_fonts();
+        }
     }
 
     /// Tells every tab and the renderer how large the grid is.
@@ -2614,10 +2685,49 @@ fn open_settings_window(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) 
     window
 }
 
-/// The cell a pixel position falls in; a toolkit reports sub-pixel offsets and
-/// a motion that starts above the pane.
-fn cell_index(position: f64, cell: u16) -> i32 {
-    (position.max(0.0) / f64::from(cell.max(1))) as i32
+/// The cell a logical pixel position falls in; a toolkit reports sub-pixel
+/// offsets and a motion that starts above the pane.
+fn cell_index(position: f64, cell: f64) -> i32 {
+    (position.max(0.0) / cell.max(1.0)) as i32
+}
+
+/// Whole cells that fit `pixels` logical pixels, for a cell of `cell` physical
+/// pixels at `scale`.
+///
+/// GTK reports a widget's size in logical pixels while the face is rasterised
+/// in physical ones, so the two units meet here: a 2x screen keeps the column
+/// count a 1x screen had, instead of halving it in each direction.
+fn cells_across(pixels: f64, cell: u16, scale: f32) -> i32 {
+    let scale = f64::from(finite_scale(scale));
+    let cell = f64::from(cell.max(1));
+    if !pixels.is_finite() {
+        return 1;
+    }
+    ((pixels.max(0.0) * scale / cell).floor() as i64).clamp(0, 4096) as i32
+}
+
+/// A scale a widget reported, or 1.0 when it reported nonsense.
+fn finite_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }
+}
+
+/// The composition scale of the display the window opens on.
+///
+/// `Shell::sync_scale` corrects this from the widget once it is mapped, so this
+/// only needs to be good enough that the opening window's cells are not laid
+/// out at the wrong density.
+fn display_scale() -> f32 {
+    let Some(display) = gdk::Display::default() else {
+        return 1.0;
+    };
+    let Some(monitor) = display
+        .monitors()
+        .item(0)
+        .and_then(|object| object.downcast::<gdk::Monitor>().ok())
+    else {
+        return 1.0;
+    };
+    finite_scale(monitor.scale_factor() as f32)
 }
 
 /// Turns one scroll event into whole rows towards the history.
@@ -2625,8 +2735,8 @@ fn cell_index(position: f64, cell: u16) -> i32 {
 /// A wheel reports detents and a touchpad reports pixels, so the pixels
 /// accumulate until they make a row. GTK's delta is positive when the content
 /// should move down, which is the opposite of the view's rows-above-the-screen.
-fn wheel_rows(delta: f64, unit: gdk::ScrollUnit, cell: u16, remainder: &mut f64) -> i32 {
-    let height = f64::from(cell.max(1));
+fn wheel_rows(delta: f64, unit: gdk::ScrollUnit, cell: f64, remainder: &mut f64) -> i32 {
+    let height = cell.max(1.0);
     match unit {
         gdk::ScrollUnit::Wheel => -(delta.round() as i32),
         _ => {
@@ -2727,8 +2837,15 @@ struct Fonts {
     cell: (u16, u16),
 }
 
-/// Finds the host's monospace face and measures it at `size`.
-fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
+/// Finds the host's monospace face and measures it at `size` points for a
+/// screen at `scale`.
+///
+/// The face, the cell and the renderer's target are physical pixels; the
+/// `FontInfo` reports the same cell in DIPs, because the terminal and the pty
+/// talk in logical units.
+fn fonts(size: f32, cells: (i32, i32), scale: f32) -> Option<Fonts> {
+    let scale = finite_scale(scale);
+    let pixels = size * scale;
     let directories = winter::fonts::font_directories();
     if directories.is_empty() {
         return None;
@@ -2738,10 +2855,12 @@ fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
     let collection = renderer::FontCollection::from_directories(paths);
     let face = collection.default_monospace(renderer::PREFERRED_MONOSPACE_FAMILIES)?;
 
-    let shaper = FontDueRasterizer::from_file(face.path(), size).ok()?;
-    let rasterizer = FontDueRasterizer::from_file(face.path(), size).ok()?;
-    let gpu = FontDueRasterizer::from_file(face.path(), size).ok()?;
-    // The strip's titles use the same face, so a tab reads like its own text.
+    let shaper = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
+    let rasterizer = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
+    let gpu = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
+    // The strip is painted through Cairo in logical pixels, which GTK scales
+    // itself, so its face stays at the DIP size rather than doubling on a
+    // HiDPI screen.
     let chrome = FontDueRasterizer::from_file(face.path(), size * 0.85).ok()?;
 
     let advance = shaper.advance_width('M');
@@ -2761,8 +2880,8 @@ fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
         65001,
         size * 0.75,
         CellSizeInDIP {
-            width: f32::from(cell_w),
-            height: f32::from(cell_h),
+            width: f32::from(cell_w) / scale,
+            height: f32::from(cell_h) / scale,
         },
         Size::new(i32::from(cell_w), i32::from(cell_h)),
     );
@@ -2774,14 +2893,14 @@ fn fonts(size: f32, cells: (i32, i32)) -> Option<Fonts> {
     let settings = Settings {
         font: renderer::FontSettings {
             font_name: face.family().to_string(),
-            font_size: size,
+            font_size: pixels,
             cell_size: (cell_w, cell_h),
             font_weight: 400,
             advance_width: cell_w,
             baseline,
             descender,
-            thin_line_width: 1,
-            dpi: 96,
+            thin_line_width: scale.round().max(1.0) as u16,
+            dpi: (96.0 * scale).round() as u16,
             ..renderer::FontSettings::default()
         },
         misc: renderer::MiscellaneousSettings {
@@ -2877,11 +2996,43 @@ mod tests {
 
     #[test]
     fn a_pixel_position_falls_in_a_cell() {
-        assert_eq!(cell_index(0.0, 9), 0);
-        assert_eq!(cell_index(8.9, 9), 0);
-        assert_eq!(cell_index(9.0, 9), 1);
+        assert_eq!(cell_index(0.0, 9.0), 0);
+        assert_eq!(cell_index(8.9, 9.0), 0);
+        assert_eq!(cell_index(9.0, 9.0), 1);
         // A motion that starts above the pane still has a cell.
-        assert_eq!(cell_index(-4.0, 9), 0);
+        assert_eq!(cell_index(-4.0, 9.0), 0);
+    }
+
+    #[test]
+    fn a_high_dpi_screen_keeps_the_grid_it_had_at_1x() {
+        // A 790-logical-pixel pane. At 1x the face's cell is 8 physical pixels;
+        // at 2x it is 16, so both fit 98 columns. A scale-blind fit used the
+        // logical width against the physical cell and halved the grid in each
+        // direction, which is the quarter-window bug.
+        assert_eq!(cells_across(790.0, 8, 1.0), 98);
+        assert_eq!(cells_across(790.0, 16, 2.0), 98);
+        // A 500-logical-pixel pane, 16-pixel cell at 1x and 32 at 2x: 31 rows.
+        assert_eq!(cells_across(500.0, 16, 1.0), 31);
+        assert_eq!(cells_across(500.0, 32, 2.0), 31);
+    }
+
+    #[test]
+    fn a_scaled_pointer_position_names_the_same_cell() {
+        // At 200% the physical cell is twice the logical one, and the toolkit
+        // reports pointer positions in logical pixels.
+        assert_eq!(cell_index(9.0, 18.0 / 2.0), 1);
+        assert!(finite_scale(0.0) == 1.0 && finite_scale(f32::NAN) == 1.0);
+    }
+
+    #[test]
+    fn the_new_instance_flag_is_taken_before_gapplication_sees_it() {
+        let (flag, rest) = take_new_instance(vec!["winter".into(), "--new-instance".into()]);
+        assert!(flag);
+        assert_eq!(rest, vec![std::ffi::OsString::from("winter")]);
+
+        let (flag, rest) = take_new_instance(vec!["winter".into()]);
+        assert!(!flag);
+        assert_eq!(rest, vec![std::ffi::OsString::from("winter")]);
     }
 
     #[test]
@@ -2889,21 +3040,21 @@ mod tests {
         let mut remainder = 0.0;
         // GTK counts a delta positive when the content moves down; the view's
         // rows count up from the live screen.
-        assert_eq!(wheel_rows(1.0, gdk::ScrollUnit::Wheel, 17, &mut remainder), -1);
-        assert_eq!(wheel_rows(-1.0, gdk::ScrollUnit::Wheel, 17, &mut remainder), 1);
-        assert_eq!(wheel_rows(0.0, gdk::ScrollUnit::Wheel, 17, &mut remainder), 0);
+        assert_eq!(wheel_rows(1.0, gdk::ScrollUnit::Wheel, 17.0, &mut remainder), -1);
+        assert_eq!(wheel_rows(-1.0, gdk::ScrollUnit::Wheel, 17.0, &mut remainder), 1);
+        assert_eq!(wheel_rows(0.0, gdk::ScrollUnit::Wheel, 17.0, &mut remainder), 0);
     }
 
     #[test]
     fn a_touchpad_accumulates_pixels_until_a_row() {
         let mut remainder = 0.0;
-        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17, &mut remainder), 0);
-        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17, &mut remainder), 0);
-        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17, &mut remainder), -1);
+        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17.0, &mut remainder), 0);
+        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17.0, &mut remainder), 0);
+        assert_eq!(wheel_rows(8.0, gdk::ScrollUnit::Surface, 17.0, &mut remainder), -1);
         assert!(remainder > 0.0 && remainder < 17.0);
 
         // The pixels that did not make a row are kept in the other direction.
-        assert_eq!(wheel_rows(-24.0, gdk::ScrollUnit::Surface, 17, &mut remainder), 1);
+        assert_eq!(wheel_rows(-24.0, gdk::ScrollUnit::Surface, 17.0, &mut remainder), 1);
         assert_eq!(remainder, 0.0);
     }
 

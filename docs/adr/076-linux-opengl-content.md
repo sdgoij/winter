@@ -80,6 +80,14 @@ Positive:
 - The GPU frame matches the software frame in layout, colour and text; both are
   covered by the capture rig, and a drag-select drawn through GL was checked on
   an Xvfb GLES 3.1 context.
+- The scale factor is threaded through both content paths. GTK allocates logical
+  pixels while the face, the cell and the GL viewport are physical: the shell
+  takes the widget's scale factor (the ceiling of a fractional scale, matching
+  the GL framebuffer), rasterises the face at that scale, converts the pane's
+  logical size to physical cells when it fits the grid, divides the cell back
+  down for pointer, wheel and caret positions, and draws the software frame at
+  `1/scale`. A 2x or fractional panel therefore shows the whole grid instead of
+  a corner of it.
 - Linux keeps one renderer, one `TerminalData` and one screenshot path.
 
 Negative:
@@ -87,10 +95,6 @@ Negative:
 - **A second backend to keep in step.** A change to `RenderingPayload` or the
   pigment rules must be reflected in `gl.rs` as in `metal.rs`; the shared helpers
   and the capture rig constrain the drift.
-- **The scale factor is still assumed to be one.** The face, the cell and the GL
-  viewport are physical pixels while GTK allocates logical ones, the same gap
-  the software path has; a HiDPI panel needs the scale threaded through both
-  paths together.
 - **GL resources live with the context.** A rebuilt renderer drops its backend
   and the objects live until the context is destroyed; there is no per-rebuild
   deletion, which matters only when the font size changes repeatedly.

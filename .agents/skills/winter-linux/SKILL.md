@@ -116,6 +116,16 @@ prompt and the cursor on a dark pane inset 8 px from the left, and the
 scrollbar's 10 px gutter on the right. A white pane means the drawing area got
 no height — see the traps. Do not leave the PNGs in the tree.
 
+A HiDPI panel is the same run with `GDK_SCALE=2` in front of the command. The
+strip, the grid and the scrollbar must scale together and fill the window; a
+grid in the bottom-left quarter means the widget's scale factor was not
+threaded through the cell and the renderer's target.
+
+An installed Winter or a preview AppImage already owns `org.winter.Winter` on
+the session bus, so a plain launch hands its activation to that process and the
+new build never runs. `--new-instance` sets `NON_UNIQUE` and opens a separate
+process; `dbus-run-session -- <binary>` does the same for one run.
+
 On a machine with a display: typing reaches the shell; Ctrl+Shift+T/W; the
 settings editor's Save writes and reloads; Ctrl+Shift+F opens the find bar and
 Escape closes it; Shift+wheel scrolls history while a tracking program still
@@ -214,6 +224,18 @@ a neighbour's midpoint.
 - **The search bar's close button turns search mode off without
   `stop-search`.** Follow `notify::search-mode-enabled` or the next tick reopens
   it.
+- **GTK measures widgets in logical pixels; the face is physical.**
+  `Widget::scale_factor()` is the bridge. On a fractional desktop (KDE at 1.7x)
+  it is `ceil(1.7) = 2`, which is also what `GtkGLArea` multiplies its
+  framebuffer by; use it, not the fractional monitor scale, or the frame sits in
+  a corner of a supersampled buffer. The face, the cell and the renderer's
+  target are `size * scale`; `fit` and `fit_grid` multiply the pane's logical
+  size by the scale before dividing by the cell; pointer, wheel and IME caret
+  positions divide the cell by it; and the software blit draws the physical
+  frame at `1/scale`. Forget any one of those and a HiDPI panel shows a quarter
+  of the window, a stretched frame or clicks in the wrong cell. `sync_scale`
+  rebuilds the face when the widget's factor changes (a window moved between
+  monitors), so never cache the scale without comparing it on each frame.
 - **The font size in the settings file changes the cell.** The opening window
   is sized for whole cells at that size, and a reload that changes it rebuilds
   the face and the renderer; `fit` must not skip the resize because the grid
