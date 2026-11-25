@@ -46,14 +46,33 @@ type Message =
       shift: boolean;
     }
   | { kind: "wheel"; col: number; row: number; lines: number; shift: boolean }
-  | { kind: "copy" };
+  | { kind: "copy" }
+  | { kind: "painted" }
+  | { kind: "ready" };
 
 let server: cp.ChildProcessWithoutNullStreams | undefined;
 let panel: vscode.WebviewPanel | undefined;
 let log: vscode.OutputChannel | undefined;
-let timer: NodeJS.Timeout | undefined;
 let pending = Buffer.alloc(0);
 let announced = false;
+
+// One frame in flight, and no more.
+//
+// The server answers commands in the order they arrive, so a host that asks for
+// a frame on a timer while the server is slower than the timer queues renders
+// without bound: the pane falls further and further behind real time, and a
+// keystroke sits behind every frame already asked for. A full-screen game makes
+// that happen immediately — a 900x510 frame costs a few milliseconds in a
+// release build and tens of milliseconds in a debug one. Asking for the next
+// frame only after the pane has painted the last one keeps the queue at length
+// zero however slow either end is.
+let pumpHandle: NodeJS.Timeout | undefined;
+let awaitingPaint = false;
+let requestedAt = 0;
+/** The pane's script is listening: before that, a frame would be dropped. */
+let ready = false;
+/** How long an unacknowledged frame is waited for before it is asked for again. */
+const ACK_TIMEOUT = 1000;
 
 export function activate(context: vscode.ExtensionContext): void {
   log = vscode.window.createOutputChannel("Winter");
@@ -77,9 +96,18 @@ function open(context: vscode.ExtensionContext): void {
     retainContextWhenHidden: true,
   });
   panel.webview.html = html();
+  ready = false;
   panel.onDidDispose(() => {
     panel = undefined;
     stop();
+  });
+  // A hidden pane paints nothing, so the loop stops on its own; showing it again
+  // has to ask for a frame, and the frame it was sent may never have arrived.
+  panel.onDidChangeViewState(() => {
+    if (panel?.visible) {
+      awaitingPaint = false;
+      pump();
+    }
   });
   panel.webview.onDidReceiveMessage((message: Message) => {
     switch (message.kind) {
@@ -119,6 +147,13 @@ function open(context: vscode.ExtensionContext): void {
       case "copy":
         send({ cmd: "copy" });
         break;
+      case "painted":
+        painted();
+        break;
+      case "ready":
+        ready = true;
+        pump();
+        break;
     }
   });
 
@@ -129,7 +164,7 @@ function start(context: vscode.ExtensionContext): void {
   const binary = resolveBinary(context);
   if (!binary) {
     void vscode.window.showErrorMessage(
-      `Winter: no ${serverName()}. Run \`cargo build -p winter-demo\` in the repository, or set ` +
+      `Winter: no ${serverName()}. Run \`cargo build --release -p winter-demo\` in the repository, or set ` +
         `\`winter.serverPath\`. Searched upward from ${context.extensionPath}.`,
     );
     return;
@@ -150,7 +185,51 @@ function start(context: vscode.ExtensionContext): void {
   server.stderr.on("data", (chunk: Buffer) => log?.append(chunk.toString()));
   server.stdout.on("data", (chunk: Buffer) => onData(chunk));
 
-  timer = setInterval(() => send({ cmd: "render" }), FRAME_INTERVAL);
+  pump();
+}
+
+/** Asks for the next frame, unless one is still outstanding. */
+function pump(): void {
+  if (pumpHandle) {
+    clearTimeout(pumpHandle);
+    pumpHandle = undefined;
+  }
+  if (!server || !ready || awaitingPaint || !panel?.visible) {
+    return;
+  }
+  awaitingPaint = true;
+  requestedAt = Date.now();
+  send({ cmd: "render" });
+  // A frame that is never painted — a reloaded webview, a dropped message —
+  // would otherwise stop the loop for good.
+  pumpHandle = setTimeout(askAgain, ACK_TIMEOUT);
+}
+
+function askAgain(): void {
+  pumpHandle = undefined;
+  if (!awaitingPaint) {
+    return;
+  }
+  awaitingPaint = false;
+  pump();
+}
+
+/** The pane has painted the frame it was sent, so the next one may be asked for. */
+function painted(): void {
+  if (!awaitingPaint) {
+    return;
+  }
+  awaitingPaint = false;
+  if (!server || !ready) {
+    return;
+  }
+  // Pace the loop without adding the paint time to every frame: a host that is
+  // slower than the interval simply asks again straight away.
+  const spent = Date.now() - requestedAt;
+  if (pumpHandle) {
+    clearTimeout(pumpHandle);
+  }
+  pumpHandle = setTimeout(pump, Math.max(0, FRAME_INTERVAL - spent));
 }
 
 function onData(chunk: Buffer): void {
@@ -201,11 +280,19 @@ function onData(chunk: Buffer): void {
     const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
     pending = pending.subarray(FRAME_HEADER + length);
 
-    if (!announced && width > 0) {
+    // A zero width is the server saying nothing changed: there is nothing for
+    // the pane to paint, so the next frame may be asked for at once.
+    if (width === 0) {
+      painted();
+      continue;
+    }
+
+    if (!announced) {
       announced = true;
       log?.appendLine(`first frame: ${width}x${height}, ${length} bytes`);
     }
     void panel?.webview.postMessage({ kind: "frame", width, height, cellWidth, cellHeight, pixels });
+    continue;
   }
 }
 
@@ -214,10 +301,12 @@ function send(command: unknown): void {
 }
 
 function stop(): void {
-  if (timer) {
-    clearInterval(timer);
-    timer = undefined;
+  if (pumpHandle) {
+    clearTimeout(pumpHandle);
+    pumpHandle = undefined;
   }
+  awaitingPaint = false;
+  ready = false;
   send({ cmd: "quit" });
   server?.stdin.end();
   server = undefined;
@@ -248,7 +337,7 @@ function resolveBinary(context: vscode.ExtensionContext): string | undefined {
   for (const root of roots) {
     let directory = root;
     for (let depth = 0; depth < 5; depth += 1) {
-      for (const profile of ["debug", "release"]) {
+      for (const profile of ["release", "debug"]) {
         const candidate = path.join(directory, "target", profile, name);
         if (fs.existsSync(candidate)) {
           return candidate;
@@ -290,23 +379,24 @@ function html(): string {
   let scale = 1;
   let last = { cols: 0, rows: 0 };
 
+  // Every frame the pane is sent is acknowledged once it is on the canvas. The
+  // host asks for the next one only then, so a pane that cannot keep up slows
+  // the protocol down instead of building a queue of frames it will never show.
+  function painted() {
+    vscode.postMessage({ kind: "painted" });
+  }
+
   window.addEventListener("message", (event) => {
     const message = event.data;
 
     // A band is the rows from "top": the rest of the canvas is already right.
     if (message.kind === "patch") {
       try {
-        const bytes = decode(message.pixels);
-        if (!bytes || bytes.length !== message.width * message.height * 4) {
-          status.textContent =
-            "patch: " + (bytes ? bytes.length : "no") + " bytes for " + message.width + "x" + message.height;
-          return;
-        }
-        context.putImageData(new ImageData(bytes, message.width, message.height), 0, message.top);
-        status.textContent = "";
+        paintPatch(message);
       } catch (error) {
         status.textContent = "patch error: " + error;
       }
+      painted();
       return;
     }
 
@@ -316,30 +406,46 @@ function html(): string {
     }
 
     try {
-      cell = { width: message.cellWidth, height: message.cellHeight };
-      if (canvas.width !== message.width || canvas.height !== message.height) {
-        canvas.width = message.width;
-        canvas.height = message.height;
-      }
-
-      const bytes = decode(message.pixels);
-      if (!bytes) {
-        status.textContent = "frame: unexpected pixel payload (" + typeof message.pixels + ")";
-        return;
-      }
-      if (bytes.length !== message.width * message.height * 4) {
-        status.textContent =
-          "frame: " + bytes.length + " bytes for " + message.width + "x" + message.height;
-        return;
-      }
-
-      context.putImageData(new ImageData(bytes, message.width, message.height), 0, 0);
-      status.textContent = "";
-      fit();
+      paintFrame(message);
     } catch (error) {
       status.textContent = "frame error: " + error;
     }
+    painted();
   });
+
+  function paintPatch(message) {
+    const bytes = decode(message.pixels);
+    if (!bytes || bytes.length !== message.width * message.height * 4) {
+      status.textContent =
+        "patch: " + (bytes ? bytes.length : "no") + " bytes for " + message.width + "x" + message.height;
+      return;
+    }
+    context.putImageData(new ImageData(bytes, message.width, message.height), 0, message.top);
+    status.textContent = "";
+  }
+
+  function paintFrame(message) {
+    cell = { width: message.cellWidth, height: message.cellHeight };
+    if (canvas.width !== message.width || canvas.height !== message.height) {
+      canvas.width = message.width;
+      canvas.height = message.height;
+    }
+
+    const bytes = decode(message.pixels);
+    if (!bytes) {
+      status.textContent = "frame: unexpected pixel payload (" + typeof message.pixels + ")";
+      return;
+    }
+    if (bytes.length !== message.width * message.height * 4) {
+      status.textContent =
+        "frame: " + bytes.length + " bytes for " + message.width + "x" + message.height;
+      return;
+    }
+
+    context.putImageData(new ImageData(bytes, message.width, message.height), 0, 0);
+    status.textContent = "";
+    fit();
+  }
 
   function decode(pixels) {
     if (typeof pixels === "string") {
@@ -500,6 +606,10 @@ function html(): string {
   });
 
   canvas.focus();
+
+  // The pane is listening: any frame sent before this would have no listener to
+  // paint it and nothing would ever acknowledge it.
+  vscode.postMessage({ kind: "ready" });
 </script>
 </body>
 </html>`;

@@ -54,7 +54,9 @@ it owns the frame.
    modifier sides and both encodings — which is what a program that pushes
    `REPORT_ALL_KEYS_AS_ESCAPE_CODES` is asking for.
 6. **`editors/vscode` is the other half**: a command, a webview with a canvas,
-   and a child process. It asks for a frame every 33 ms and after input.
+   and a child process. It keeps **one frame in flight** — it asks for the next
+   frame only after the pane reports it painted the last, and no sooner than
+   33 ms apart — and asks again after input.
 7. **The demo uses one process per terminal.** Tabs, panes and remoting are not
    modelled; a second terminal is a second process.
 
@@ -87,6 +89,17 @@ it owns the frame.
   900 by 510 pane, one typed character is a 61,200-byte band against a
   1,836,000-byte frame; output that scrolls still sends the frame, which is what
   the heuristic gives up.
+- **A host that polls on a timer queues frames it will never show.** Answers
+  come back in the order the commands arrived, so a render asked for while the
+  previous one is still being painted is not dropped — it waits. A 900 by 510
+  frame costs about 5 ms in a release build and 75 ms in a debug one, so a fixed
+  30-per-second request against a debug server builds a backlog that grows
+  without bound: the pane falls further behind real time, and a keystroke sits
+  behind every frame already asked for. That is what the pane's
+  acknowledgement is for — the host asks for the next frame only after the
+  canvas has painted the previous one — and it is why the extension prefers
+  `target/release`: a shell's prompt never made the difference visible, and a
+  full-screen program does.
 - **The editor half is outside the cargo gate.** `editors/vscode` is TypeScript
   and needs `npm install && npm run compile`; nothing in `just gate` compiles or
   tests it, and this ADR does not change that.

@@ -6,7 +6,7 @@ process owns the shell and paints the pixels with Winter's own renderer.
 ## Run it
 
 ```sh
-cargo build -p winter-demo     # target/debug/winter-frame
+cargo build --release -p winter-demo   # target/release/winter-frame
 cd editors/vscode
 npm install                    # once
 ```
@@ -30,7 +30,7 @@ Windows PowerShell, then `cmd.exe` — and `$SHELL` on macOS and Linux, with
 ### Without F5
 
 ```sh
-cargo build -p winter-demo
+cargo build --release -p winter-demo
 cd editors/vscode && npm install && npm run compile
 code --extensionDevelopmentPath="$PWD"
 ```
@@ -50,9 +50,14 @@ code --extensionDevelopmentPath="$PWD"
   1 is text for the clipboard; kind 2 is a **band** — the rows that changed, with
   their top edge — so a keystroke sends about 60 KB instead of 1.8 MB. A frame
   with a **zero width** means nothing changed, and the host keeps what it has.
-- Idles cheaply: it asks for a frame every 33 ms, but an unchanged pane answers
-  with 24 bytes. The cursor blinks on a 500 ms half-period, and stops asking for
-  frames at all while it is hidden.
+- Keeps **one frame in flight**: it asks for a frame, waits for the canvas to
+  report it painted, and only then asks again, no sooner than 33 ms later. An
+  idle pane therefore costs 24 bytes a poll, a full-screen program sets the
+  pace, and a tab that is not the active one stops asking altogether. Asking on
+  a timer without waiting is a queue that never drains — a 900 by 510 frame
+  costs about 5 ms in a release build and 75 ms in a debug one, so a
+  30-per-second timer outruns a debug server, and because the server answers
+  commands in order, keystrokes end up behind every frame already asked for.
 
 ## Controls
 
@@ -68,16 +73,18 @@ code --extensionDevelopmentPath="$PWD"
   held, which keeps the pointer for selection.
 
 The server is found by walking up from the extension's own folder (and from any
-workspace folder) to `target/debug/winter-frame`, or wherever
-`winter.serverPath` points.
+workspace folder) to `target/release/winter-frame`, then
+`target/debug/winter-frame`, or wherever `winter.serverPath` points. Prefer the
+release build: a debug server paints a game at about 13 frames a second.
 
 ## Troubleshooting
 
 - **No command in the palette** — you are in the wrong window. Press F5 and use
   the window titled `[Extension Development Host]`.
-- **"no frame server"** — build it (`cargo build -p winter-demo`) or set
-  `winter.serverPath`. The lookup starts at the extension's own folder, so a
-  development host with no workspace folder still finds `target/debug`.
+- **"no frame server"** — build it
+  (`cargo build --release -p winter-demo`) or set `winter.serverPath`. The lookup
+  starts at the extension's own folder, so a development host with no workspace
+  folder still finds `target/release`.
 - **`cargo build` says "Access is denied"** — a server from an earlier session is
   still running and Windows will not replace a running `.exe`. Close the Winter
   tab (or end `winter-frame.exe`) and build again.
