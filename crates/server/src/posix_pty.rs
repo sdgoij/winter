@@ -12,6 +12,7 @@ use std::ffi::{CStr, OsStr};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -74,7 +75,15 @@ impl Pty {
         let slave_path = PathBuf::from(OsStr::from_bytes(unsafe { CStr::from_ptr(name) }.to_bytes()));
         drop(naming);
 
-        let slave = OpenOptions::new().read(true).write(true).open(&slave_path)?;
+        // A host that is a session leader (a desktop asked a systemd user
+        // service to start it) would otherwise adopt this slave as its own
+        // controlling terminal, and the child's `TIOCSCTTY` would then fail
+        // with `EPERM`.
+        let slave = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOCTTY)
+            .open(&slave_path)?;
         let slave_fd = slave.as_raw_fd();
 
         let mut child_command = Command::new(command.program());
@@ -298,6 +307,43 @@ mod tests {
         let names: Vec<String> = spawned.iter().map(|(_, name)| name.clone()).collect();
         let unique: std::collections::HashSet<&String> = names.iter().collect();
         assert_eq!(unique.len(), names.len(), "terminals: {names:?}");
+    }
+
+    #[test]
+    fn a_session_leader_can_still_spawn_a_pty() {
+        // A desktop can hand the shell to a systemd user service, which makes
+        // this process a session leader before `main`. Opening the slave must
+        // not adopt it as that session's controlling terminal, or the client's
+        // `setsid`/`TIOCSCTTY` fails with EPERM.
+        const CHILD: &str = "WINTER_PTY_SESSION_LEADER";
+        if std::env::var_os(CHILD).is_some() {
+            let mut pty = Pty::spawn(
+                &PtyCommand::new(shell()).args(["-c", "printf ready"]),
+                PtySize::default(),
+            )
+            .expect("a session leader can spawn a pty");
+            let text = read_to_string(&mut pty);
+            assert!(text.contains("ready"), "output was {text:?}");
+            return;
+        }
+
+        let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+        command
+            .arg("a_session_leader_can_still_spawn_a_pty")
+            .arg("--nocapture")
+            .env(CHILD, "1");
+        // SAFETY: the closure only calls `setsid`, which is async-signal-safe.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+
+        let status = command.status().expect("rerun the test as a session leader");
+        assert!(status.success(), "the session-leader run failed: {status}");
     }
 
     #[test]

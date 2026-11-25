@@ -247,6 +247,13 @@ a neighbour's midpoint.
   `.winter-titlebar` background or a band of Adwaita shows to the right. Tabs
   are flat with a 2 px accent line on the selected one, and titles use the
   desktop's UI font, not the terminal's monospace face.
+- **A session-leader host must open the pty slave with `O_NOCTTY`.** KIO starts a
+  downloaded AppImage as a systemd user service, so Winter is a session leader
+  before `main`. Without `O_NOCTTY` the parent's open adopts the slave as its
+  own controlling terminal; the shell child's `setsid`/`TIOCSCTTY` then fails
+  with `EPERM`, `Pty::spawn` errors, and the app exits (or closes its last tab).
+  Launching from a terminal hides this because Winter is not a session leader;
+  the regression test re-execs the test binary under `pre_exec` + `setsid`.
 - **`--new-instance` skips GtkApplication's handoff.** A running shell owns
   `org.winter.Winter` on the session bus, so a plain launch hands the activation
   to it and prints its old window. The flag sets `NON_UNIQUE`; GApplication must
