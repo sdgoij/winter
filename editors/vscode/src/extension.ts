@@ -2,9 +2,10 @@
 //
 // VS Code owns the pane; this extension owns a process that owns the shell and
 // the pixels. Commands go to the process's stdin as one JSON object per line, and
-// the process answers on stdout with tagged messages: kind 0 is a frame (width,
-// height, cell width, cell height, byte length, RGBA) and kind 1 is text for the
-// clipboard.
+// the process answers on stdout with tagged messages: kind 0 is a whole frame
+// (width, height, cell width, cell height, byte length, RGBA), kind 1 is text for
+// the clipboard, and kind 2 is a band — the rows that changed, with their top
+// edge — which is what a keystroke costs instead of the whole pane.
 //
 // The pixels travel base64-encoded: a webview's `postMessage` does not promise
 // that a `Buffer` or a typed array survives as bytes, and a frame that arrives
@@ -149,14 +150,26 @@ function onData(chunk: Buffer): void {
     if (pending.length < FRAME_HEADER) {
       return;
     }
-    const width = pending.readUInt32BE(4);
-    const height = pending.readUInt32BE(8);
-    const cellWidth = pending.readUInt32BE(12);
-    const cellHeight = pending.readUInt32BE(16);
     const length = pending.readUInt32BE(20);
     if (pending.length < FRAME_HEADER + length) {
       return;
     }
+
+    // Kind 2 is a band: the rows from `top`, `height` pixels of them.
+    if (kind === 2) {
+      const top = pending.readUInt32BE(4);
+      const width = pending.readUInt32BE(8);
+      const height = pending.readUInt32BE(12);
+      const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
+      pending = pending.subarray(FRAME_HEADER + length);
+      void panel?.webview.postMessage({ kind: "patch", top, width, height, pixels });
+      continue;
+    }
+
+    const width = pending.readUInt32BE(4);
+    const height = pending.readUInt32BE(8);
+    const cellWidth = pending.readUInt32BE(12);
+    const cellHeight = pending.readUInt32BE(16);
     const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
     pending = pending.subarray(FRAME_HEADER + length);
 
@@ -251,6 +264,24 @@ function html(): string {
 
   window.addEventListener("message", (event) => {
     const message = event.data;
+
+    // A band is the rows from "top": the rest of the canvas is already right.
+    if (message.kind === "patch") {
+      try {
+        const bytes = decode(message.pixels);
+        if (!bytes || bytes.length !== message.width * message.height * 4) {
+          status.textContent =
+            "patch: " + (bytes ? bytes.length : "no") + " bytes for " + message.width + "x" + message.height;
+          return;
+        }
+        context.putImageData(new ImageData(bytes, message.width, message.height), 0, message.top);
+        status.textContent = "";
+      } catch (error) {
+        status.textContent = "patch error: " + error;
+      }
+      return;
+    }
+
     // A zero width is the server saying nothing changed: keep the picture.
     if (message.kind !== "frame" || message.width === 0) {
       return;

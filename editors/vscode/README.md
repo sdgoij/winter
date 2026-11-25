@@ -38,10 +38,11 @@ code --extensionDevelopmentPath="$PWD"
 - Spawns `winter-frame`, which starts your shell on a pty.
 - Sends `write`, `resize`, `render`, `press`, `move`, `release`, `wheel`,
   `copy` and `quit` as JSON lines.
-- Reads tagged messages: kind 0 is a frame (`u32` width, height, cell width,
-  cell height, byte length, then RGBA), painted with `putImageData`; kind 1 is
-  text for the clipboard. A frame with a **zero width** means nothing changed,
-  and the host keeps the picture it has.
+- Reads tagged messages: kind 0 is a whole frame (`u32` width, height, cell
+  width, cell height, byte length, then RGBA), painted with `putImageData`; kind
+  1 is text for the clipboard; kind 2 is a **band** — the rows that changed, with
+  their top edge — so a keystroke sends about 60 KB instead of 1.8 MB. A frame
+  with a **zero width** means nothing changed, and the host keeps what it has.
 - Idles cheaply: it asks for a frame every 33 ms, but an unchanged pane answers
   with 24 bytes. The cursor blinks on a 500 ms half-period, and stops asking for
   frames at all while it is hidden.

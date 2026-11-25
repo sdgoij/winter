@@ -247,6 +247,7 @@ pub fn parse(line: &str) -> Option<Command> {
 /// change: the host keeps the picture it already has.
 pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface) -> io::Result<()> {
     let start = Instant::now();
+    let mut frames = Frames::new();
 
     for line in input.lines() {
         let line = line?;
@@ -267,7 +268,7 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
             Command::Render => {
                 let now = Instant::now();
                 let cursor = cursor_on(surface, start, now);
-                if write_frame(surface, output, cursor)? {
+                if frames.write(surface, output, cursor)? {
                     output.flush()?;
                 }
                 if surface.take_events(now).contains(&TerminalEvent::Exited) {
@@ -381,37 +382,128 @@ fn with_shift(mut event: MouseEvent, shift: bool) -> MouseEvent {
     event
 }
 
-/// Paints a frame and writes it, or writes a zero-width header when nothing
-/// changed.
+/// The last frame the host was sent, so a repaint can say what moved.
 ///
-/// Returns whether a frame was painted; a host that reads a zero-width header
-/// keeps the picture it already has.
-pub fn write_frame(surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<bool> {
-    if !surface.render(cursor).map_err(io::Error::other)? {
-        output.write_all(&0u32.to_be_bytes())?;
-        output.write_all(&[0u8; 20])?;
-        return Ok(false);
+/// A shell mostly changes one row — a keystroke, a prompt, one line of output —
+/// and shipping the whole pane for it is what made the demo feel sluggish. The
+/// band is aligned to cell rows, because that is what the engine paints and what
+/// a host's `putImageData` can place without arithmetic.
+#[derive(Debug)]
+pub struct Frames {
+    previous: Vec<u32>,
+    width: u32,
+    height: u32,
+}
+
+impl Frames {
+    /// A painter with no frame behind it.
+    pub const fn new() -> Self {
+        Self {
+            previous: Vec::new(),
+            width: 0,
+            height: 0,
+        }
     }
 
-    let (width, height) = surface.frame_size();
-    let (cell_width, cell_height) = surface.cell_size();
-    let pixels = surface.pixels();
+    /// Paints the surface and writes what changed.
+    ///
+    /// Returns whether anything was written; a host that reads a zero-width
+    /// header keeps the picture it already has.
+    pub fn write(&mut self, surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<bool> {
+        if !surface.render(cursor).map_err(io::Error::other)? {
+            // Nothing changed: a header with a zero width says so.
+            output.write_all(&0u32.to_be_bytes())?;
+            output.write_all(&[0u8; 20])?;
+            return Ok(false);
+        }
 
-    let mut rgba = Vec::with_capacity(pixels.len() * 4);
-    for pixel in pixels.iter() {
+        let (width, height) = surface.frame_size();
+        let (_, cell_height) = surface.cell_size();
+        let pixels = surface.pixels();
+
+        let comparable = self.width == width && self.height == height && self.previous.len() == pixels.len();
+        let band = comparable
+            .then(|| changed_rows(&self.previous, &pixels, width))
+            .flatten()
+            .map(|(first, last)| {
+                let cell = u32::from(cell_height.max(1));
+                let top = (first as u32 / cell) * cell;
+                let bottom = (((last as u32 / cell) + 1) * cell).min(height);
+                (top, bottom - top)
+            });
+
+        // More than half the pane is not worth a patch: the host has to keep a
+        // full frame anyway, and a scroll changes every row.
+        let (top, rows, full) = match band {
+            Some((top, rows)) if rows * 2 < height => (top, rows, false),
+            _ => (0, height, true),
+        };
+
+        let start = top as usize * width as usize;
+        let end = start + rows as usize * width as usize;
+        let rgba = rgba(&pixels[start..end]);
+
+        if full {
+            output.write_all(&0u32.to_be_bytes())?;
+            output.write_all(&width.to_be_bytes())?;
+            output.write_all(&height.to_be_bytes())?;
+            output.write_all(&u32::from(surface.cell_size().0).to_be_bytes())?;
+            output.write_all(&u32::from(cell_height).to_be_bytes())?;
+        } else {
+            output.write_all(&2u32.to_be_bytes())?;
+            output.write_all(&top.to_be_bytes())?;
+            output.write_all(&width.to_be_bytes())?;
+            output.write_all(&rows.to_be_bytes())?;
+            output.write_all(&0u32.to_be_bytes())?;
+        }
+        output.write_all(&(rgba.len() as u32).to_be_bytes())?;
+        output.write_all(&rgba)?;
+
+        self.previous.clear();
+        self.previous.extend_from_slice(&pixels);
+        self.width = width;
+        self.height = height;
+        Ok(true)
+    }
+}
+
+impl Default for Frames {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The first and last pixel row that differ between two frames of `width`.
+fn changed_rows(previous: &[u32], current: &[u32], width: u32) -> Option<(usize, usize)> {
+    let stride = width as usize;
+    if stride == 0 {
+        return None;
+    }
+
+    let mut first = None;
+    let mut last = 0;
+    for (row, (before, after)) in previous.chunks(stride).zip(current.chunks(stride)).enumerate() {
+        if before != after {
+            first.get_or_insert(row);
+            last = row;
+        }
+    }
+
+    first.map(|first| (first, last))
+}
+
+/// The RGBA bytes of a run of pixels, with alpha forced opaque.
+///
+/// The pane is opaque; a canvas pixel with `alpha = 0` would show through.
+fn rgba(pixels: &[u32]) -> Vec<u8> {
+    let mut bytes = vec![255u8; pixels.len() * 4];
+    for (pixel, chunk) in pixels.iter().zip(bytes.as_chunks_mut::<4>().0) {
         let [_, red, green, blue] = pixel.to_be_bytes();
-        // The pane is opaque: a canvas with `alpha = 0` would show through.
-        rgba.extend_from_slice(&[red, green, blue, 255]);
+        chunk[0] = red;
+        chunk[1] = green;
+        chunk[2] = blue;
     }
-
-    output.write_all(&0u32.to_be_bytes())?;
-    output.write_all(&width.to_be_bytes())?;
-    output.write_all(&height.to_be_bytes())?;
-    output.write_all(&u32::from(cell_width).to_be_bytes())?;
-    output.write_all(&u32::from(cell_height).to_be_bytes())?;
-    output.write_all(&(rgba.len() as u32).to_be_bytes())?;
-    output.write_all(&rgba)?;
-    Ok(true)
+    bytes
 }
 
 /// Writes a text answer, which is how a copy reaches the host.
@@ -630,15 +722,33 @@ mod tests {
     }
 
     #[test]
-    fn output_after_an_idle_answer_paints_again() {
-        let (mut surface, queue) = fixture(4, 2);
-        serve(br#"{"cmd":"render"}"#.as_slice(), &mut Vec::new(), &mut surface).expect("serve");
-
-        queue.feed(b"hi");
+    fn a_change_after_an_idle_answer_sends_only_its_band() {
+        let (mut surface, queue) = fixture(4, 8);
+        let mut frames = Frames::new();
         let mut out = Vec::new();
-        serve(br#"{"cmd":"render"}"#.as_slice(), &mut out, &mut surface).expect("serve");
 
-        assert_eq!(width(&out), 32);
+        frames.write(&mut surface, &mut out, true).expect("a frame");
+        assert_eq!(kind(&out), 0);
+
+        out.clear();
+        frames.write(&mut surface, &mut out, true).expect("no frame");
+        assert_eq!(out.len(), FRAME_HEADER);
+
+        // One row of text: the patch names its top, its width and its height.
+        out.clear();
+        queue.feed(b"hi");
+        frames.write(&mut surface, &mut out, true).expect("a patch");
+
+        assert_eq!(kind(&out), 2);
+        assert_eq!(u32::from_be_bytes(out[4..8].try_into().expect("four bytes")), 0);
+        assert_eq!(u32::from_be_bytes(out[8..12].try_into().expect("four bytes")), 32);
+        // The fixture's glyph spills into the next cell row, so the band is a
+        // couple of rows — far less than the eight-row pane.
+        let rows = u32::from_be_bytes(out[12..16].try_into().expect("four bytes"));
+        assert!((16..128).contains(&rows), "band of {rows} rows");
+        let length = u32::from_be_bytes(out[20..24].try_into().expect("four bytes")) as usize;
+        assert_eq!(length, 32 * rows as usize * 4);
+        assert_eq!(out.len(), FRAME_HEADER + length);
     }
 
     #[test]
