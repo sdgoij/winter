@@ -13,7 +13,7 @@ files or the diff first; do not ask which files changed.
 ```
 <type>(<scope>): <subject>
 
-<body: what changed and why, wrapped at 72 columns>
+<body: what changed and why, not hard-wrapped>
 ```
 
 - **Subject**: imperative mood, no trailing period, 50 characters if it fits and
@@ -21,9 +21,9 @@ files or the diff first; do not ask which files changed.
 - **Type**: `feat`, `fix`, `test`, `refactor`, `perf`, `docs`, `build`, `ci`,
   `chore`. The repository's history uses `feat(adapter)` and `test(buffer, vt)`
   for scopes, so a scope is the crate or crates touched.
-- **Body**: separate from the subject with a blank line, wrapped at 72 columns.
-  Explain *what* and *why*; the diff already shows *how*. Omit the body when the
-  subject says it.
+- **Body**: separate from the subject with a blank line. Explain *what* and
+  *why*; the diff already shows *how*. Omit the body when the subject says it.
+  Write each paragraph as one line; do not hard-wrap the body.
 - Do not restate the subject in the body.
 
 ## One commit per change
@@ -90,6 +90,7 @@ test(buffer, vt): add snapshot and property cases for reflow
 | Explain why | Narrate the code |
 | Use imperative mood | "Added", "Fixes", "Adds" |
 | Group related files | List every file |
+| Leave the body unwrapped | Hard-wrap at a fixed column |
 | Close with test results and follow-ups | Leave the body empty when there is substance |
 
 If someone says "more detail" or "descriptive", they want a body grouped by

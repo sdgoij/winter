@@ -114,7 +114,7 @@ The procedure, the corpus layout, and the Windows memory trap are in the
 
 Subject and body rules are in `.agents/skills/git-commit-messages`; read it when
 writing one. In short: `<type>(<scope>): <imperative subject>`, no trailing
-period, body wrapped at 72 columns explaining what changed and why.
+period, and a body that explains what changed and why without hard-wrapping it.
 
 - Code, tests, and the documentation that describes them are **one** commit.
 - Never commit build output, `target/`, `/dist`, or a local `.db`.
