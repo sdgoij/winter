@@ -55,8 +55,10 @@ use winter::term_settings::TerminalSettings;
 use winter::terminal_render::TerminalData;
 use winter::view::View;
 
+mod chrome;
 mod gl;
 
+use chrome::Chrome;
 use gl::Gl;
 
 /// The window opens at this many cells, like the WinUI shell.
@@ -67,16 +69,91 @@ const PANE_LEFT: f64 = 8.0;
 const TICK: Duration = Duration::from_millis(16);
 /// The cursor's blink half-period, matching the macOS and WinUI shells.
 const BLINK: Duration = Duration::from_millis(500);
-/// The height the strip asks for; the header bar may give it more.
-const STRIP_HEIGHT: i32 = 34;
+/// The height the strip asks for, matching the Breeze decoration's title bar.
+const STRIP_HEIGHT: i32 = 28;
 /// The space between a tab's left edge and its title.
-const TITLE_INSET: i32 = 12;
-/// The tab's corner radius.
-const RADIUS: f64 = 6.0;
+const TITLE_INSET: i32 = 10;
+/// The tab's corner radius, matching Breeze's frame radius.
+const RADIUS: f64 = 5.0;
 /// The close and new-tab glyphs' size.
 const GLYPH: f64 = 9.0;
 /// What an elided title ends with.
 const ELLIPSIS: char = '…';
+/// The title bar's own layout: Breeze pads the row and gives its window
+/// controls 20-pixel buttons, while a GTK header bar pads for a 24-pixel one.
+const CHROME_CSS: &str = r#"
+.winter-titlebar {
+    padding: 0;
+    margin: 0;
+    min-height: 28px;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background-image: none;
+}
+.winter-titlebar windowhandle {
+    padding: 0;
+    margin: 0;
+}
+.winter-titlebar windowcontrols {
+    padding: 0;
+    margin: 0;
+    border-spacing: 2px;
+}
+.winter-titlebar windowcontrols button {
+    min-width: 20px;
+    min-height: 20px;
+    margin: 0 2px;
+    padding: 0;
+    border-radius: 4px;
+    background: none;
+    box-shadow: none;
+}
+.winter-titlebar windowcontrols button > image {
+    min-width: 16px;
+    min-height: 16px;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+}
+.winter-titlebar windowcontrols button:hover {
+    background-color: alpha(currentColor, 0.12);
+}
+.winter-titlebar windowcontrols button:hover > image {
+    background: none;
+    box-shadow: none;
+}
+.winter-titlebar windowcontrols button.close:hover {
+    background-color: #da4453;
+    color: #ffffff;
+}
+"#;
+
+/// The title bar's stylesheet, with the desktop's palette appended.
+///
+/// The window controls sit beside the strip rather than inside it, so the row
+/// colour has to reach the whole title bar; `:backdrop` carries the unfocused
+/// palette that KDE publishes alongside the focused one.
+fn chrome_css(palette: Option<Chrome>) -> String {
+    let mut css = String::from(CHROME_CSS);
+    if let Some(chrome) = palette {
+        css.push_str(&format!(
+            ".winter-titlebar {{ background-image: none; background-color: {}; color: {}; }}\n\
+             .winter-titlebar:backdrop {{ background-image: none; background-color: {}; color: {}; }}\n",
+            hex(chrome.titlebar),
+            hex(chrome.foreground),
+            hex(chrome.titlebar_inactive),
+            hex(chrome.foreground_inactive),
+        ));
+    }
+    css
+}
+
+/// A colour as a CSS hex literal.
+fn hex(color: u32) -> String {
+    format!("#{:06x}", color & 0x00FF_FFFF)
+}
 
 /// Starts the GTK shell and runs it until its window closes.
 ///
@@ -116,6 +193,18 @@ fn take_new_instance(arguments: Vec<std::ffi::OsString>) -> (bool, Vec<std::ffi:
 
 fn activate(app: &Application) {
     let screenshot = std::env::var_os("WINTER_SCREENSHOT").map(PathBuf::from);
+
+    let palette = Chrome::system();
+    // A second activation builds another window in this process; one provider
+    // is enough for the display.
+    static CSS_INSTALLED: std::sync::Once = std::sync::Once::new();
+    CSS_INSTALLED.call_once(|| {
+        if let Some(display) = gdk::Display::default() {
+            let css = gtk::CssProvider::new();
+            css.load_from_data(&chrome_css(palette));
+            gtk::style_context_add_provider_for_display(&display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        }
+    });
 
     settings::ensure_file();
     let loaded = settings::load_with_report();
@@ -200,6 +289,7 @@ fn activate(app: &Application) {
 
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     bar.add_css_class("titlebar");
+    bar.add_css_class("winter-titlebar");
     bar.append(&gtk::WindowControls::new(gtk::PackType::Start));
     bar.append(&handle);
     bar.append(&gtk::WindowControls::new(gtk::PackType::End));
@@ -272,6 +362,7 @@ fn activate(app: &Application) {
         settings_error,
         font_size,
         scale,
+        palette,
         bindings,
         menu,
         chrome: fonts.chrome,
@@ -805,6 +896,8 @@ struct Shell {
     /// window's size in logical pixels, so the cell, the grid and the renderer's
     /// target are all multiplied by this to reach physical pixels.
     scale: f32,
+    /// The desktop's window-chrome palette, when it publishes one.
+    palette: Option<Chrome>,
     /// The chords the window matches before the terminal sees a key.
     bindings: Rc<[settings::Keybinding]>,
     /// The profile menu the strip's button pops up.
@@ -1951,12 +2044,19 @@ impl Shell {
     /// Paints the strip: the row's fill, a box per tab and the new-tab button.
     fn paint_strip(&mut self, context: &cairo::Context, width: i32, height: i32) {
         let colors = self.strip_colors();
+        let scale = f64::from(finite_scale(self.scale));
 
         // A theme that names no row colour leaves GTK's own header bar showing.
         if let Some(row) = colors.row {
             set_rgb(context, row);
             context.paint().ok();
         }
+
+        // The hairline under the row separates every tab that does not merge
+        // with the pane; an inactive tab paints over it and redraws its own.
+        set_rgb(context, colors.border);
+        context.rectangle(0.0, f64::from(height) - 1.0, f64::from(width), 1.0);
+        context.fill().ok();
 
         let (layout, menu) = strip_and_menu(width, self.tabs.len());
         let active = self.tabs.index();
@@ -1966,16 +2066,51 @@ impl Shell {
             let Some(tab) = self.tabs.get(index) else {
                 continue;
             };
-            let (mut fill, text) = if index == active {
+            let is_active = index == active;
+            let (fill, text) = if is_active {
                 (colors.active, colors.active_text)
             } else {
                 (colors.inactive, colors.inactive_text)
             };
-            if self.pointer_is_over(*slots) && index != active {
-                fill = hovered(fill);
-            }
+            let fill = if !is_active && self.pointer_is_over(*slots) {
+                hovered(fill)
+            } else {
+                fill
+            };
 
-            rounded_top(context, *slots, height, fill);
+            if is_active {
+                rounded_top(context, *slots, height, fill);
+                // Breeze marks the selected tab with an accent line along its
+                // top edge, inset so it does not square the rounded corners.
+                let radius = RADIUS.min(f64::from(slots.width()) / 2.0);
+                set_rgb(context, colors.accent);
+                context.rectangle(
+                    f64::from(slots.left) + radius,
+                    0.0,
+                    f64::from(slots.width()) - 2.0 * radius,
+                    2.0,
+                );
+                context.fill().ok();
+            } else {
+                // Only the selected tab rounds its corners above the pane;
+                // the rest are flat and separated by a hairline, as in Breeze.
+                set_rgb(context, fill);
+                context.rectangle(f64::from(slots.left), 0.0, f64::from(slots.width()), f64::from(height));
+                context.fill().ok();
+                if index > 0 {
+                    set_rgb(context, colors.border);
+                    context.rectangle(f64::from(slots.left), 0.0, 1.0, f64::from(height));
+                    context.fill().ok();
+                }
+                set_rgb(context, colors.border);
+                context.rectangle(
+                    f64::from(slots.left),
+                    f64::from(height) - 1.0,
+                    f64::from(slots.width()),
+                    1.0,
+                );
+                context.fill().ok();
+            }
 
             let title_width = slots.width() - tabs::CLOSE - TITLE_INSET;
             if title_width > 0 {
@@ -1983,41 +2118,41 @@ impl Shell {
                     context,
                     &mut self.chrome,
                     &tab.title,
-                    f64::from(slots.left + TITLE_INSET),
-                    baseline,
+                    (f64::from(slots.left + TITLE_INSET), baseline),
                     f64::from(title_width),
                     text,
+                    scale,
                 );
             }
 
             let close = f64::from(slots.right - tabs::CLOSE / 2);
-            glyph_cross(context, close, f64::from(height) / 2.0, text);
+            glyph_cross(context, close, f64::from(height) / 2.0, blend(text, fill, 0.2));
         }
 
-        // The two buttons are one group, painted last so an overflowing strip
-        // cannot cover them; a hairline splits them so they read as one block.
-        let group = TabBox {
-            left: layout.new_tab.left,
-            right: menu.right,
-        };
+        // The two buttons are separate flat targets; a hover paints only the
+        // one under the pointer, the way Breeze's toolbar buttons behave.
         let base = colors.row.unwrap_or(colors.active);
-        let fill = if self.pointer_is_over(group) {
-            hovered(base)
-        } else {
-            base
-        };
-        rounded_top(context, group, height, fill);
-
-        set_rgb(context, blend(fill, contrasting(fill), 0.3));
-        context.set_line_width(1.0);
-        let split = f64::from(layout.new_tab.right) + 0.5;
-        context.move_to(split, f64::from(height) * 0.3);
-        context.line_to(split, f64::from(height) * 0.7);
-        context.stroke().ok();
-
-        let text = contrasting(fill);
-        glyph_plus(context, centre(layout.new_tab), f64::from(height) / 2.0, text);
-        glyph_chevron(context, centre(menu), f64::from(height) / 2.0, text);
+        let hover_fill = hovered(base);
+        for (slots, glyph) in [
+            (
+                layout.new_tab,
+                glyph_plus as fn(&cairo::Context, f64, f64, (f64, f64, f64)),
+            ),
+            (menu, glyph_chevron as fn(&cairo::Context, f64, f64, (f64, f64, f64))),
+        ] {
+            if self.pointer_is_over(slots) {
+                fill_rounded(
+                    context,
+                    f64::from(slots.left) + 2.0,
+                    2.0,
+                    f64::from(slots.width()) - 4.0,
+                    f64::from(height) - 4.0,
+                    4.0,
+                    hover_fill,
+                );
+            }
+            glyph(context, centre(slots), f64::from(height) / 2.0, colors.button_text);
+        }
     }
 
     /// Whether the pointer sits inside `slots`.
@@ -2037,9 +2172,10 @@ impl Shell {
     /// The colours the strip paints with.
     ///
     /// A theme names fills and no text colour, so each label picks the side
-    /// that reads on its own tab. Without a theme the row keeps the header
-    /// bar's own background and the tabs sit on the pane's colour, which is
-    /// what makes the active tab merge with the terminal.
+    /// that reads on its own tab. Without a theme the desktop's window palette
+    /// is the source, so the strip matches the other windows on KDE; only a
+    /// desktop that publishes none leaves the header bar's own background and
+    /// the pane-derived fallbacks.
     fn strip_colors(&self) -> StripColors {
         let (background, foreground) = self
             .tabs
@@ -2048,36 +2184,81 @@ impl Shell {
             .unwrap_or((0x000C_0C0C, 0x00CC_CCCC));
         let pane = channels(background);
         let text = channels(foreground);
+        let focused = self.window.is_active();
 
         let theme = self.document.theme();
-        let row = theme
-            .and_then(|theme| theme.tab_row_background(self.window.is_active()))
+        let themed_row = theme
+            .and_then(|theme| theme.tab_row_background(focused))
             .map(color_channels);
-        let active = theme
-            .and_then(|theme| theme.tab_background(true))
-            .map(color_channels)
-            .unwrap_or(pane);
-        let inactive = theme
-            .and_then(|theme| theme.tab_background(false))
-            .map(color_channels)
-            .unwrap_or_else(|| blend(pane, text, 0.08));
+        let themed_active = theme.and_then(|theme| theme.tab_background(true)).map(color_channels);
+        let themed_inactive = theme.and_then(|theme| theme.tab_background(false)).map(color_channels);
 
+        if themed_row.is_some() || themed_active.is_some() || themed_inactive.is_some() {
+            let active = themed_active.unwrap_or(pane);
+            let inactive = themed_inactive.unwrap_or_else(|| blend(pane, text, 0.08));
+            let base = themed_row.unwrap_or(pane);
+            return StripColors {
+                row: themed_row,
+                active,
+                inactive,
+                active_text: contrasting(active),
+                inactive_text: contrasting(inactive),
+                button_text: contrasting(base),
+                accent: self
+                    .palette
+                    .map_or_else(|| blend(base, contrasting(base), 0.4), |chrome| channels(chrome.accent)),
+                border: blend(base, contrasting(base), 0.15),
+            };
+        }
+
+        if let Some(chrome) = self.palette {
+            let row = channels(if focused {
+                chrome.titlebar
+            } else {
+                chrome.titlebar_inactive
+            });
+            let foreground = channels(if focused {
+                chrome.foreground
+            } else {
+                chrome.foreground_inactive
+            });
+            let dim = channels(chrome.foreground_inactive);
+            return StripColors {
+                row: Some(row),
+                // The active tab merges with its pane, as in the other shells.
+                active: pane,
+                // Breeze's other tabs are a shade below the row.
+                inactive: shade(row, 0.82),
+                active_text: foreground,
+                inactive_text: dim,
+                button_text: foreground,
+                accent: channels(chrome.accent),
+                border: blend(row, foreground, 0.12),
+            };
+        }
+
+        let inactive = blend(pane, text, 0.08);
         StripColors {
-            row,
-            active,
+            row: None,
+            active: pane,
             inactive,
-            active_text: contrasting(active),
+            active_text: contrasting(pane),
             inactive_text: contrasting(inactive),
+            button_text: contrasting(pane),
+            accent: blend(pane, text, 0.35),
+            border: blend(pane, text, 0.12),
         }
     }
 
     /// Where the title's baseline sits in a strip `height` tall.
     fn title_baseline(&self, height: i32) -> f64 {
+        let scale = f64::from(finite_scale(self.scale));
         let (ascent, descent) = self.chrome.vertical_metrics();
-        let box_height = ascent + descent;
+        let ascent = f64::from(ascent) / scale;
+        let box_height = ascent + f64::from(descent) / scale;
         // A short strip keeps the text on it rather than centred off the top.
-        let top = ((f64::from(height) - f64::from(box_height)) / 2.0).max(0.0);
-        top + f64::from(ascent)
+        let top = ((f64::from(height) - box_height) / 2.0).max(0.0);
+        top + ascent
     }
 
     /// Fits the terminal and the renderer to whole cells inside the pane's
@@ -2231,11 +2412,50 @@ struct StripColors {
     active_text: (f64, f64, f64),
     /// Every other tab's title.
     inactive_text: (f64, f64, f64),
+    /// The new-tab and menu glyphs.
+    button_text: (f64, f64, f64),
+    /// The line along the selected tab's top edge.
+    accent: (f64, f64, f64),
+    /// Separators between tabs and along the row's bottom edge.
+    border: (f64, f64, f64),
 }
 
 /// A fill lifted towards its own text colour, for the element under the pointer.
 fn hovered(fill: (f64, f64, f64)) -> (f64, f64, f64) {
     blend(fill, contrasting(fill), 0.15)
+}
+
+/// A fill scaled towards black, so a shade keeps its hue.
+fn shade(fill: (f64, f64, f64), factor: f64) -> (f64, f64, f64) {
+    (
+        (fill.0 * factor).clamp(0.0, 1.0),
+        (fill.1 * factor).clamp(0.0, 1.0),
+        (fill.2 * factor).clamp(0.0, 1.0),
+    )
+}
+
+/// Fills a rounded rectangle.
+fn fill_rounded(
+    context: &cairo::Context,
+    left: f64,
+    top: f64,
+    width: f64,
+    height: f64,
+    radius: f64,
+    fill: (f64, f64, f64),
+) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    let radius = radius.min(width / 2.0).min(height / 2.0);
+    let (right, bottom) = (left + width, top + height);
+    set_rgb(context, fill);
+    context.new_sub_path();
+    context.arc(right - radius, top + radius, radius, -FRAC_PI_2, 0.0);
+    context.arc(right - radius, bottom - radius, radius, 0.0, FRAC_PI_2);
+    context.arc(left + radius, bottom - radius, radius, FRAC_PI_2, PI);
+    context.arc(left + radius, top + radius, radius, PI, 3.0 * FRAC_PI_2);
+    context.close_path();
+    context.fill().ok();
 }
 
 /// Fills a tab's box with rounded top corners.
@@ -2348,12 +2568,12 @@ fn draw_text(
     context: &cairo::Context,
     rasterizer: &mut FontDueRasterizer,
     text: &str,
-    left: f64,
-    baseline: f64,
+    origin: (f64, f64),
     width: f64,
     color: (f64, f64, f64),
+    scale: f64,
 ) {
-    let shown = elide(rasterizer, text, width);
+    let shown = elide(rasterizer, text, width * scale);
     if shown.is_empty() {
         return;
     }
@@ -2392,10 +2612,14 @@ fn draw_text(
     let Ok(surface) = cairo::ImageSurface::create_for_data(mask, cairo::Format::A8, mask_width, line, stride) else {
         return;
     };
+    // The mask is physical; the context is logical.
     set_rgb(context, color);
+    context.save().ok();
+    context.scale(1.0 / scale, 1.0 / scale);
     context
-        .mask_surface(&surface, left, baseline - f64::from(ascent_rows))
+        .mask_surface(&surface, origin.0 * scale, origin.1 * scale - f64::from(ascent_rows))
         .ok();
+    context.restore().ok();
 }
 
 /// Composites one glyph's coverage into a mask at `(x, y)`.
@@ -2858,10 +3082,7 @@ fn fonts(size: f32, cells: (i32, i32), scale: f32) -> Option<Fonts> {
     let shaper = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
     let rasterizer = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
     let gpu = FontDueRasterizer::from_file(face.path(), pixels).ok()?;
-    // The strip is painted through Cairo in logical pixels, which GTK scales
-    // itself, so its face stays at the DIP size rather than doubling on a
-    // HiDPI screen.
-    let chrome = FontDueRasterizer::from_file(face.path(), size * 0.85).ok()?;
+    let chrome = chrome_face(&collection, face, size, scale)?;
 
     let advance = shaper.advance_width('M');
     let (ascent, descent) = shaper.vertical_metrics();
@@ -2925,6 +3146,35 @@ fn fonts(size: f32, cells: (i32, i32), scale: f32) -> Option<Fonts> {
         chrome,
         cell: (cell_w, cell_h),
     })
+}
+
+/// The face the strip's titles are drawn with.
+///
+/// A native title bar uses the desktop's UI font, so the terminal's monospace
+/// face is only a fallback. The face is rasterised at the composition scale
+/// because `draw_text` hands Cairo the coverage at `1/scale`.
+fn chrome_face(
+    collection: &renderer::FontCollection,
+    terminal: &renderer::FontFace,
+    terminal_size: f32,
+    scale: f32,
+) -> Option<FontDueRasterizer> {
+    let description = gtk::Settings::default()
+        .and_then(|settings| settings.gtk_font_name())
+        .map(|name| gtk::pango::FontDescription::from_string(name.as_str()));
+    let (family, points) = match description {
+        Some(description) if description.size() > 0 => (
+            description
+                .family()
+                .map(|family| family.to_string())
+                .unwrap_or_default(),
+            description.size() as f32 / gtk::pango::SCALE as f32,
+        ),
+        _ => (terminal.family().to_string(), terminal_size * 0.85),
+    };
+    let face = collection.resolve(&family, 400, false).unwrap_or(terminal);
+    let pixels = points * 96.0 / 72.0 * finite_scale(scale);
+    FontDueRasterizer::from_file(face.path(), pixels).ok()
 }
 
 /// A `COLORREF` as Cairo's three components.

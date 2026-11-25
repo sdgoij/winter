@@ -20,6 +20,7 @@ One module owns:
 | Part | Owns |
 |---|---|
 | entry | `run()`, the window, the `GtkWindowHandle` title bar |
+| chrome | the desktop's window palette (`kdeglobals`), the title-bar CSS and the strip's UI font |
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
 | pane | the base `DrawingArea`: pane fill, scrollbar, marks, and the input controllers over the GL area |
 | gl | the OpenGL content path (ADR 076): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
@@ -236,6 +237,20 @@ a neighbour's midpoint.
   of the window, a stretched frame or clicks in the wrong cell. `sync_scale`
   rebuilds the face when the widget's factor changes (a window moved between
   monitors), so never cache the scale without comparing it on each frame.
+- **The strip follows the desktop's window palette.** On KDE the row, the tab
+  shades and the accent come from `kdeglobals` (`Colors:Header`,
+  `Colors:Window`, `Colors:Selection`, with `WM` as the fallback), so a change
+  of KDE colour scheme moves the strip too. Its height is 28 DIP, matching the
+  Breeze decoration's computed title bar; `CHROME_CSS` zeroes the GTK header
+  bar's 46-DIP padding and shrinks its window controls to Breeze's 20 px. The
+  controls sit beside the strip, not inside it, so the palette is also on the
+  `.winter-titlebar` background or a band of Adwaita shows to the right. Tabs
+  are flat with a 2 px accent line on the selected one, and titles use the
+  desktop's UI font, not the terminal's monospace face.
+- **`--new-instance` skips GtkApplication's handoff.** A running shell owns
+  `org.winter.Winter` on the session bus, so a plain launch hands the activation
+  to it and prints its old window. The flag sets `NON_UNIQUE`; GApplication must
+  not see it, so `take_new_instance` removes it from the arguments first.
 - **The font size in the settings file changes the cell.** The opening window
   is sized for whole cells at that size, and a reload that changes it rebuilds
   the face and the renderer; `fit` must not skip the resize because the grid
