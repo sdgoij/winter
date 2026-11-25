@@ -112,3 +112,12 @@ Three things put the pty layer in their way:
 | Bindings per host (napi, wasm-bindgen) in this workspace | Each binding would re-encode the same five steps and the same input rules; a binding should be a thin caller of `Surface` |
 | Keep `Connection::resize(PtySize)` and gate modules only | The trait would still name `server`, so every pty-less host would build the pty crate |
 | Return `&[u32]` from `render` | The pixels are a field of the surface, so every read of a frame would also hold the whole surface borrowed |
+
+## Amendment
+
+`Surface::new` takes the connection the host owns instead of building a `Queue`
+of its own, and `feed`/`take_written` went with it. The first host written
+against the surface was a frame server driving a real shell (ADR 083), and a
+surface hardwired to a queue could not see a pty's output; once the host owns
+the connection, feeding it and taking its answers are the connection's own
+methods, and a `Queue` clone is all a test host needs.

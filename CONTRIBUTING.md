@@ -224,6 +224,8 @@ Do not add call sites under an allowance.
 | `crates/gtk4` | The GTK 4 shell on Linux: the window, strip, find bar, settings editor and the OpenGL content path (ADRs 075, 076) |
 | `crates/cocoa` | The AppKit shell on macOS, through `objc2`, with the Metal content path (ADRs 072, 073) |
 | `crates/winui` | The WinUI 3 shell on Windows, through `windows-reactor` (ADR 040) |
+| `crates/demo` | The embedding demo's host: a frame server that owns a pty and one `Surface`, speaks JSON lines and writes RGBA frames (ADR 083) |
+| `editors/vscode` | The editor half of the demo: a webview that spawns the frame server and paints its frames (ADR 083) |
 | `crates/app` | The binary: `main` picks the shell by target, and the Windows icon resource lives here (ADR 080) |
 | `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 077) |
 

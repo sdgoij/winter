@@ -118,3 +118,4 @@ Rules:
 | [080](080-shells-are-crates.md) | Each shell is its own crate — `winter` is the shell-independent core, `gtk4`/`cocoa`/`winui` the shells, `app` the binary — and a package cycle is why they cannot stay together | Accepted |
 | [081](081-windows-gui-subsystem.md) | The Windows binary is linked as a GUI-subsystem executable, so a double-click opens the window and not a console; the trace file carries diagnostics | Accepted |
 | [082](082-embedding-surface.md) | `winter::embed::Surface` composes the terminal and its frame for a host with no window; the connection trait takes cells rather than a `PtySize`, the pty-less double is a production `Queue`, and the pty, notification and settings parts are features | Accepted |
+| [083](083-frame-server.md) | A frame server — `winter-demo`'s `winter-frame` and the VS Code webview beside it — lets an editor host the terminal, because an extension can receive pixels and nothing else | Accepted |

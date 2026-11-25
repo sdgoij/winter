@@ -17,6 +17,7 @@ members = [
     "crates/gtk4",
     "crates/cocoa",
     "crates/winui",
+    "crates/demo",
     "crates/app",
 ]
 
@@ -39,7 +40,8 @@ publish = false
 # device and sees no workspace crate either (ADR 033). `winter` is the
 # shell-independent core: it sees everything and is the only crate allowed to
 # (ADR 018). `gtk4`, `cocoa` and `winui` are the shells on top of it, one per
-# platform, and `app` is the binary that selects between them (ADR 080).
+# platform, `demo` is the embedding demo's host, and `app` is the binary that
+# selects between the shells (ADRs 080, 083).
 # A crate that needs something from a crate to its right is a design error, not
 # a manifest to edit; see docs/adr/001-workspace-layering.md.
 [workspace.dependencies]

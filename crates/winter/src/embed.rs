@@ -10,10 +10,10 @@
 //!
 //! # What a host owns
 //!
-//! - **The bytes.** [`Surface::feed`] is what the program wrote; [`Surface::take_written`]
-//!   is what the terminal answered. Forwarding the second to a pty, a socket or a
-//!   worker is the host's job, because only the host knows where the process is
-//!   (ADR 015).
+//! - **The bytes.** [`Surface::new`] takes the connection the host owns — a pty
+//!   session, or a [`Queue`] the host feeds — so the same surface drives a real
+//!   shell and a test. Which bytes arrive, and where the terminal's answers go,
+//!   is the connection's business (ADR 015).
 //! - **The font.** Measuring a face is the host's (ADR 029) and every shell does
 //!   it its own way, so [`Setup`] carries the measured result rather than the
 //!   path to a file.
@@ -41,7 +41,7 @@ use types::color_table::ColorTable;
 use utils::InclusiveRect;
 
 use crate::input::{self, Event, ModifierSides};
-use crate::term_connection::Queue;
+use crate::term_connection::Connection;
 use crate::term_control::Control;
 use crate::term_events::TerminalEvent;
 use crate::terminal_render::TerminalData;
@@ -71,7 +71,6 @@ pub struct Setup {
 /// A terminal and its frame, for a host that has no window toolkit.
 pub struct Surface {
     control: Control,
-    queue: Queue,
     view: View,
     renderer: Renderer<TerminalData>,
     shared: SharedBackend,
@@ -83,8 +82,12 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Builds a surface over a queue the host feeds.
-    pub fn new(setup: Setup) -> Self {
+    /// Builds a surface over a connection the host owns.
+    ///
+    /// A host that spawned a process passes its session; one that owns the bytes
+    /// passes a [`Queue`](crate::term_connection::Queue) it keeps a clone of, so
+    /// it can feed the program's output and take the terminal's answers.
+    pub fn new(setup: Setup, connection: Box<dyn Connection>) -> Self {
         let Setup {
             font,
             settings,
@@ -95,8 +98,7 @@ impl Surface {
         } = setup;
 
         let cell = settings.font.cell_size;
-        let queue = Queue::default();
-        let control = Control::new(Box::new(queue.clone()), (columns, rows));
+        let control = Control::new(connection, (columns, rows));
 
         let shared = SharedBackend::new(SoftwareBackend::with_rasterizer(rasterizer));
         let mut engine = AtlasEngine::with_settings(settings, Box::new(shared.clone()));
@@ -110,7 +112,6 @@ impl Surface {
 
         Self {
             control,
-            queue,
             view: View::new(),
             renderer,
             shared,
@@ -118,19 +119,6 @@ impl Surface {
             cell,
             size: (columns, rows),
         }
-    }
-
-    /// Queues bytes the program wrote, for the next [`render`](Self::render).
-    pub fn feed(&mut self, bytes: &[u8]) {
-        self.queue.feed(bytes);
-    }
-
-    /// Everything the terminal answered since the last call, taking it.
-    ///
-    /// These are the program's due: a device-attributes reply, a cursor-position
-    /// report, an OSC colour query. The host forwards them to whatever it spawned.
-    pub fn take_written(&self) -> Vec<u8> {
-        self.queue.take_written()
     }
 
     /// Sends text to the program, as if the user had typed it.
@@ -223,6 +211,12 @@ impl Surface {
         (self.shared.width(), self.shared.height())
     }
 
+    /// One cell's size in pixels, which a host needs to turn a pane's pixel size
+    /// back into a grid.
+    pub fn cell_size(&self) -> (u16, u16) {
+        self.cell
+    }
+
     /// What the terminal did since the last call: a bell, a notification, an exit.
     pub fn take_events(&mut self, now: Instant) -> Vec<TerminalEvent> {
         self.control.take_events(now)
@@ -265,6 +259,8 @@ fn target_size(cell: (u16, u16), columns: i32, rows: i32) -> (u16, u16) {
 mod tests {
     use renderer::{CellShaping, CellSizeInDIP, FontId, GlyphBitmap};
     use utils::Size;
+
+    use crate::term_connection::Queue;
 
     use super::*;
 
@@ -322,24 +318,29 @@ mod tests {
         }
     }
 
-    fn surface(columns: i32, rows: i32) -> Surface {
-        Surface::new(Setup {
-            font: font(),
-            // A grid this small always fits a `u16`, so the test can cast.
-            settings: settings(columns as u16, rows as u16),
-            shaper: Box::new(CellShaping),
-            rasterizer: Box::new(SolidRasterizer),
-            columns,
-            rows,
-        })
+    fn surface(columns: i32, rows: i32) -> (Surface, Queue) {
+        let queue = Queue::default();
+        let surface = Surface::new(
+            Setup {
+                font: font(),
+                // A grid this small always fits a `u16`, so the test can cast.
+                settings: settings(columns as u16, rows as u16),
+                shaper: Box::new(CellShaping),
+                rasterizer: Box::new(SolidRasterizer),
+                columns,
+                rows,
+            },
+            Box::new(queue.clone()),
+        );
+        (surface, queue)
     }
 
     #[test]
     fn a_frame_of_fed_bytes_reaches_the_pixels() {
-        let mut surface = surface(4, 2);
+        let (mut surface, queue) = surface(4, 2);
         // The text is on the second row and the cursor is hidden, so ink there
-        // can only have come from the fed bytes.
-        surface.feed(b"\x1b[?25l\r\nhi");
+        // can only have come from the bytes the queue carried.
+        queue.feed(b"\x1b[?25l\r\nhi");
 
         surface.render(true).expect("a frame");
 
@@ -355,19 +356,19 @@ mod tests {
 
     #[test]
     fn a_key_and_a_paste_reach_the_program_in_order() {
-        let mut surface = surface(20, 2);
+        let (mut surface, queue) = surface(20, 2);
 
         surface.key(&Event::Text("a".to_string()));
         surface.paste("two words");
 
-        assert_eq!(surface.take_written(), b"atwo words");
+        assert_eq!(queue.take_written(), b"atwo words");
         // Taking it leaves nothing for the next forward.
-        assert!(surface.take_written().is_empty());
+        assert!(queue.take_written().is_empty());
     }
 
     #[test]
     fn a_resize_moves_the_terminal_the_grid_and_the_frame() {
-        let mut surface = surface(4, 2);
+        let (mut surface, _queue) = surface(4, 2);
 
         surface.resize(8, 3).expect("resize");
         surface.render(true).expect("a frame");
@@ -381,10 +382,10 @@ mod tests {
         use types::color_table::ColorAlias;
         use types::text_color::TextColor;
 
-        let mut surface = surface(2, 1);
+        let (mut surface, queue) = surface(2, 1);
         // The cursor is a filled box over the first cell, so the second cell's
         // background is what this reads; hiding it keeps the sample stable.
-        surface.feed(b"\x1b[?25l");
+        queue.feed(b"\x1b[?25l");
         surface.render(true).expect("a frame");
         let before = surface.pixels()[8];
 
@@ -401,8 +402,8 @@ mod tests {
 
     #[test]
     fn the_title_the_program_sets_is_the_one_reported() {
-        let mut surface = surface(20, 2);
-        surface.feed(b"\x1b]0;a title\x07");
+        let (mut surface, queue) = surface(20, 2);
+        queue.feed(b"\x1b]0;a title\x07");
 
         surface.render(true).expect("a frame");
 
@@ -412,13 +413,13 @@ mod tests {
     #[test]
     fn the_programs_answer_is_written_and_a_bell_is_reported_once() {
         let now = Instant::now();
-        let mut surface = surface(20, 2);
+        let (mut surface, queue) = surface(20, 2);
         // DA1: the terminal answers this itself, with no input from the host.
-        surface.feed(b"\x1b[c\x07");
+        queue.feed(b"\x1b[c\x07");
 
         surface.render(true).expect("a frame");
 
-        let written = surface.take_written();
+        let written = queue.take_written();
         assert!(written.starts_with(b"\x1b["), "{written:?}");
         assert!(written.ends_with(b"c"), "{written:?}");
         assert_eq!(surface.take_events(now), [TerminalEvent::Bell]);

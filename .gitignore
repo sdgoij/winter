@@ -21,3 +21,7 @@ Thumbs.db
 
 # Release packaging, generated per tag.
 /dist
+
+# The VS Code demo's installed packages and compiled JavaScript.
+/editors/vscode/node_modules
+/editors/vscode/out
