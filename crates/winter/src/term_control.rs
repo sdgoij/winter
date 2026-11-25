@@ -106,6 +106,17 @@ impl Control {
         )
     }
 
+    /// Ends the program and the connection behind it.
+    ///
+    /// A host that owns the pty — an embedding (ADR 082), an addon (ADR 084) —
+    /// has to be able to end it, or a pane closed in the editor leaves a shell
+    /// behind. The connection releases what it holds; the surface then reports
+    /// the exit like any other.
+    pub fn close(&mut self) {
+        self.connection.close();
+        self.exited = true;
+    }
+
     /// Moves bytes from the connection into the parser and answers the program.
     ///
     /// Returns whether any bytes arrived, which is what tells a host that the

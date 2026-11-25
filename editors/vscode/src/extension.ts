@@ -1,29 +1,98 @@
-// The editor half of the embedding demo (ADR 083).
+// The editor half of the embedding demo (ADR 084).
 //
-// VS Code owns the pane; this extension owns a process that owns the shell and
-// the pixels. Commands go to the process's stdin as one JSON object per line, and
-// the process answers on stdout with tagged messages: kind 0 is a whole frame
-// (width, height, cell width, cell height, byte length, RGBA), kind 1 is text for
-// the clipboard, and kind 2 is a band — the rows that changed, with their top
-// edge — which is what a keystroke costs instead of the whole pane.
+// VS Code owns the pane; the extension's own process owns the terminal. The
+// terminal is `winter`'s surface, reached through the addon in `winter.node`:
+// input is a method call, and `render` returns the pixels that changed — a band
+// of the pane, or the whole of it — or `null` when nothing did. There is no
+// second process and no protocol between the halves (ADR 083 had both).
 //
-// The pixels travel base64-encoded: a webview's `postMessage` does not promise
-// that a `Buffer` or a typed array survives as bytes, and a frame that arrives
-// as an object is a blank canvas with no error to show.
+// The pixels travel to the webview base64-encoded and deflated: `postMessage`
+// does not promise that a `Buffer` survives as bytes, and 1.8 MB of RGBA per
+// frame is more than a canvas can decode at speed.
 
-import * as cp from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
-/** A frame message: `u32 0` then five `u32`s, then base64 RGBA. */
-const FRAME_HEADER = 24;
-/** A text message: `u32 1` and a length. */
-const TEXT_HEADER = 8;
-/** A diagnostic line: `u32 3` and a length. */
-const DIAGNOSTIC = 3;
 /** How often a frame is asked for while a panel is showing. */
 const FRAME_INTERVAL = 16;
+/** How long an unacknowledged frame is waited for before it is asked for again. */
+const ACK_TIMEOUT = 500;
+/** The grid a terminal starts at, before the pane says how big it is. */
+const START_COLUMNS = 100;
+/** The grid a terminal starts at. */
+const START_ROWS = 30;
+
+/** The pixels that changed, as the addon returns them. */
+interface Frame {
+  /** Whether it is a band of the pane rather than the whole of it. */
+  patch: boolean;
+  /** The first pixel row it covers. */
+  top: number;
+  /** Its width in pixels. */
+  width: number;
+  /** How many pixel rows it covers. */
+  height: number;
+  /** Deflated RGBA. */
+  pixels: Buffer;
+}
+
+/** A grid size in cells. */
+interface Grid {
+  columns: number;
+  rows: number;
+}
+
+/** A cell size in pixels. */
+interface CellSize {
+  width: number;
+  height: number;
+}
+
+/** Something the program asked the terminal to report. */
+interface EventReport {
+  kind: string;
+  title?: string | null;
+  body?: string | null;
+}
+
+/** The surface, as `crates/napi` exposes it. */
+interface Terminal {
+  write(text: string): void;
+  paste(text: string): void;
+  key(
+    name: string,
+    text: string,
+    code: string,
+    shift: boolean,
+    ctrl: boolean,
+    alt: boolean,
+    pressed: boolean,
+    repeat: boolean,
+  ): void;
+  resize(columns: number, rows: number): void;
+  press(column: number, row: number, button: number, shift: boolean): void;
+  move(column: number, row: number, button: number, shift: boolean): void;
+  release(column: number, row: number, button: number, shift: boolean): void;
+  wheel(column: number, row: number, lines: number, shift: boolean): void;
+  copy(): string | null;
+  modes(): string | null;
+  render(): Frame | null;
+  size(): Grid;
+  cellSize(): CellSize;
+  cursorVisible(): boolean;
+  title(): string | null;
+  takeEvents(): EventReport[];
+  close(): void;
+}
+
+/** The addon module. */
+interface Addon {
+  defaultShell(): string;
+  Terminal: {
+    spawn(shell: string, columns: number, rows: number, fontSize?: number): Terminal;
+  };
+}
 
 type Message =
   | { kind: "input"; text: string }
@@ -53,36 +122,29 @@ type Message =
   | { kind: "painted" }
   | { kind: "ready" };
 
-let server: cp.ChildProcessWithoutNullStreams | undefined;
+let terminal: Terminal | undefined;
 let panel: vscode.WebviewPanel | undefined;
 let log: vscode.OutputChannel | undefined;
-let pending = Buffer.alloc(0);
+/** The pane's script is listening: before that, a frame would be dropped. */
+let ready = false;
 let announced = false;
 
 // One frame in flight, and no more.
 //
-// The server answers commands in the order they arrive, so a host that asks for
-// a frame on a timer while the server is slower than the timer queues renders
-// without bound: the pane falls further and further behind real time, and a
-// keystroke sits behind every frame already asked for. A full-screen game makes
-// that happen immediately — a 900x510 frame costs a few milliseconds in a
-// release build and tens of milliseconds in a debug one. Asking for the next
-// frame only after the pane has painted the last one keeps the queue at length
-// zero however slow either end is.
+// A render costs a few milliseconds for a shell and about six for a full-screen
+// program, and the pane cannot paint faster than it can inflate and blit. Asking
+// for the next frame only after the pane has painted the last one keeps the two
+// in step: a slow end slows the protocol instead of building a queue of frames
+// that are stale by the time they are shown.
 let next: NodeJS.Timeout | undefined;
 let watchdog: NodeJS.Timeout | undefined;
 let awaitingPaint = false;
 let requestedAt = 0;
-let repliedAt = 0;
-/** The pane's script is listening: before that, a frame would be dropped. */
-let ready = false;
-/** How long an unacknowledged frame is waited for before it is asked for again. */
-const ACK_TIMEOUT = 500;
 /** What the pane is doing, logged every couple of seconds while it runs. */
 let paintedSinceReport = 0;
 let paintedAtReport = 0;
 let paintedBytes = 0;
-let replyMillis = 0;
+let renderMillis = 0;
 let paintMillis = 0;
 let measuredAtReport = 0;
 
@@ -90,11 +152,18 @@ export function activate(context: vscode.ExtensionContext): void {
   log = vscode.window.createOutputChannel("Winter");
   context.subscriptions.push(log);
   context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open(context)));
+  context.subscriptions.push(vscode.commands.registerCommand("winter.modes", diagnose));
   context.subscriptions.push(new vscode.Disposable(() => stop()));
 }
 
 export function deactivate(): void {
   stop();
+}
+
+/** Logs what the program asked of the input path, which is where a key bug starts. */
+function diagnose(): void {
+  log?.show(true);
+  log?.appendLine(terminal?.modes() ?? "no terminal is open");
 }
 
 function open(context: vscode.ExtensionContext): void {
@@ -122,42 +191,49 @@ function open(context: vscode.ExtensionContext): void {
   panel.webview.onDidReceiveMessage((message: Message) => {
     switch (message.kind) {
       case "input":
-        sendInput({ cmd: "write", text: message.text });
+        input(() => terminal?.write(message.text));
         break;
       case "key":
-        sendInput({
-          cmd: "key",
-          name: message.name,
-          code: message.code,
-          text: message.text,
-          shift: message.shift,
-          ctrl: message.ctrl,
-          alt: message.alt,
-          pressed: message.pressed,
-          repeat: message.repeat,
-        });
+        input(() =>
+          terminal?.key(
+            message.name,
+            message.text,
+            message.code,
+            message.shift,
+            message.ctrl,
+            message.alt,
+            message.pressed,
+            message.repeat,
+          ),
+        );
         break;
       case "paste":
-        sendInput({ cmd: "paste", text: message.text });
+        input(() => terminal?.paste(message.text));
         break;
       case "resize":
-        sendInput({ cmd: "resize", cols: message.cols, rows: message.rows });
+        input(() => terminal?.resize(message.cols, message.rows));
         break;
       case "pointer":
-        sendInput({
-          cmd: message.action,
-          col: message.col,
-          row: message.row,
-          button: message.button,
-          shift: message.shift,
+        input(() => {
+          if (message.action === "press") {
+            terminal?.press(message.col, message.row, message.button, message.shift);
+          } else if (message.action === "move") {
+            terminal?.move(message.col, message.row, message.button, message.shift);
+          } else {
+            terminal?.release(message.col, message.row, message.button, message.shift);
+          }
         });
         break;
       case "wheel":
-        sendInput({ cmd: "wheel", col: message.col, row: message.row, lines: message.lines, shift: message.shift });
+        input(() => terminal?.wheel(message.col, message.row, message.lines, message.shift));
         break;
-      case "copy":
-        send({ cmd: "copy" });
+      case "copy": {
+        const text = terminal?.copy();
+        if (text) {
+          void vscode.env.clipboard.writeText(text);
+        }
         break;
+      }
       case "painted":
         painted();
         break;
@@ -172,49 +248,101 @@ function open(context: vscode.ExtensionContext): void {
 }
 
 function start(context: vscode.ExtensionContext): void {
-  const binary = resolveBinary(context);
-  if (!binary) {
+  const addonPath = resolveAddon(context);
+  if (!addonPath) {
     void vscode.window.showErrorMessage(
-      `Winter: no ${serverName()}. Run \`cargo build --release -p winter-demo\` in the repository, or set ` +
-        `\`winter.serverPath\`. Searched upward from ${context.extensionPath}.`,
+      "Winter: no winter.node. Run `npm run build:addon` in editors/vscode, or set `winter.addonPath`.",
     );
     return;
   }
 
-  const shell = vscode.workspace.getConfiguration("winter").get<string>("shell");
-  const args = shell ? ["--shell", shell] : [];
-  log?.appendLine(`server: ${binary} ${args.join(" ")}`.trimEnd());
-  server = cp.spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] });
-  server.on("error", (error) => {
-    log?.appendLine(`spawn failed: ${error.message}`);
-    void vscode.window.showErrorMessage(`Winter: ${error.message}`);
-  });
-  server.on("exit", (code, signal) => {
-    log?.appendLine(`server exited: ${code ?? signal}`);
-    server = undefined;
-  });
-  server.stderr.on("data", (chunk: Buffer) => log?.append(chunk.toString()));
-  server.stdout.on("data", (chunk: Buffer) => onData(chunk));
+  let addon: Addon;
+  try {
+    addon = require(addonPath) as Addon;
+  } catch (error) {
+    log?.appendLine(`could not load ${addonPath}: ${error}`);
+    void vscode.window.showErrorMessage(`Winter: could not load ${path.basename(addonPath)}: ${error}`);
+    return;
+  }
+
+  const configured = vscode.workspace.getConfiguration("winter").get<string>("shell");
+  const shell = configured && configured.length > 0 ? configured : addon.defaultShell();
+  const fontSize = vscode.workspace.getConfiguration("winter").get<number>("fontSize");
+  log?.appendLine(`addon: ${addonPath}`);
+  log?.appendLine(`shell: ${shell}`);
+
+  try {
+    terminal = addon.Terminal.spawn(shell, START_COLUMNS, START_ROWS, fontSize);
+  } catch (error) {
+    log?.appendLine(`could not start ${shell}: ${error}`);
+    void vscode.window.showErrorMessage(`Winter: could not start ${shell}: ${error}`);
+    return;
+  }
 
   pump();
 }
 
-/** Asks for the next frame, unless one is still outstanding. */
+/** Asks for the next frame, unless one is still with the pane. */
 function pump(): void {
   if (next) {
     clearTimeout(next);
     next = undefined;
   }
-  if (!server || !ready || awaitingPaint) {
+  if (!terminal || !ready || awaitingPaint) {
     return;
   }
   awaitingPaint = true;
   requestedAt = Date.now();
-  repliedAt = 0;
-  send({ cmd: "render" });
-  // A frame that is never painted — a reloaded webview, a dropped message —
-  // would otherwise stop the loop for good. This is why the watchdog has a
-  // handle of its own: asking for a frame must not cancel it.
+
+  const started = Date.now();
+  let frame: Frame | null;
+  try {
+    frame = terminal.render();
+  } catch (error) {
+    log?.appendLine(`render failed: ${error}`);
+    stop();
+    return;
+  }
+  renderMillis += Date.now() - started;
+
+  for (const event of terminal.takeEvents()) {
+    if (event.kind === "exited") {
+      log?.appendLine("the shell exited");
+      stop();
+      return;
+    }
+    log?.appendLine(`${event.kind}${event.title ? `: ${event.title}` : ""}`);
+  }
+
+  if (!frame) {
+    // Nothing changed: there is nothing to paint, so the next frame may be
+    // asked for at once.
+    painted();
+    return;
+  }
+
+  if (!announced) {
+    announced = true;
+    log?.appendLine(`first frame: ${frame.width}x${frame.height}, ${frame.pixels.length} bytes`);
+  }
+
+  paintedBytes += frame.pixels.length;
+  const pixels = frame.pixels.toString("base64");
+  if (frame.patch) {
+    void panel?.webview.postMessage({ kind: "patch", top: frame.top, width: frame.width, height: frame.height, pixels });
+  } else {
+    const cell = terminal.cellSize();
+    void panel?.webview.postMessage({
+      kind: "frame",
+      width: frame.width,
+      height: frame.height,
+      cellWidth: cell.width,
+      cellHeight: cell.height,
+      pixels,
+    });
+  }
+
+  // The pane answers when it has painted, and `painted` asks for the next one.
   watchdog = setTimeout(askAgain, ACK_TIMEOUT);
 }
 
@@ -237,19 +365,18 @@ function painted(): void {
     clearTimeout(watchdog);
     watchdog = undefined;
   }
-  if (!server || !ready) {
+  if (!terminal || !ready) {
     return;
   }
 
   const now = Date.now();
   paintedSinceReport += 1;
-  replyMillis += repliedAt - requestedAt;
-  paintMillis += now - (repliedAt || requestedAt);
+  paintMillis += now - requestedAt;
   measuredAtReport += 1;
   report(now);
 
-  // Pace the loop without adding the paint time to every frame: a host that is
-  // slower than the interval simply asks again straight away.
+  // Pace the loop without adding the paint to every frame: a pane slower than
+  // the interval simply asks again straight away.
   const spent = now - requestedAt;
   next = setTimeout(pump, Math.max(0, FRAME_INTERVAL - spent));
 }
@@ -268,110 +395,22 @@ function report(now: number): void {
   const measured = Math.max(1, measuredAtReport);
   log?.appendLine(
     `pane: ${Math.round((frames * 1000) / elapsed)} frames/s, ` +
-      `answer ${Math.round(replyMillis / measured)} ms, ` +
+      `render ${Math.round(renderMillis / measured)} ms, ` +
       `paint ${Math.round(paintMillis / measured)} ms, ` +
       `${Math.round(paintedBytes / frames)} bytes a frame`,
   );
   paintedSinceReport = 0;
-  replyMillis = 0;
+  renderMillis = 0;
   paintMillis = 0;
   paintedBytes = 0;
   measuredAtReport = 0;
   paintedAtReport = now;
 }
 
-/** Sends input, then asks for the frame that shows it. */
-function sendInput(command: unknown): void {
-  send(command);
+/** Runs an input action, then asks for the frame that shows it. */
+function input(act: () => void): void {
+  act();
   pump();
-}
-
-function onData(chunk: Buffer): void {
-  pending = Buffer.concat([pending, chunk]);
-
-  while (pending.length >= 4) {
-    const kind = pending.readUInt32BE(0);
-
-    if (kind === 1) {
-      if (pending.length < TEXT_HEADER) {
-        return;
-      }
-      const length = pending.readUInt32BE(4);
-      if (pending.length < TEXT_HEADER + length) {
-        return;
-      }
-      const text = pending.subarray(TEXT_HEADER, TEXT_HEADER + length).toString("utf8");
-      pending = pending.subarray(TEXT_HEADER + length);
-      if (text.length > 0) {
-        void vscode.env.clipboard.writeText(text);
-      }
-      continue;
-    }
-
-    // A diagnostic answer is for the log, not for the clipboard.
-    if (kind === DIAGNOSTIC) {
-      if (pending.length < TEXT_HEADER) {
-        return;
-      }
-      const length = pending.readUInt32BE(4);
-      if (pending.length < TEXT_HEADER + length) {
-        return;
-      }
-      const text = pending.subarray(TEXT_HEADER, TEXT_HEADER + length).toString("utf8");
-      pending = pending.subarray(TEXT_HEADER + length);
-      log?.appendLine(text);
-      continue;
-    }
-
-    if (pending.length < FRAME_HEADER) {
-      return;
-    }
-    const length = pending.readUInt32BE(20);
-    if (pending.length < FRAME_HEADER + length) {
-      return;
-    }
-
-    // Kind 2 is a band: the rows from `top`, `height` pixels of them.
-    if (kind === 2) {
-      const top = pending.readUInt32BE(4);
-      const width = pending.readUInt32BE(8);
-      const height = pending.readUInt32BE(12);
-      const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
-      pending = pending.subarray(FRAME_HEADER + length);
-      repliedAt = Date.now();
-      paintedBytes += length;
-      void panel?.webview.postMessage({ kind: "patch", top, width, height, pixels });
-      continue;
-    }
-
-    const width = pending.readUInt32BE(4);
-    const height = pending.readUInt32BE(8);
-    const cellWidth = pending.readUInt32BE(12);
-    const cellHeight = pending.readUInt32BE(16);
-    const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
-    pending = pending.subarray(FRAME_HEADER + length);
-
-    // A zero width is the server saying nothing changed: there is nothing for
-    // the pane to paint, so the next frame may be asked for at once.
-    if (width === 0) {
-      repliedAt = Date.now();
-      painted();
-      continue;
-    }
-
-    if (!announced) {
-      announced = true;
-      log?.appendLine(`first frame: ${width}x${height}, ${length} bytes`);
-    }
-    repliedAt = Date.now();
-    paintedBytes += length;
-    void panel?.webview.postMessage({ kind: "frame", width, height, cellWidth, cellHeight, pixels });
-    continue;
-  }
-}
-
-function send(command: unknown): void {
-  server?.stdin.write(`${JSON.stringify(command)}\n`);
 }
 
 function stop(): void {
@@ -385,51 +424,19 @@ function stop(): void {
   }
   awaitingPaint = false;
   ready = false;
-  send({ cmd: "quit" });
-  server?.stdin.end();
-  server = undefined;
-  pending = Buffer.alloc(0);
   announced = false;
+  terminal?.close();
+  terminal = undefined;
 }
 
-function serverName(): string {
-  return process.platform === "win32" ? "winter-frame.exe" : "winter-frame";
-}
-
-function resolveBinary(context: vscode.ExtensionContext): string | undefined {
-  const configured = vscode.workspace.getConfiguration("winter").get<string>("serverPath");
+/** Where the addon is: the setting, or the copy the build script writes. */
+function resolveAddon(context: vscode.ExtensionContext): string | undefined {
+  const configured = vscode.workspace.getConfiguration("winter").get<string>("addonPath");
   if (configured) {
-    return configured;
+    return path.isAbsolute(configured) ? configured : path.join(context.extensionPath, configured);
   }
-
-  const name = serverName();
-  // The extension's own folder comes first: a development host can open with no
-  // workspace folder at all, and `editors/vscode` always sits below the Cargo
-  // root, so walking up from here finds `target/debug` either way.
-  const roots = [
-    context.extensionPath,
-    process.cwd(),
-    ...(vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
-  ];
-
-  for (const root of roots) {
-    let directory = root;
-    for (let depth = 0; depth < 5; depth += 1) {
-      for (const profile of ["release", "debug"]) {
-        const candidate = path.join(directory, "target", profile, name);
-        if (fs.existsSync(candidate)) {
-          return candidate;
-        }
-      }
-      const parent = path.dirname(directory);
-      if (parent === directory) {
-        break;
-      }
-      directory = parent;
-    }
-  }
-
-  return undefined;
+  const built = path.join(context.extensionPath, "winter.node");
+  return fs.existsSync(built) ? built : undefined;
 }
 
 function html(): string {

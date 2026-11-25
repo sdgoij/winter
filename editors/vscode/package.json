@@ -1,7 +1,7 @@
 {
   "name": "winter-demo",
   "displayName": "Winter (demo)",
-  "description": "A Winter terminal in a webview, painted by Winter's own renderer over stdio.",
+  "description": "A Winter terminal in a webview, painted by Winter's own renderer.",
   "version": "0.0.1",
   "publisher": "winter",
   "private": true,
@@ -17,32 +17,38 @@
       {
         "command": "winter.open",
         "title": "Winter: Open Terminal"
+      },
+      {
+        "command": "winter.modes",
+        "title": "Winter: Show What the Program Asked For"
       }
     ],
     "configuration": {
       "title": "Winter",
       "properties": {
-        "winter.serverPath": {
+        "winter.addonPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the winter-frame binary. Defaults to target/debug/winter-frame(.exe) in the first workspace folder."
+          "description": "Path to winter.node, the addon this extension calls. Defaults to winter.node beside the extension, which `npm run build:addon` writes."
         },
         "winter.fontSize": {
           "type": "number",
           "default": 14,
-          "description": "The point size the server measures its face at. Takes effect on the next opened terminal."
+          "description": "The point size the terminal measures its face at. Takes effect on the next opened terminal."
         },
         "winter.shell": {
           "type": "string",
           "default": "",
-          "description": "Program the server runs. Defaults to PowerShell on Windows (7 before 5.1) and $SHELL on macOS and Linux."
+          "description": "Program the terminal runs. Defaults to PowerShell on Windows (7 before 5.1) and $SHELL on macOS and Linux."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p .",
-    "watch": "tsc -w -p ."
+    "watch": "tsc -w -p .",
+    "build:addon": "node scripts/build-addon.mjs",
+    "build": "npm run build:addon && npm run compile"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

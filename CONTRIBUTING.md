@@ -171,7 +171,9 @@ tests pass.
   incidental: `utils` opts out at its root because it owns the lock-free
   primitives; `server`'s two pty backends carry a module-level
   `#[allow(unsafe_code)]` with a `SAFETY:` note per call (ADR 016);
-  `winter`'s `sound` sink does the same for `Beep` (ADR 033); the `winui`
+  `winter`'s `sound` sink does the same for `Beep` (ADR 033); `napi`'s crate
+  root declares one for the FFI glue `napi-derive` generates (ADR 084); the
+  `winui`
   shell's `surface`, `wheel`, `icon` and `profile_icon` modules do for Direct2D,
   the wheel hook, the window icon and a program's icon (ADRs 041, 047, 058,
   066); `cocoa` declares one for the AppKit and Metal boundary — its window,
@@ -224,8 +226,9 @@ Do not add call sites under an allowance.
 | `crates/gtk4` | The GTK 4 shell on Linux: the window, strip, find bar, settings editor and the OpenGL content path (ADRs 075, 076) |
 | `crates/cocoa` | The AppKit shell on macOS, through `objc2`, with the Metal content path (ADRs 072, 073) |
 | `crates/winui` | The WinUI 3 shell on Windows, through `windows-reactor` (ADR 040) |
-| `crates/demo` | The embedding demo's host: a frame server that owns a pty and one `Surface`, speaks JSON lines and writes RGBA frames (ADR 083) |
-| `editors/vscode` | The editor half of the demo: a webview that spawns the frame server and paints its frames (ADR 083) |
+| `crates/demo` | The shared host for the demo: one `Surface` over a pty, the font measurement, the pointer policy, the physical-key table, the banding and the default shell, plus `winter-frame` — the headless host that speaks JSON lines (ADRs 083, 084) |
+| `crates/napi` | `winter-node`, the terminal as a Node addon: one `Terminal` class over the surface, with the crate-root `unsafe` exemption for `napi-derive`'s FFI glue (ADR 084) |
+| `editors/vscode` | The editor half of the demo: a webview over the addon, which it loads and drives directly (ADR 084) |
 | `crates/app` | The binary: `main` picks the shell by target, and the Windows icon resource lives here (ADR 080) |
 | `packaging/linux` | The desktop entry and the installer the Linux archive carries; the entry's file name is the GTK application id (ADR 077) |
 

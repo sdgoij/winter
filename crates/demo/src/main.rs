@@ -24,7 +24,7 @@ const FONT_SIZE: f32 = 14.0;
 fn main() -> io::Result<()> {
     let program = match requested_shell(std::env::args().skip(1))? {
         Some(program) => program,
-        None => default_shell(),
+        None => winter_demo::default_shell(),
     };
 
     let setup = winter_demo::measure(FONT_SIZE, COLUMNS, ROWS)
@@ -53,77 +53,11 @@ fn requested_shell(mut args: impl Iterator<Item = String>) -> io::Result<Option<
     }
 }
 
-/// The shell this platform starts when the host names none.
-fn default_shell() -> PathBuf {
-    #[cfg(windows)]
-    {
-        // PowerShell 7 first: it is the current one, and a host that installed it
-        // expects it. Then Windows PowerShell, whose directory a locked-down
-        // `PATH` may omit. Then whatever `COMSPEC` names.
-        if let Some(program) = first_found(&["pwsh.exe", "powershell.exe"], on_path) {
-            return program;
-        }
-        if let Some(program) = windows_powershell() {
-            return program;
-        }
-        if let Some(program) = std::env::var_os("COMSPEC") {
-            return PathBuf::from(program);
-        }
-        PathBuf::from("cmd.exe")
-    }
-
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("SHELL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/bin/sh"))
-    }
-}
-
-/// The first of `names` that `find` resolves, in order.
-fn first_found(names: &[&str], find: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
-    names.iter().find_map(|name| find(name))
-}
-
-/// A program on `PATH`, if the name resolves to a file there.
-#[cfg(windows)]
-fn on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join(name))
-        .find(|candidate| candidate.is_file())
-}
-
-/// Windows PowerShell's own directory, which a host's `PATH` may not carry.
-#[cfg(windows)]
-fn windows_powershell() -> Option<PathBuf> {
-    let root = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))?;
-    let candidate = PathBuf::from(root)
-        .join("System32")
-        .join("WindowsPowerShell")
-        .join("v1.0")
-        .join("powershell.exe");
-    candidate.is_file().then_some(candidate)
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
-
-    #[test]
-    fn the_first_name_that_resolves_wins() {
-        let found = first_found(&["pwsh.exe", "powershell.exe"], |name| {
-            (name == "powershell.exe").then(|| PathBuf::from(name))
-        });
-        assert_eq!(found.as_deref(), Some(Path::new("powershell.exe")));
-    }
-
-    #[test]
-    fn no_candidate_resolving_is_no_shell() {
-        assert_eq!(first_found(&["pwsh.exe", "powershell.exe"], |_| None), None);
-    }
 
     #[test]
     fn a_shell_argument_names_the_program() {

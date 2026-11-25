@@ -1,18 +1,17 @@
-//! A host for [`winter::embed::Surface`] that speaks a line protocol.
+//! A host for [`winter::embed::Surface`], for a process or an addon.
 //!
-//! The editor demo. A process owns the shell and the pixels; an editor talks to
-//! it over stdio. Commands arrive as one JSON object per line, and the process
-//! answers on stdout with tagged messages: a frame, or a piece of text for the
-//! clipboard (ADR 083).
+//! The editor demo. A host owns the shell and the pixels; what it lacks is the
+//! terminal, so it asks `winter` for one. There are two hosts: a process that
+//! speaks a line protocol over stdio (ADR 083), and an addon the editor's own
+//! process calls directly (ADR 084). Both build the same surface here — the
+//! font measurement a shell would do (ADR 029), the pointer policy a shell would
+//! apply (ADR 019), and the frames an editor needs.
 //!
 //! This is not a port, and it is deliberately not a terminal: everything that
-//! decides what the screen says is `winter`. What lives here is the smallest
-//! host that proves a host can exist outside the shells — the font measurement a
-//! shell would do (ADR 029), the pointer policy a shell would apply (ADR 019),
-//! and the frame transport an editor needs.
+//! decides what the screen says is `winter`.
 
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use renderer::{CellSizeInDIP, FontDueRasterizer, FontInfo, Settings};
@@ -21,6 +20,61 @@ use utils::Size;
 use winter::embed::{Setup, Surface};
 use winter::input;
 use winter::term_events::TerminalEvent;
+
+/// The shell this platform starts when a host names none.
+///
+/// PowerShell 7 first on Windows: it is the current one, and a host that
+/// installed it expects it. Then Windows PowerShell, whose directory a
+/// locked-down `PATH` may omit. Then whatever `COMSPEC` names. Elsewhere it is
+/// `$SHELL`, falling back to `/bin/sh`.
+pub fn default_shell() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(program) = first_found(&["pwsh.exe", "powershell.exe"], on_path) {
+            return program;
+        }
+        if let Some(program) = windows_powershell() {
+            return program;
+        }
+        if let Some(program) = std::env::var_os("COMSPEC") {
+            return PathBuf::from(program);
+        }
+        PathBuf::from("cmd.exe")
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+    }
+}
+
+/// The first of `names` that `find` resolves, in order.
+fn first_found(names: &[&str], find: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    names.iter().find_map(|name| find(name))
+}
+
+/// A program on `PATH`, if the name resolves to a file there.
+#[cfg(windows)]
+fn on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Windows PowerShell's own directory, which a host's `PATH` may not carry.
+#[cfg(windows)]
+fn windows_powershell() -> Option<PathBuf> {
+    let root = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR"))?;
+    let candidate = PathBuf::from(root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    candidate.is_file().then_some(candidate)
+}
 
 /// Measures the host's monospace face at `size` for a `columns` by `rows` grid.
 ///
@@ -329,18 +383,19 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
                 pressed,
                 repeat,
             } => {
-                if let Some(event) = key_event(&KeyInput {
-                    name: &name,
-                    text: &text,
-                    code: &code,
-                    shift,
-                    ctrl,
-                    alt,
-                    pressed,
-                    repeat,
-                }) {
-                    surface.key(&event);
-                }
+                send_key(
+                    surface,
+                    &KeyInput {
+                        name: &name,
+                        text: &text,
+                        code: &code,
+                        shift,
+                        ctrl,
+                        alt,
+                        pressed,
+                        repeat,
+                    },
+                );
             }
             Command::Paste(text) => surface.paste(&text),
             Command::Resize { columns, rows } => surface.resize(columns, rows).map_err(io::Error::other)?,
@@ -362,57 +417,25 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
                 row,
                 button,
                 shift,
-            } => {
-                let cell = (column, row);
-                if forwards(surface, shift) {
-                    surface.mouse(&with_shift(MouseEvent::press(cell, mouse_button(button)), shift));
-                } else if button == 0 {
-                    surface.press(cell, Instant::now());
-                }
-            }
+            } => pointer_press(surface, (column, row), button, shift),
             Command::Move {
                 column,
                 row,
                 button,
                 shift,
-            } => {
-                let cell = (column, row);
-                if forwards(surface, shift) {
-                    let mut event = MouseEvent::moved(cell);
-                    event.buttons = mouse_buttons(button);
-                    event.modifiers.shift = shift;
-                    surface.mouse(&event);
-                } else if button == 0 {
-                    // A drag extends the selection the press started.
-                    surface.drag(cell);
-                }
-            }
+            } => pointer_move(surface, (column, row), button, shift),
             Command::Release {
                 column,
                 row,
                 button,
                 shift,
-            } => {
-                let cell = (column, row);
-                if forwards(surface, shift) {
-                    surface.mouse(&with_shift(MouseEvent::release(cell, mouse_button(button)), shift));
-                }
-            }
+            } => pointer_release(surface, (column, row), button, shift),
             Command::Wheel {
                 column,
                 row,
                 lines,
                 shift,
-            } => {
-                let cell = (column, row);
-                if forwards(surface, shift) {
-                    let delta = WHEEL_DELTA * lines.signum();
-                    let event = MouseEvent::wheel(cell, WheelAxis::Vertical, delta);
-                    surface.mouse(&with_shift(event, shift));
-                } else {
-                    surface.scroll_by(lines);
-                }
-            }
+            } => pointer_wheel(surface, (column, row), lines, shift),
             Command::Copy => {
                 let text = surface.selection_text().unwrap_or_default();
                 write_text(output, &text)?;
@@ -428,29 +451,84 @@ pub fn serve(input: impl BufRead, output: &mut impl Write, surface: &mut Surface
     Ok(())
 }
 
+/// Sends a key the toolkit reported, through the terminal's encoder.
+///
+/// Both hosts use this: the wire protocol's `key` command and the addon's
+/// `key` method differ in how the fields arrive, not in what they mean.
+pub fn send_key(surface: &mut Surface, input: &KeyInput<'_>) {
+    if let Some(event) = key_event(input) {
+        surface.key(&event);
+    }
+}
+
+/// A button press at a cell: to the program if it tracks the mouse, otherwise
+/// the start of a selection.
+pub fn pointer_press(surface: &mut Surface, cell: (i32, i32), button: i32, shift: bool) {
+    if forwards(surface, shift) {
+        surface.mouse(&with_shift(MouseEvent::press(cell, mouse_button(button)), shift));
+    } else if button == 0 {
+        surface.press(cell, Instant::now());
+    }
+}
+
+/// A pointer move: a drag report to a tracking program, otherwise extending the
+/// selection the press started.
+pub fn pointer_move(surface: &mut Surface, cell: (i32, i32), button: i32, shift: bool) {
+    if forwards(surface, shift) {
+        let mut event = MouseEvent::moved(cell);
+        event.buttons = mouse_buttons(button);
+        event.modifiers.shift = shift;
+        surface.mouse(&event);
+    } else if button == 0 {
+        surface.drag(cell);
+    }
+}
+
+/// A button release at a cell, which only a tracking program is told about.
+pub fn pointer_release(surface: &mut Surface, cell: (i32, i32), button: i32, shift: bool) {
+    if forwards(surface, shift) {
+        surface.mouse(&with_shift(MouseEvent::release(cell, mouse_button(button)), shift));
+    }
+}
+
+/// A wheel turn: the program's report if it tracks the mouse, otherwise the
+/// pane's own scrolling.
+pub fn pointer_wheel(surface: &mut Surface, cell: (i32, i32), lines: i32, shift: bool) {
+    if forwards(surface, shift) {
+        let delta = WHEEL_DELTA * lines.signum();
+        let event = MouseEvent::wheel(cell, WheelAxis::Vertical, delta);
+        surface.mouse(&with_shift(event, shift));
+    } else {
+        surface.scroll_by(lines);
+    }
+}
+
 /// Whether the pointer belongs to the program rather than to this host.
-fn forwards(surface: &Surface, shift: bool) -> bool {
+///
+/// The rule is the same one the shells apply (ADR 019): a program that tracks
+/// the mouse gets the pointer, and Shift keeps it for selection.
+pub fn forwards(surface: &Surface, shift: bool) -> bool {
     input::forwards_to_application(surface.is_tracking_mouse(), shift)
 }
 
-/// One key as the toolkit reported it.
-struct KeyInput<'a> {
+/// One key as the toolkit reported it, from either host.
+pub struct KeyInput<'a> {
     /// The toolkit's name for the key.
-    name: &'a str,
+    pub name: &'a str,
     /// The text the key produced.
-    text: &'a str,
+    pub text: &'a str,
     /// The key's physical name, in the standard PC-101 layout.
-    code: &'a str,
+    pub code: &'a str,
     /// Whether Shift is held.
-    shift: bool,
+    pub shift: bool,
     /// Whether Ctrl is held.
-    ctrl: bool,
+    pub ctrl: bool,
     /// Whether Alt is held.
-    alt: bool,
+    pub alt: bool,
     /// Whether this is the press rather than the release.
-    pressed: bool,
+    pub pressed: bool,
     /// Whether this is an auto-repeat.
-    repeat: bool,
+    pub repeat: bool,
 }
 
 /// The encoder event a toolkit key names, or `None` for a key with no encoded
@@ -461,7 +539,11 @@ struct KeyInput<'a> {
 /// reading characters gets the text, one that asked for every key (or for Win32
 /// records) gets the key and, with it, the release. Both travel in one event and
 /// [`Surface::key`] decides (ADR 056).
-fn key_event(input: &KeyInput<'_>) -> Option<input::Event> {
+///
+/// The physical `code` is what becomes the Win32 virtual key and scan code, so a
+/// host that has only a layout-dependent name should pass an empty one and fall
+/// back to the character path.
+pub fn key_event(input: &KeyInput<'_>) -> Option<input::Event> {
     let KeyInput {
         name,
         text,
@@ -702,13 +784,19 @@ fn named_key(name: &str) -> Option<Key> {
 ///
 /// The half-period is the shells' 500 ms, and the phase is constant while the
 /// cursor is hidden, so an idle pane stops asking for frames.
-fn cursor_on(surface: &Surface, start: Instant, now: Instant) -> bool {
+/// Whether the cursor is drawn at `now`, from the blink the host started.
+///
+/// The half-period is the shell's — 500 ms, like every terminal — and a hidden
+/// cursor never blinks, so a host passes a constant phase and a full-screen
+/// program stops asking for frames.
+pub fn cursor_on(surface: &Surface, start: Instant, now: Instant) -> bool {
     if !surface.cursor_visible() {
         return true;
     }
     (now.saturating_duration_since(start).as_millis() / 500).is_multiple_of(2)
 }
 
+/// The pointer button a toolkit's number names: 1 middle, 2 right, else left.
 fn mouse_button(button: i32) -> MouseButton {
     match button {
         1 => MouseButton::Middle,
@@ -717,6 +805,7 @@ fn mouse_button(button: i32) -> MouseButton {
     }
 }
 
+/// The buttons a drag is holding, from a toolkit's number.
 fn mouse_buttons(button: i32) -> MouseButtons {
     let mut buttons = MouseButtons::default();
     match button {
@@ -728,6 +817,7 @@ fn mouse_buttons(button: i32) -> MouseButtons {
     buttons
 }
 
+/// The same event with Shift set, which a program reads as a modifier.
 fn with_shift(mut event: MouseEvent, shift: bool) -> MouseEvent {
     event.modifiers.shift = shift;
     event
@@ -746,6 +836,26 @@ pub struct Frames {
     height: u32,
 }
 
+/// One frame's worth of pixels, and where on the pane they belong.
+///
+/// A host that reads the wire format (the `winter-frame` binary) serializes
+/// this; a host that calls the surface directly (the addon, ADR 084) takes it
+/// as the value it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Painted {
+    /// Whether this covers the whole pane, so the host replaces the canvas
+    /// rather than patching a band of it.
+    pub full: bool,
+    /// The first pixel row this payload covers.
+    pub top: u32,
+    /// The payload's width in pixels.
+    pub width: u32,
+    /// How many pixel rows the payload covers.
+    pub rows: u32,
+    /// Deflated RGBA, the pane's pixels with alpha forced opaque.
+    pub pixels: Vec<u8>,
+}
+
 impl Frames {
     /// A painter with no frame behind it.
     pub const fn new() -> Self {
@@ -756,25 +866,19 @@ impl Frames {
         }
     }
 
-    /// Paints the surface and writes what changed.
-    ///
-    /// Returns whether anything was written; a host that reads a zero-width
-    /// header keeps the picture it already has.
-    pub fn write(&mut self, surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<bool> {
+    /// Paints the surface and returns what changed, or `None` for nothing.
+    pub fn paint(&mut self, surface: &mut Surface, cursor: bool) -> io::Result<Option<Painted>> {
         if !surface.render(cursor).map_err(io::Error::other)? {
-            // Nothing changed: a header with a zero width says so.
-            output.write_all(&0u32.to_be_bytes())?;
-            output.write_all(&[0u8; 20])?;
-            return Ok(false);
+            return Ok(None);
         }
 
         let (width, height) = surface.frame_size();
         let (_, cell_height) = surface.cell_size();
-        let pixels = surface.pixels();
+        let frame = surface.pixels();
 
-        let comparable = self.width == width && self.height == height && self.previous.len() == pixels.len();
+        let comparable = self.width == width && self.height == height && self.previous.len() == frame.len();
         let band = comparable
-            .then(|| changed_rows(&self.previous, &pixels, width))
+            .then(|| changed_rows(&self.previous, &frame, width))
             .flatten()
             .map(|(first, last)| {
                 let cell = u32::from(cell_height.max(1));
@@ -794,30 +898,52 @@ impl Frames {
         let end = start + rows as usize * width as usize;
         // The pixels are deflated: a full-screen program repaints its whole pane
         // every frame, and raw RGBA is more than a webview can decode and paint
-        // over a message channel at speed. The header's length is the length on
-        // the wire; the host inflates before painting.
-        let payload = deflate(&rgba(&pixels[start..end]));
+        // over a message channel at speed. `rows` says how much pane the payload
+        // covers; the host inflates before painting.
+        let pixels = deflate(&rgba(&frame[start..end]));
 
-        if full {
+        self.previous.clear();
+        self.previous.extend_from_slice(&frame);
+        self.width = width;
+        self.height = height;
+
+        Ok(Some(Painted {
+            full,
+            top,
+            width,
+            rows,
+            pixels,
+        }))
+    }
+
+    /// Paints the surface and writes the frame the protocol describes.
+    ///
+    /// Returns whether anything was written; a host that reads a zero-width
+    /// header keeps the picture it already has.
+    pub fn write(&mut self, surface: &mut Surface, output: &mut impl Write, cursor: bool) -> io::Result<bool> {
+        let Some(painted) = self.paint(surface, cursor)? else {
+            // Nothing changed: a header with a zero width says so.
             output.write_all(&0u32.to_be_bytes())?;
-            output.write_all(&width.to_be_bytes())?;
-            output.write_all(&height.to_be_bytes())?;
-            output.write_all(&u32::from(surface.cell_size().0).to_be_bytes())?;
+            output.write_all(&[0u8; 20])?;
+            return Ok(false);
+        };
+
+        if painted.full {
+            let (cell_width, cell_height) = surface.cell_size();
+            output.write_all(&0u32.to_be_bytes())?;
+            output.write_all(&painted.width.to_be_bytes())?;
+            output.write_all(&painted.rows.to_be_bytes())?;
+            output.write_all(&u32::from(cell_width).to_be_bytes())?;
             output.write_all(&u32::from(cell_height).to_be_bytes())?;
         } else {
             output.write_all(&2u32.to_be_bytes())?;
-            output.write_all(&top.to_be_bytes())?;
-            output.write_all(&width.to_be_bytes())?;
-            output.write_all(&rows.to_be_bytes())?;
+            output.write_all(&painted.top.to_be_bytes())?;
+            output.write_all(&painted.width.to_be_bytes())?;
+            output.write_all(&painted.rows.to_be_bytes())?;
             output.write_all(&0u32.to_be_bytes())?;
         }
-        output.write_all(&(payload.len() as u32).to_be_bytes())?;
-        output.write_all(&payload)?;
-
-        self.previous.clear();
-        self.previous.extend_from_slice(&pixels);
-        self.width = width;
-        self.height = height;
+        output.write_all(&(painted.pixels.len() as u32).to_be_bytes())?;
+        output.write_all(&painted.pixels)?;
         Ok(true)
     }
 }
@@ -894,6 +1020,19 @@ mod tests {
     use winter::term_connection::Queue;
 
     use super::*;
+
+    #[test]
+    fn the_first_name_that_resolves_wins() {
+        let found = first_found(&["pwsh.exe", "powershell.exe"], |name| {
+            (name == "powershell.exe").then(|| PathBuf::from(name))
+        });
+        assert_eq!(found.as_deref(), Some(Path::new("powershell.exe")));
+    }
+
+    #[test]
+    fn no_candidate_resolving_is_no_shell() {
+        assert_eq!(first_found(&["pwsh.exe", "powershell.exe"], |_| None), None);
+    }
 
     /// A rasteriser that paints the whole cell, so any glyph is visible.
     struct SolidRasterizer;

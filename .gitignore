@@ -22,6 +22,8 @@ Thumbs.db
 # Release packaging, generated per tag.
 /dist
 
-# The VS Code demo's installed packages and compiled JavaScript.
+# The VS Code demo's installed packages and compiled JavaScript, and the addon
+# `npm run build:addon` copies in for it to load.
 /editors/vscode/node_modules
 /editors/vscode/out
+/editors/vscode/winter.node

@@ -2,10 +2,10 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "winter: build server",
+      "label": "winter: build addon",
       "type": "shell",
-      "command": "cargo build --release -p winter-demo",
-      "options": { "cwd": "${workspaceFolder}/../.." },
+      "command": "npm run build:addon",
+      "options": { "cwd": "${workspaceFolder}" },
       "problemMatcher": []
     },
     {
@@ -17,7 +17,7 @@
     },
     {
       "label": "winter: prepare",
-      "dependsOn": ["winter: compile extension", "winter: build server"],
+      "dependsOn": ["winter: compile extension", "winter: build addon"],
       "dependsOrder": "parallel",
       "problemMatcher": []
     }

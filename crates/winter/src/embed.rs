@@ -364,6 +364,14 @@ impl Surface {
     pub fn input_modes(&self) -> types::InputModes {
         self.control.input_modes()
     }
+
+    /// Ends the program and the connection behind it.
+    ///
+    /// The next [`take_events`](Self::take_events) reports the exit, so a host
+    /// learns of it the same way it learns of a program that quit by itself.
+    pub fn close(&mut self) {
+        self.control.close();
+    }
 }
 
 /// The pixel size of a `columns` by `rows` grid of `cell`-sized cells.

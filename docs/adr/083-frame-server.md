@@ -1,6 +1,6 @@
 # ADR 083 — A frame server lets an editor host the terminal
 
-- Status: Accepted
+- Status: Accepted; the editor now uses ADR 084's addon instead
 - Date: 2026-11-25
 - Related: `crates/demo`, `editors/vscode`,
   `crates/winter/src/{embed,term_connection}.rs`; ADRs 009, 019, 029, 040, 082
