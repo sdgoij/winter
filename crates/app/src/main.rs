@@ -1,3 +1,10 @@
+//! The Winter executable.
+//!
+//! On Windows this is a GUI-subsystem binary: a double-click opens the window,
+//! not a console window. Diagnostics go to the trace file (ADR 081).
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     {

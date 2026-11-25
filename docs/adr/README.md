@@ -116,3 +116,4 @@ Rules:
 | [078](078-linux-appimage.md) | The Linux release also builds an AppImage, from the same tree, when `appimagetool` is available; the tag job downloads one and runs it extracted | Accepted |
 | [079](079-native-shells-only.md) | The native shells are the only shells: egui and `eframe` are deleted, the `gtk` feature goes, and the settings draft and font directories become toolkit-free public modules | Accepted |
 | [080](080-shells-are-crates.md) | Each shell is its own crate — `winter` is the shell-independent core, `gtk4`/`cocoa`/`winui` the shells, `app` the binary — and a package cycle is why they cannot stay together | Accepted |
+| [081](081-windows-gui-subsystem.md) | The Windows binary is linked as a GUI-subsystem executable, so a double-click opens the window and not a console; the trace file carries diagnostics | Accepted |
