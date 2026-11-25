@@ -23,7 +23,7 @@ let timer: NodeJS.Timeout | undefined;
 let pending = Buffer.alloc(0);
 
 export function activate(context: vscode.ExtensionContext): void {
-  context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open(context)));
+  context.subscriptions.push(vscode.commands.registerCommand("winter.open", () => open()));
   context.subscriptions.push(new vscode.Disposable(() => stop()));
 }
 
@@ -31,7 +31,7 @@ export function deactivate(): void {
   stop();
 }
 
-function open(context: vscode.ExtensionContext): void {
+function open(): void {
   if (panel) {
     panel.reveal();
     return;
@@ -54,11 +54,11 @@ function open(context: vscode.ExtensionContext): void {
     }
   });
 
-  start(context);
+  start();
 }
 
-function start(context: vscode.ExtensionContext): void {
-  const binary = resolveBinary(context);
+function start(): void {
+  const binary = resolveBinary();
   if (!binary) {
     void vscode.window.showErrorMessage(
       "Winter: no frame server. Run `cargo build -p winter-demo` in the workspace, or set `winter.serverPath`.",
@@ -112,22 +112,33 @@ function stop(): void {
   pending = Buffer.alloc(0);
 }
 
-function resolveBinary(context: vscode.ExtensionContext): string | undefined {
+function resolveBinary(): string | undefined {
   const configured = vscode.workspace.getConfiguration("winter").get<string>("serverPath");
   if (configured) {
     return configured;
   }
 
   const name = process.platform === "win32" ? "winter-frame.exe" : "winter-frame";
+  // This extension lives in `editors/vscode`, below the Cargo root, so walk up
+  // from each workspace folder instead of only looking at the folder itself.
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    const candidate = path.join(folder.uri.fsPath, "target", "debug", name);
-    if (fs.existsSync(candidate)) {
-      return candidate;
+    let directory = folder.uri.fsPath;
+    for (let depth = 0; depth < 4; depth += 1) {
+      for (const profile of ["debug", "release"]) {
+        const candidate = path.join(directory, "target", profile, name);
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+      const parent = path.dirname(directory);
+      if (parent === directory) {
+        break;
+      }
+      directory = parent;
     }
   }
 
-  const bundled = context.asAbsolutePath(path.join("bin", name));
-  return fs.existsSync(bundled) ? bundled : undefined;
+  return undefined;
 }
 
 function html(): string {
