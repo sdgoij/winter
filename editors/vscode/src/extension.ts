@@ -23,7 +23,7 @@ const TEXT_HEADER = 8;
 /** A diagnostic line: `u32 3` and a length. */
 const DIAGNOSTIC = 3;
 /** How often a frame is asked for while a panel is showing. */
-const FRAME_INTERVAL = 33;
+const FRAME_INTERVAL = 16;
 
 type Message =
   | { kind: "input"; text: string }
@@ -69,13 +69,22 @@ let announced = false;
 // release build and tens of milliseconds in a debug one. Asking for the next
 // frame only after the pane has painted the last one keeps the queue at length
 // zero however slow either end is.
-let pumpHandle: NodeJS.Timeout | undefined;
+let next: NodeJS.Timeout | undefined;
+let watchdog: NodeJS.Timeout | undefined;
 let awaitingPaint = false;
 let requestedAt = 0;
+let repliedAt = 0;
 /** The pane's script is listening: before that, a frame would be dropped. */
 let ready = false;
 /** How long an unacknowledged frame is waited for before it is asked for again. */
-const ACK_TIMEOUT = 1000;
+const ACK_TIMEOUT = 500;
+/** What the pane is doing, logged every couple of seconds while it runs. */
+let paintedSinceReport = 0;
+let paintedAtReport = 0;
+let paintedBytes = 0;
+let replyMillis = 0;
+let paintMillis = 0;
+let measuredAtReport = 0;
 
 export function activate(context: vscode.ExtensionContext): void {
   log = vscode.window.createOutputChannel("Winter");
@@ -107,18 +116,16 @@ function open(context: vscode.ExtensionContext): void {
   // A hidden pane paints nothing, so the loop stops on its own; showing it again
   // has to ask for a frame, and the frame it was sent may never have arrived.
   panel.onDidChangeViewState(() => {
-    if (panel?.visible) {
-      awaitingPaint = false;
-      pump();
-    }
+    awaitingPaint = false;
+    pump();
   });
   panel.webview.onDidReceiveMessage((message: Message) => {
     switch (message.kind) {
       case "input":
-        send({ cmd: "write", text: message.text });
+        sendInput({ cmd: "write", text: message.text });
         break;
       case "key":
-        send({
+        sendInput({
           cmd: "key",
           name: message.name,
           code: message.code,
@@ -131,13 +138,13 @@ function open(context: vscode.ExtensionContext): void {
         });
         break;
       case "paste":
-        send({ cmd: "paste", text: message.text });
+        sendInput({ cmd: "paste", text: message.text });
         break;
       case "resize":
-        send({ cmd: "resize", cols: message.cols, rows: message.rows });
+        sendInput({ cmd: "resize", cols: message.cols, rows: message.rows });
         break;
       case "pointer":
-        send({
+        sendInput({
           cmd: message.action,
           col: message.col,
           row: message.row,
@@ -146,7 +153,7 @@ function open(context: vscode.ExtensionContext): void {
         });
         break;
       case "wheel":
-        send({ cmd: "wheel", col: message.col, row: message.row, lines: message.lines, shift: message.shift });
+        sendInput({ cmd: "wheel", col: message.col, row: message.row, lines: message.lines, shift: message.shift });
         break;
       case "copy":
         send({ cmd: "copy" });
@@ -194,23 +201,25 @@ function start(context: vscode.ExtensionContext): void {
 
 /** Asks for the next frame, unless one is still outstanding. */
 function pump(): void {
-  if (pumpHandle) {
-    clearTimeout(pumpHandle);
-    pumpHandle = undefined;
+  if (next) {
+    clearTimeout(next);
+    next = undefined;
   }
-  if (!server || !ready || awaitingPaint || !panel?.visible) {
+  if (!server || !ready || awaitingPaint) {
     return;
   }
   awaitingPaint = true;
   requestedAt = Date.now();
+  repliedAt = 0;
   send({ cmd: "render" });
   // A frame that is never painted — a reloaded webview, a dropped message —
-  // would otherwise stop the loop for good.
-  pumpHandle = setTimeout(askAgain, ACK_TIMEOUT);
+  // would otherwise stop the loop for good. This is why the watchdog has a
+  // handle of its own: asking for a frame must not cancel it.
+  watchdog = setTimeout(askAgain, ACK_TIMEOUT);
 }
 
 function askAgain(): void {
-  pumpHandle = undefined;
+  watchdog = undefined;
   if (!awaitingPaint) {
     return;
   }
@@ -224,16 +233,57 @@ function painted(): void {
     return;
   }
   awaitingPaint = false;
+  if (watchdog) {
+    clearTimeout(watchdog);
+    watchdog = undefined;
+  }
   if (!server || !ready) {
     return;
   }
+
+  const now = Date.now();
+  paintedSinceReport += 1;
+  replyMillis += repliedAt - requestedAt;
+  paintMillis += now - (repliedAt || requestedAt);
+  measuredAtReport += 1;
+  report(now);
+
   // Pace the loop without adding the paint time to every frame: a host that is
   // slower than the interval simply asks again straight away.
-  const spent = Date.now() - requestedAt;
-  if (pumpHandle) {
-    clearTimeout(pumpHandle);
+  const spent = now - requestedAt;
+  next = setTimeout(pump, Math.max(0, FRAME_INTERVAL - spent));
+}
+
+/** Logs what the pane manages, so a host that feels slow can say why. */
+function report(now: number): void {
+  if (paintedAtReport === 0) {
+    paintedAtReport = now;
+    return;
   }
-  pumpHandle = setTimeout(pump, Math.max(0, FRAME_INTERVAL - spent));
+  const elapsed = now - paintedAtReport;
+  if (elapsed < 2000) {
+    return;
+  }
+  const frames = Math.max(1, paintedSinceReport);
+  const measured = Math.max(1, measuredAtReport);
+  log?.appendLine(
+    `pane: ${Math.round((frames * 1000) / elapsed)} frames/s, ` +
+      `answer ${Math.round(replyMillis / measured)} ms, ` +
+      `paint ${Math.round(paintMillis / measured)} ms, ` +
+      `${Math.round(paintedBytes / frames)} bytes a frame`,
+  );
+  paintedSinceReport = 0;
+  replyMillis = 0;
+  paintMillis = 0;
+  paintedBytes = 0;
+  measuredAtReport = 0;
+  paintedAtReport = now;
+}
+
+/** Sends input, then asks for the frame that shows it. */
+function sendInput(command: unknown): void {
+  send(command);
+  pump();
 }
 
 function onData(chunk: Buffer): void {
@@ -288,6 +338,8 @@ function onData(chunk: Buffer): void {
       const height = pending.readUInt32BE(12);
       const pixels = pending.subarray(FRAME_HEADER, FRAME_HEADER + length).toString("base64");
       pending = pending.subarray(FRAME_HEADER + length);
+      repliedAt = Date.now();
+      paintedBytes += length;
       void panel?.webview.postMessage({ kind: "patch", top, width, height, pixels });
       continue;
     }
@@ -302,6 +354,7 @@ function onData(chunk: Buffer): void {
     // A zero width is the server saying nothing changed: there is nothing for
     // the pane to paint, so the next frame may be asked for at once.
     if (width === 0) {
+      repliedAt = Date.now();
       painted();
       continue;
     }
@@ -310,6 +363,8 @@ function onData(chunk: Buffer): void {
       announced = true;
       log?.appendLine(`first frame: ${width}x${height}, ${length} bytes`);
     }
+    repliedAt = Date.now();
+    paintedBytes += length;
     void panel?.webview.postMessage({ kind: "frame", width, height, cellWidth, cellHeight, pixels });
     continue;
   }
@@ -320,9 +375,13 @@ function send(command: unknown): void {
 }
 
 function stop(): void {
-  if (pumpHandle) {
-    clearTimeout(pumpHandle);
-    pumpHandle = undefined;
+  if (next) {
+    clearTimeout(next);
+    next = undefined;
+  }
+  if (watchdog) {
+    clearTimeout(watchdog);
+    watchdog = undefined;
   }
   awaitingPaint = false;
   ready = false;

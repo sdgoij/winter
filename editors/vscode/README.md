@@ -58,13 +58,16 @@ code --extensionDevelopmentPath="$PWD"
   asks for kind 3: it is what a program asked of the input path, which is how to
   answer "why did that key do that".
 - Keeps **one frame in flight**: it asks for a frame, waits for the canvas to
-  report it painted, and only then asks again, no sooner than 33 ms later. An
+  report it painted, and only then asks again, no sooner than 16 ms later. An
   idle pane therefore costs 24 bytes a poll, a full-screen program sets the
-  pace, and a tab that is not the active one stops asking altogether. Asking on
-  a timer without waiting is a queue that never drains — a 900 by 510 frame
-  costs about 5 ms in a release build and 75 ms in a debug one, so a
-  30-per-second timer outruns a debug server, and because the server answers
-  commands in order, keystrokes end up behind every frame already asked for.
+  pace, and input asks for the frame that shows it straight away. Asking on a
+  timer without waiting is a queue that never drains — a 900 by 510 frame costs
+  about 5 ms in a release build and 75 ms in a debug one, so a 30-per-second
+  timer outruns a debug server, and because the server answers commands in
+  order, keystrokes end up behind every frame already asked for.
+- Says how it is doing: every couple of seconds it logs `pane: N frames/s,
+  answer X ms, paint Y ms` to the **Winter** output channel, so "it feels slow"
+  has a number attached to it.
 
 ## Controls
 
