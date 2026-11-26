@@ -377,7 +377,7 @@ fn activate(app: &Application) {
         scrollbar_press: false,
         composition: Composition::default(),
         paste_requested: false,
-        find_focus: false,
+        find_seed: None,
         settings_requested: false,
         blink_on: true,
         blink_at: Instant::now(),
@@ -497,13 +497,14 @@ fn activate(app: &Application) {
 
     {
         let entry = search_entry.clone();
+        let owner = window.clone();
         let context = im.clone();
         let keys = EventControllerKey::new();
         let pressed = Rc::clone(&shell);
         keys.connect_key_pressed(move |controller, key, _code, state| {
             // The find field owns its keys: text, Enter, Escape and the match
             // shortcuts are the widget's, not the terminal's.
-            if entry.has_focus() {
+            if focus_is_within(&owner, &entry) {
                 return glib::Propagation::Proceed;
             }
             if let Some(event) = controller.current_event()
@@ -514,9 +515,10 @@ fn activate(app: &Application) {
             pressed.borrow_mut().key(key, state, true)
         });
         let entry = search_entry.clone();
+        let owner = window.clone();
         let released = Rc::clone(&shell);
         keys.connect_key_released(move |_controller, key, _code, state| {
-            if entry.has_focus() {
+            if focus_is_within(&owner, &entry) {
                 return;
             }
             released.borrow_mut().key(key, state, false);
@@ -748,21 +750,24 @@ fn activate(app: &Application) {
             let mut borrowed = shell.borrow_mut();
             borrowed.pump(&app);
             let paste = borrowed.take_paste_request();
-            let focus = borrowed.take_find_focus();
+            let seed = borrowed.take_find_seed();
             let settings = borrowed.take_settings_request();
-            let (open, query, current, total) = borrowed.find_state();
+            let (open, _query, current, total) = borrowed.find_state();
             drop(borrowed);
 
             bar.set_search_mode(open);
-            if open && (focus || (!entry.has_focus() && entry.text().as_str() != query)) {
-                if entry.text().as_str() != query {
-                    entry.set_text(&query);
+            // The field owns its text while the bar is open. Only a seed the
+            // shell chose -- opening the bar or switching tabs -- writes into
+            // it, so a frame can never revert what the user just typed.
+            if let Some(seed) = &seed {
+                if let Some(text) = frame_text(Some(seed), entry.text().as_str()) {
+                    entry.set_text(text);
                 }
-                if focus {
+                if seed.focus {
                     entry.grab_focus();
                     entry.select_region(0, -1);
                 }
-            } else if !open && entry.has_focus() {
+            } else if !open && focus_is_within(&parent, &entry) {
                 pane.grab_focus();
             }
 
@@ -852,6 +857,38 @@ impl Tab {
     }
 }
 
+/// A query the find field should show on the next frame.
+struct FindSeed {
+    /// The text to put in the field.
+    query: String,
+    /// Whether the field should also take the keyboard, as it does when the bar
+    /// opens rather than when a tab switch merely follows the new tab's query.
+    focus: bool,
+}
+
+/// The text a frame writes into the find field, if any.
+///
+/// Only a seed the shell chose is a source: `None` means the shell has nothing
+/// to say, so the user's typing stands. The old rule compared the field's text
+/// with the shell's query on every frame, and a change notification that had
+/// not arrived yet made that comparison revert the last keystroke.
+fn frame_text<'a>(seed: Option<&'a FindSeed>, entry: &str) -> Option<&'a str> {
+    seed.map(|seed| seed.query.as_str()).filter(|query| *query != entry)
+}
+
+/// Whether the keyboard focus is `widget` or one of its children.
+///
+/// `GtkSearchEntry` delegates focus to its inner text, so `has_focus` on the
+/// entry itself is false while the user types into it; asking the window for
+/// its focus widget and walking up from there is the answer that stays true.
+fn focus_is_within(window: &impl IsA<gtk::Window>, widget: &impl IsA<gtk::Widget>) -> bool {
+    let Some(focus) = GtkWindowExt::focus(window) else {
+        return false;
+    };
+    let widget = widget.upcast_ref::<gtk::Widget>();
+    focus.is_ancestor(widget) || focus == *widget
+}
+
 /// The pty's size, in the units it takes.
 fn pty_size(cells: (i32, i32)) -> PtySize {
     PtySize::new(
@@ -926,8 +963,10 @@ struct Shell {
     composition: Composition,
     /// Whether GDK should read the clipboard on the next tick.
     paste_requested: bool,
-    /// The find field needs the keyboard.
-    find_focus: bool,
+    /// The text the next frame should put in the find field, when the shell
+    /// rather than the user is choosing it. `None` leaves the widget alone, so
+    /// typing is never overwritten by the previous tick's query.
+    find_seed: Option<FindSeed>,
     /// The settings window the timer should open.
     settings_requested: bool,
     /// Whether the cursor is in the on half of its blink.
@@ -1221,10 +1260,12 @@ impl Shell {
             settings::Action::CloseTab => self.close_tab(self.tabs.index()),
             settings::Action::NextTab => {
                 self.tabs.step(1);
+                self.seed_find(false);
                 self.focus_active();
             }
             settings::Action::PrevTab => {
                 self.tabs.step(-1);
+                self.seed_find(false);
                 self.focus_active();
             }
             settings::Action::Copy => return self.copy_selection(),
@@ -1293,6 +1334,8 @@ impl Shell {
             self.window.close();
             return;
         }
+        // The new tab's bar has its own query, or none showing.
+        self.seed_find(false);
         self.after_select();
     }
 
@@ -1326,6 +1369,9 @@ impl Shell {
             StripHit::New if button == 1 => self.open_tab(None),
             StripHit::Tab(index) if button == 1 => {
                 self.tabs.select(index);
+                // The find field follows the tab it belongs to, without taking
+                // the keyboard the strip press just gave the pane.
+                self.seed_find(false);
                 // A press on a tab body arms a reorder; the close box, the
                 // buttons and the empty strip do not, so a close never drags.
                 self.tab_drag = Some(index);
@@ -1686,9 +1732,22 @@ impl Shell {
         std::mem::take(&mut self.paste_requested)
     }
 
-    /// Takes the find field's focus request, if one is waiting.
-    fn take_find_focus(&mut self) -> bool {
-        std::mem::take(&mut self.find_focus)
+    /// Takes the query the find field should show, if one is waiting.
+    fn take_find_seed(&mut self) -> Option<FindSeed> {
+        self.find_seed.take()
+    }
+
+    /// Queues the active tab's query for the find field when its bar is open.
+    fn seed_find(&mut self, focus: bool) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        if tab.find.open {
+            self.find_seed = Some(FindSeed {
+                query: tab.find.query.clone(),
+                focus,
+            });
+        }
     }
 
     /// The document the settings window edits.
@@ -1754,7 +1813,8 @@ impl Shell {
             // The field takes the keyboard, so a half-composed terminal preview
             // is no longer where the user is typing.
             self.composition = Composition::default();
-            self.find_focus = true;
+            let query = tab.find.query.clone();
+            self.find_seed = Some(FindSeed { query, focus: true });
         }
     }
 
@@ -3415,5 +3475,21 @@ mod tests {
             settings.and_then(|value| value.str().map(str::to_string)).as_deref(),
             Some("Settings…")
         );
+    }
+
+    #[test]
+    fn a_frame_with_no_seed_does_not_rewrite_the_find_field() {
+        // The shell's query lags the field: typing "he" leaves `find.query` at
+        // "h" until the delayed change notification lands. A frame with no
+        // seed must leave the two characters alone rather than restore "h".
+        assert_eq!(frame_text(None, "he"), None);
+
+        // A seed the shell chose wins, and an equal one writes nothing.
+        let seed = FindSeed {
+            query: "h".to_string(),
+            focus: false,
+        };
+        assert_eq!(frame_text(Some(&seed), "he"), Some("h"));
+        assert_eq!(frame_text(Some(&seed), "h"), None);
     }
 }
