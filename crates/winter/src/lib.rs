@@ -21,6 +21,8 @@
 //!   directories a face is composed from. [`palette`] is the command palette's
 //!   entries, filter and selection; each shell draws it. [`about`] is the name,
 //!   description, version line and repository every About dialog shows.
+//!   [`layout`] is the pane tree: splitting, closing, resizing and the focus
+//!   walk, over fractional rectangles each shell maps to its window.
 //! - [`embed`] composes the terminal and its frame for a host that is not a
 //!   shell — an editor panel, a wasm canvas, an agent's tool — and is the one
 //!   door such a host needs (ADR 082).
@@ -47,6 +49,7 @@ pub mod fonts;
 pub mod grid;
 pub mod icon;
 pub mod input;
+pub mod layout;
 #[cfg(feature = "notifications")]
 pub mod notifications;
 #[cfg(feature = "settings")]
