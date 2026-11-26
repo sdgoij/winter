@@ -630,6 +630,20 @@ define_class!(
             self.ivars().view.setNeedsDisplay(true);
         }
 
+        #[unsafe(method(windowWillEnterFullScreen:))]
+        fn window_will_enter_full_screen(&self, _notification: &NSNotification) {
+            // AppKit hides the traffic lights, so the strip's reserved gap would
+            // be empty space; drop it before the transition starts.
+            self.ivars().shell.borrow_mut().set_fullscreen(true);
+            self.ivars().view.setNeedsDisplay(true);
+        }
+
+        #[unsafe(method(windowWillExitFullScreen:))]
+        fn window_will_exit_full_screen(&self, _notification: &NSNotification) {
+            self.ivars().shell.borrow_mut().set_fullscreen(false);
+            self.ivars().view.setNeedsDisplay(true);
+        }
+
         #[unsafe(method(windowDidBecomeKey:))]
         fn window_did_become_key(&self, notification: &NSNotification) {
             let _ = notification;

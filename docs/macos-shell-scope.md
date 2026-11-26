@@ -177,7 +177,9 @@ below `winter` sees AppKit.
   ten files; `WINTER_APPICON` writes them from the window icon's own drawing, and
   the packaging script compiles them (ADR 074).
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
-  content under them; `chrome::LEFT_INSET` is the gap.
+  content under them; `chrome::LEFT_INSET` is the gap. A full-screen window
+  hides the buttons, so the shell drops the inset and the tabs start at the
+  window's edge.
 
 ## Verification
 

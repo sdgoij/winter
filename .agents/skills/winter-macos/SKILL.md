@@ -187,7 +187,10 @@ second.
 - **The strip starts after the traffic lights.** The window is
   `FullSizeContentView` with a transparent hidden title bar; `LEFT_INSET` is the
   gap. A press on the empty strip drags the window; a press on a tab selects it
-  and arms a drag, which reorders past a neighbour's midpoint.
+  and arms a drag, which reorders past a neighbour's midpoint. Full screen hides
+  the buttons, so `windowWillEnterFullScreen:` / `windowWillExitFullScreen:`
+  tell the shell and the inset becomes zero; otherwise the tabs float behind an
+  empty gap.
 - **IME needs `interpretKeyEvents:` in `keyDown:` and a commit-only-once rule.**
   `interpretKeyEvents:` calls `setMarkedText:`/`insertText:`/`doCommandBySelector:`
   synchronously. `insertText:` must commit only when marked text existed, because

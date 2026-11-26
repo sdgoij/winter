@@ -24,7 +24,8 @@ use super::icon;
 /// The traffic lights occupy this much of the strip's left edge.
 ///
 /// The content view extends under the title bar (`FullSizeContentView`), so the
-/// strip has to leave room for the window buttons AppKit draws above it.
+/// strip has to leave room for the window buttons AppKit draws above it. A
+/// full-screen window hides them, and [`strip`] is then given no inset.
 pub(crate) const LEFT_INSET: f64 = 78.0;
 /// The strip's height in points.
 pub(crate) const STRIP_HEIGHT: f64 = 34.0;
@@ -69,12 +70,15 @@ pub(crate) enum StripHit {
     Menu,
 }
 
-/// Lays the strip out for a pane `width` points wide.
-pub(crate) fn strip(width: f64, count: usize) -> Strip {
-    let usable = (width - LEFT_INSET - RIGHT_PAD).max(0.0);
+/// Lays the strip out for a pane `width` points wide, leaving `inset` points at
+/// the left for the window buttons. A full-screen window has no buttons and
+/// passes zero.
+pub(crate) fn strip(width: f64, count: usize, inset: f64) -> Strip {
+    let inset = inset.max(0.0);
+    let usable = (width - inset - RIGHT_PAD).max(0.0);
     let reserved = BUTTON + DROP_DOWN;
     let layout = tabs::strip_layout((usable - reserved).max(0.0) as i32, count);
-    let offset = LEFT_INSET as i32;
+    let offset = inset as i32;
 
     let shifted = |tab: TabBox| TabBox {
         left: tab.left + offset,
@@ -757,7 +761,7 @@ mod tests {
 
     #[test]
     fn the_strip_starts_after_the_traffic_lights() {
-        let layout = strip(900.0, 2);
+        let layout = strip(900.0, 2, LEFT_INSET);
         assert_eq!(layout.tabs[0].left, LEFT_INSET as i32);
         assert_eq!(layout.tabs[0].width(), tabs::TAB_MAX);
         assert_eq!(layout.new_tab.left, layout.tabs[1].right);
@@ -766,8 +770,22 @@ mod tests {
     }
 
     #[test]
+    fn a_full_screen_strip_starts_at_the_window_edge() {
+        let layout = strip(900.0, 2, 0.0);
+
+        assert_eq!(layout.tabs[0].left, 0);
+        assert_eq!(layout.tabs[1].left, tabs::TAB_MAX);
+        assert_eq!(layout.new_tab.left, 2 * tabs::TAB_MAX);
+        assert_eq!(
+            strip_hit(&layout, 10.0),
+            Some(StripHit::Tab(0)),
+            "there is no button gap to drag the window by"
+        );
+    }
+
+    #[test]
     fn a_press_names_its_tab_close_button_or_the_two_buttons() {
-        let layout = strip(900.0, 2);
+        let layout = strip(900.0, 2, LEFT_INSET);
         let first = layout.tabs[0];
 
         assert_eq!(strip_hit(&layout, f64::from(first.left + 4)), Some(StripHit::Tab(0)));
@@ -785,14 +803,14 @@ mod tests {
 
     #[test]
     fn tabs_shrink_before_the_buttons_leave_the_row() {
-        let layout = strip(500.0, 8);
+        let layout = strip(500.0, 8, LEFT_INSET);
         assert_eq!(layout.tabs[0].width(), tabs::TAB_MIN);
         assert!(layout.menu.right <= 500);
     }
 
     #[test]
     fn an_empty_strip_keeps_the_new_tab_and_menu_buttons() {
-        let layout = strip(900.0, 0);
+        let layout = strip(900.0, 0, LEFT_INSET);
         assert!(layout.tabs.is_empty());
         assert_eq!(layout.new_tab.left, LEFT_INSET as i32);
         assert_eq!(layout.menu.left, layout.new_tab.right);
@@ -808,7 +826,7 @@ mod tests {
 
     #[test]
     fn a_drag_names_the_slot_it_crossed_into() {
-        let layout = strip(900.0, 3);
+        let layout = strip(900.0, 3, LEFT_INSET);
         let first = layout.tabs[0];
         let second = layout.tabs[1];
         let third = layout.tabs[2];
@@ -849,7 +867,7 @@ mod tests {
 
     #[test]
     fn a_drag_that_crosses_nothing_keeps_its_slot() {
-        let layout = strip(900.0, 3);
+        let layout = strip(900.0, 3, LEFT_INSET);
         let middle = layout.tabs[1];
 
         assert_eq!(drag_target(&layout, 1, f64::from(middle.left + 2)), Some(1));

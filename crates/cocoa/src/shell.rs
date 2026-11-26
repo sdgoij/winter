@@ -96,6 +96,9 @@ pub(crate) struct Shell {
     size: (f64, f64),
     grid: (i32, i32),
     frame: Frame,
+    /// Whether the window is in full screen, where AppKit hides the traffic
+    /// lights and the strip starts at the window's edge.
+    fullscreen: bool,
     sides: input::ModifierSides,
     blink_on: bool,
     blink_at: Instant,
@@ -192,6 +195,7 @@ impl Shell {
             size: (0.0, 0.0),
             grid: INITIAL_GRID,
             frame,
+            fullscreen: false,
             sides: input::ModifierSides::default(),
             blink_on: true,
             blink_at: Instant::now(),
@@ -240,7 +244,14 @@ impl Shell {
     }
 
     pub(crate) fn strip(&self) -> Strip {
-        chrome::strip(self.size.0, self.tabs.len())
+        // A full-screen window has no traffic lights to clear.
+        let inset = if self.fullscreen { 0.0 } else { chrome::LEFT_INSET };
+        chrome::strip(self.size.0, self.tabs.len(), inset)
+    }
+
+    /// Tells the strip whether the window is full screen.
+    pub(crate) fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.fullscreen = fullscreen;
     }
 
     pub(crate) fn cell(&self) -> (u16, u16) {
