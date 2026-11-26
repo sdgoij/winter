@@ -18,10 +18,10 @@ belongs there.
 
 | File | Owns |
 |---|---|
-| `lib.rs` | `run()`, `Controller` (timer, menus, find and palette fields, window delegate), the application menu, the app icon, the screenshot path |
+| `lib.rs` | `run()`, `Controller` (timer, menus, find and palette fields, one content layer per pane, window delegate), the application menu, the app icon, the screenshot path |
 | `view.rs` | `TerminalView`: flipped content view, key/mouse/wheel events, tracking area, `copy:`/`paste:` for the responder chain, `drawRect:`; `PaletteView`: the command card's paint and click |
-| `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state, palette state; no AppKit except the `Frame` |
-| `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, the palette card's layout and paint, pane grid geometry |
+| `shell.rs` | Tabs and their `winter::layout` pane trees, each pane's terminal, viewport, find bar, renderer and frame, chords, pointer rules, settings reload, palette state; no AppKit except the frames |
+| `chrome.rs` | Strip layout and hit testing, strip painting, each pane's fill/scrollbar/bell and focus border, the dividers, the palette card's layout and paint, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
 | `metal.rs` | The Metal content backend: drawable presentation, its glyph atlas and the offscreen readback |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
@@ -115,11 +115,14 @@ Read `winter-shot.png`; a correct first frame shows the active tab in the pane's
 fill, the strip's `+` and `▾`, the prompt and a cursor. `WINTER_OPEN_SETTINGS=1`
 opens the settings window on the same run (written as
 `winter-shot-settings.png`), `WINTER_OPEN_FIND=1` opens the find bar over the
-pane and `WINTER_OPEN_PALETTE=1` opens the command palette. A crash before the
-capture is the construction failure. Do not leave the PNGs in the tree.
+pane and `WINTER_OPEN_PALETTE=1` opens the command palette. `WINTER_SPLIT=1`
+splits the first tab, so a frame shows two panes, their prompts, the divider and
+the focused pane's border. A crash before the capture is the construction
+failure. Do not leave the PNGs in the tree.
 
 On a machine with a display, check: click focuses the pane and typing reaches the
-shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; Escape closes the find field; ⌘⇧P opens the palette,
+shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; ⌘D and ⇧⌘D split, ⇧⌘W closes a pane, ⌘⌥arrows move
+focus and a divider drags; Escape closes the find field; ⌘⇧P opens the palette,
 typing narrows it, the arrows move and Enter runs; ⇧wheel scrolls history
 while a tracking program still gets the wheel; ⌘C copies a selection and plain
 ⌃C interrupts; a saved `settings.toml` reaches the scheme and font within a
@@ -184,6 +187,17 @@ second.
   macOS rewrites quotes, dashes and spellings as you type, which corrupts the
   TOML keys. Turn off quote, dash, replacement and spelling correction, or the
   file fails to parse after a save.
+- **A pane owns its renderer and its layer.** Pane ids are unique across tabs,
+  so the controller keeps one `CAMetalLayer` per pane, hides the inactive tabs'
+  layers and drops a closed pane's. `layer_attached` is false after a scale or
+  font change replaces a backend, which is when the sync re-attaches it. Two
+  panes sharing a layer would show one grid twice.
+- **A split spawns the new pane at the size its half will fill.** `split_pane`
+  computes the half's rectangle first; spawning at the tab's old grid and
+  resizing afterwards leaves zsh's `PROMPT_EOL_MARK` on the first row.
+- **The tick syncs the layers and the find controls.** A divider drag or a split
+  changes the fractions inside the shell, so the chrome moves immediately and
+  the content and find controls follow on the next 16 ms tick.
 - **The strip starts after the traffic lights.** The window is
   `FullSizeContentView` with a transparent hidden title bar; `LEFT_INSET` is the
   gap. A press on the empty strip drags the window; a press on a tab selects it

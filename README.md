@@ -17,7 +17,7 @@ title bar, chords, pointer selection, scrollback, the wheel, live settings
 reload, a settings dialog and a find bar (ADRs 040–051, 025). On macOS it is a
 native AppKit shell — the window, menu bar, find field and settings window are
 the platform's, while the tab strip, scrollbar and grid stay `renderer`'s
-pixels (ADR 072), with tab reordering, input-method composition, a program icon
+pixels (ADR 072), with tab reordering, splittable panes whose dividers drag, input-method composition, a program icon
 per tab, an accessibility value VoiceOver reads, and a Metal content path
 presented through a `CAMetalLayer` drawable, with the offscreen readback drawn
 only for a screenshot or when the layer has no drawable (ADR 073). On Linux

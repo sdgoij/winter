@@ -235,6 +235,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         shell.borrow_mut().toggle_palette();
         controller.sync_palette();
     }
+    if std::env::var_os("WINTER_SPLIT").is_some() {
+        shell.borrow_mut().split_pane(winter::layout::Axis::Horizontal);
+        controller.sync_panes();
+    }
     app.run();
 
     Ok(())
@@ -305,31 +309,30 @@ fn find_face() -> Option<renderer::FontFace> {
         })
 }
 
-/// The layers above the AppKit paint: the Metal content, and the find panel
-/// and bell the content would otherwise cover.
+/// The layers above the AppKit paint: one Metal content layer per pane, and the
+/// find panel and bell the content would otherwise cover.
 struct Layers {
-    content: Retained<CAMetalLayer>,
+    contents: RefCell<Vec<(winter::layout::PaneId, Retained<CAMetalLayer>)>>,
     find: Retained<CALayer>,
     bell: Retained<CALayer>,
 }
 
 impl Layers {
-    /// Adds the layers to the view and wires the content layer to the backend.
+    /// Makes the view layer-backed and adds the overlays.
     ///
-    /// `None` means the software backend paints: the view blits the frame and
-    /// `chrome` paints the overlays, exactly as before the GPU path.
+    /// `None` means the software backend paints: the view blits each pane's
+    /// frame and `chrome` paints the overlays, exactly as before the GPU path.
     fn install(view: &TerminalView, shell: &Shell) -> Option<Self> {
-        let metal = shell.metal()?;
+        if !shell.uses_metal() {
+            return None;
+        }
         view.setWantsLayer(true);
         let Some(root) = view.layer() else {
-            eprintln!("winter: the view has no layer; blitting the Metal frame");
+            eprintln!("winter: the view has no layer; blitting the Metal frames");
             return None;
         };
 
-        // The controls' layers are AppKit's; ours go under all of them and
-        // above the view's own drawing. Inserting at the bottom in reverse
-        // order lands them content, find, bell.
-        let content = CAMetalLayer::new();
+        // The controls' layers are AppKit's; the overlays go under all of them.
         let find = CALayer::new();
         find.setCornerRadius(6.0);
         find.setHidden(true);
@@ -337,41 +340,88 @@ impl Layers {
         bell.setHidden(true);
         root.insertSublayer_below(&bell, None);
         root.insertSublayer_below(&find, None);
-        root.insertSublayer_below(&content, None);
 
-        metal.set_layer(content.clone());
         view.set_layered(true);
-        Some(Self { content, find, bell })
+        Some(Self {
+            contents: RefCell::new(Vec::new()),
+            find,
+            bell,
+        })
     }
 
-    /// Fits the layers to the view and the shell's current frame.
-    fn layout(&self, view: &TerminalView, shell: &Shell) {
-        let bounds = view.bounds();
+    /// Creates, fits and hides one content layer per visible pane.
+    fn sync(&self, view: &TerminalView, shell: &Shell) {
+        let Some(root) = view.layer() else {
+            return;
+        };
+        let views = shell.pane_views();
+        let existing = shell.pane_ids();
         let scale = f64::from(shell.scale());
-        let rect = chrome::grid_rect(bounds, scale, shell.cell(), shell.grid());
-        let colors = shell.strip_colors();
-        let (red, green, blue) = colors.row.unwrap_or(colors.active);
-        let channel = |value: u8| f64::from(value) / 255.0;
-        let find_open = shell.find_open();
-        let alpha = shell.bell_alpha(Instant::now()).unwrap_or(0.0);
 
         // A layer animates its properties by default; a window resize would
         // slide the content behind the frame instead of moving with it.
         CATransaction::begin();
         CATransaction::setDisableActions(true);
 
-        self.content.setContentsScale(scale);
-        self.content.setFrame(rect);
-        self.content
-            .setDrawableSize(NSSize::new(rect.size.width * scale, rect.size.height * scale));
+        {
+            let mut contents = self.contents.borrow_mut();
+            contents.retain(|(id, layer)| {
+                let live = existing.contains(id);
+                if !live {
+                    layer.removeFromSuperlayer();
+                }
+                live
+            });
 
-        self.find.setFrame(chrome::find_backdrop_rect(bounds));
+            for pane in &views {
+                let layer = match contents.iter().find(|(id, _)| *id == pane.id) {
+                    Some((_, layer)) => layer.clone(),
+                    None => {
+                        // Below the find and bell overlays, above the view's own
+                        // drawing.
+                        let layer = CAMetalLayer::new();
+                        root.insertSublayer_below(&layer, Some(&self.find));
+                        contents.push((pane.id, layer.clone()));
+                        layer
+                    }
+                };
+                if let Some(metal) = &pane.metal
+                    && !metal.layer_attached()
+                {
+                    // A font-size change or a new backing scale replaces the
+                    // pane's backend, and the layer belongs to the window.
+                    metal.set_layer(layer.clone());
+                }
+                layer.setHidden(false);
+                layer.setContentsScale(scale);
+                layer.setFrame(pane.grid_rect);
+                layer.setDrawableSize(NSSize::new(
+                    pane.grid_rect.size.width * scale,
+                    pane.grid_rect.size.height * scale,
+                ));
+            }
+
+            for (id, layer) in contents.iter() {
+                if !views.iter().any(|pane| pane.id == *id) {
+                    layer.setHidden(true);
+                }
+            }
+        }
+
+        let focus = shell
+            .focused_pane_rect()
+            .unwrap_or_else(|| chrome::pane_rect(view.bounds()));
+        self.find.setFrame(chrome::find_backdrop_rect(focus));
+        let colors = shell.strip_colors();
+        let (red, green, blue) = colors.row.unwrap_or(colors.active);
+        let channel = |value: u8| f64::from(value) / 255.0;
         let find_color =
             NSColor::colorWithSRGBRed_green_blue_alpha(channel(red), channel(green), channel(blue), 1.0).CGColor();
         self.find.setBackgroundColor(Some(&find_color));
-        self.find.setHidden(!find_open);
+        self.find.setHidden(!shell.find_open());
 
-        self.bell.setFrame(chrome::pane_rect(bounds));
+        self.bell.setFrame(focus);
+        let alpha = shell.bell_alpha(Instant::now()).unwrap_or(0.0);
         let bell_color = NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, f64::from(alpha) * 0.12).CGColor();
         self.bell.setBackgroundColor(Some(&bell_color));
         self.bell.setHidden(alpha <= 0.0);
@@ -383,7 +433,9 @@ impl Layers {
     fn set_hidden(&self, hidden: bool) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.content.setHidden(hidden);
+        for (_, content) in self.contents.borrow().iter() {
+            content.setHidden(hidden);
+        }
         self.find.setHidden(hidden);
         self.bell.setHidden(hidden);
         CATransaction::commit();
@@ -504,6 +556,29 @@ define_class!(
         #[unsafe(method(closeTab:))]
         fn close_tab(&self, _sender: Option<&AnyObject>) {
             self.ivars().shell.borrow_mut().close_active_tab();
+        }
+
+        #[unsafe(method(closePane:))]
+        fn close_pane(&self, _sender: Option<&AnyObject>) {
+            self.ivars().shell.borrow_mut().close_pane();
+        }
+
+        #[unsafe(method(splitRight:))]
+        fn split_right(&self, _sender: Option<&AnyObject>) {
+            self.ivars()
+                .shell
+                .borrow_mut()
+                .split_pane(winter::layout::Axis::Horizontal);
+            self.sync_panes();
+        }
+
+        #[unsafe(method(splitDown:))]
+        fn split_down(&self, _sender: Option<&AnyObject>) {
+            self.ivars()
+                .shell
+                .borrow_mut()
+                .split_pane(winter::layout::Axis::Vertical);
+            self.sync_panes();
         }
 
         #[unsafe(method(nextTab:))]
@@ -760,21 +835,23 @@ impl Controller {
     }
 
     /// Re-attaches a content backend rebuilt for a new scale, and fits the
-    /// layers to the view and the shell's overlays.
+    /// layers to the view and the shell's panes.
     fn sync_layers(&self) {
         let Some(layers) = self.ivars().layers.as_ref() else {
+            self.layout_find();
             return;
         };
-        let shell = self.ivars().shell.borrow();
-        if let Some(metal) = shell.metal()
-            && !metal.layer_attached()
         {
-            // A font-size change or a new backing scale replaces the content
-            // backend, and the layer is a property of the window, not of the
-            // backend that happened to create it.
-            metal.set_layer(layers.content.clone());
+            let shell = self.ivars().shell.borrow();
+            layers.sync(&self.ivars().view, &shell);
         }
-        layers.layout(&self.ivars().view, &shell);
+        self.layout_find();
+    }
+
+    /// Fits the find controls and the layers after a pane split or close.
+    fn sync_panes(&self) {
+        self.sync_layers();
+        self.ivars().view.setNeedsDisplay(true);
     }
 
     /// Shows, moves or hides the find controls to match the shell.
@@ -860,12 +937,19 @@ impl Controller {
 
     fn layout_find(&self) {
         let bounds = self.ivars().view.bounds();
-        let width = bounds.size.width;
-        let y = STRIP_HEIGHT + 8.0;
-        let count_x = (width - 100.0).max(8.0);
-        let next_x = (width - 128.0).max(8.0);
-        let previous_x = (width - 156.0).max(8.0);
-        let search_x = (width - 334.0).max(8.0);
+        let pane = self
+            .ivars()
+            .shell
+            .borrow()
+            .focused_pane_rect()
+            .unwrap_or_else(|| chrome::pane_rect(bounds));
+        let right = pane.origin.x + pane.size.width;
+        let left = pane.origin.x;
+        let y = pane.origin.y + 8.0;
+        let count_x = (right - 100.0).max(left + 8.0);
+        let next_x = (right - 128.0).max(left + 8.0);
+        let previous_x = (right - 156.0).max(left + 8.0);
+        let search_x = (right - 334.0).max(left + 8.0);
 
         self.ivars()
             .search
@@ -1116,6 +1200,31 @@ fn install_menu(app: &NSApplication, controller: &Controller, mtm: MainThreadMar
             Some(sel!(closeTab:)),
             "w",
             NSEventModifierFlags::Command,
+            target,
+        ));
+        shell_menu.addItem(&item(
+            mtm,
+            "Close Pane",
+            Some(sel!(closePane:)),
+            "w",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
+            target,
+        ));
+        shell_menu.addItem(&NSMenuItem::separatorItem(mtm));
+        shell_menu.addItem(&item(
+            mtm,
+            "Split Right",
+            Some(sel!(splitRight:)),
+            "d",
+            NSEventModifierFlags::Command,
+            target,
+        ));
+        shell_menu.addItem(&item(
+            mtm,
+            "Split Down",
+            Some(sel!(splitDown:)),
+            "d",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
             target,
         ));
         shell_menu.addItem(&NSMenuItem::separatorItem(mtm));

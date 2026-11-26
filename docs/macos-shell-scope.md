@@ -1,10 +1,10 @@
 # A native macOS shell — scope and state
 
-Status: shipping first cut (ADR 072). The shell runs a real pty, paints the
+Status: shipping (ADR 072). The shell runs a real pty per pane, paints the
 terminal through `renderer` — on Metal by default (ADR 073) — and owns a native
 window, menu bar, find field, settings window, input-method client and an
-accessibility element. Panes are the named follow-up below, not a hidden gap.
-Related: ADRs 072 and 073 (the decisions), ADR 062 (macOS is the next native
+accessibility element. Tabs hold a split tree of panes (ADR 085).
+Related: ADRs 072, 073 and 085 (the decisions), ADR 062 (macOS is the next native
 shell), ADR 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split),
 ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 
@@ -12,22 +12,24 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 
 - A native `NSWindow`: full-size content view, transparent title bar, the
   system's traffic lights and resize edges, the tab strip in the title bar.
-- One pty per tab through the shared `Session`/`Control`, every tab pumped from
-  one timer on the main thread (the connection is not `Send`).
+- One pty per pane through the shared `Session`/`Control`, every tab and pane
+  pumped from one timer on the main thread (the connection is not `Send`).
 - The tab strip: equal-width tabs, a title, a close box with hover, a `+` button
   and a `▾` profile dropdown, painted from `crate::tabs`'s geometry and the
   pane's palette. A theme's four fills are honoured.
 - The grid, cursor, selection, find highlights and prompt ticks from the shared
   renderer: cell quads, glyphs from a coverage atlas, images, grid lines and the
-  cursor are drawn by Metal into a `CAMetalLayer` drawable, so the window shows
-  the GPU's frame without a copy (ADR 073). The offscreen readback runs only
-  when the layer has no drawable, or for the one frame `WINTER_SCREENSHOT`
-  forces before it captures the view; it is also the fallback. The software
-  backend paints when no device is available or `WINTER_SOFTWARE=1` is set.
+  cursor are drawn by Metal into a `CAMetalLayer` drawable per pane, so the
+  window shows the GPU's frames without a copy (ADRs 073, 085). The offscreen
+  readback runs only when a layer has no drawable, or for the one frame
+  `WINTER_SCREENSHOT` forces before it captures the view; it is also the
+  fallback. The software backend paints each pane's frame when no device is
+  available or `WINTER_SOFTWARE=1` is set.
 - A real menu bar: About, Settings… (⌘,), Quit (⌘Q), New Tab (⌘T), Close Tab
-  (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), Command Palette… (⌘⇧P),
-  and the standard Edit menu whose `copy:`/`paste:` go to the terminal or the
-  focused text field.
+  (⌘W), Close Pane (⇧⌘W), Split Right (⌘D), Split Down (⇧⌘D),
+  Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), Command Palette… (⌘⇧P), and the
+  standard Edit menu whose `copy:`/`paste:` go to the terminal or the focused
+  text field.
 - An About alert with the version this build was compiled as, the two-line
   description and the repository as a link that opens the browser. Its text is
   `winter::about`'s, the same copy the GTK window and the WinUI dialog show.
@@ -43,6 +45,15 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 - Pointer selection with click/drag, double-click word, triple-click line, the
   scrollbar with its prompt ticks, the wheel into history (or to a tracking
   program unless Shift is held), copy/paste, right-click paste.
+- Splittable panes (ADR 085): a tab is `winter::layout`'s tree with one terminal
+  per leaf, and every pane has its own grid, scrollbar, find bar and renderer.
+  The `splitHorizontal`/`splitVertical` actions split the focused pane, the
+  focus and resize actions move between and grow them, ⌘⌥arrows and ⌘⌃arrows do
+  the same from the menu, a press on a divider drags it, and the server exit of a
+  pane closes that pane (or its tab when it was the last). The focused pane
+  drives the tab's title and icon and wears a border; the wheel, selection,
+  scrollbar, find bar and input method address the pane under the pointer or the
+  focused pane.
 - Drag-reorder of tabs: a press on a tab body arms a drag, a move past a
   neighbour's midpoint swaps the two, and the close box and the buttons never
   start a drag.
@@ -53,7 +64,8 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 - Program icons on tabs: Launch Services' icon for the profile's program, with
   the shell's drawn mark when the program is a script or does not resolve.
 - An accessibility element: VoiceOver reads the active tab's title and the
-  visible screen's text, with the pane's frame and an empty child list.
+  focused pane's visible screen text, with the pane's frame and an empty child
+  list.
 - DECPS notes through the host's sound thread: the sequence is rendered to a
   temporary WAV and played by `afplay`; the bell stays the system's `NSBeep`.
 - DECANM, schemes, OSC titles, cursor shapes, the visual bell and `NSBeep`, and
@@ -71,9 +83,9 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
   `WINTER_OPEN_SETTINGS=1` opens the settings window at startup,
-  `WINTER_OPEN_FIND=1` opens the find bar and `WINTER_OPEN_PALETTE=1` opens the
-  command palette, for a live check on a machine whose display cannot be
-  photographed.
+  `WINTER_OPEN_FIND=1` opens the find bar, `WINTER_OPEN_PALETTE=1` opens the
+  command palette and `WINTER_SPLIT=1` splits the first tab, for a live check on
+  a machine whose display cannot be photographed.
 
 ## What does not ship yet
 
@@ -81,7 +93,6 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
   as one value; character- and line-level navigation through the
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
-- Panes.
 - A signed, notarized release: the bundle is ad-hoc signed, so a downloaded copy
   still needs a Developer ID and notarization to pass Gatekeeper. ADR 074 records
   the boundary.
@@ -90,10 +101,10 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 
 | File | Owns |
 |---|---|
-| `mod.rs` | `run()`, the `Controller` object (timer, menus, find field, window delegate), and the application menu |
+| `lib.rs` | `run()`, the `Controller` object (timer, menus, find field, the one content layer per pane, window delegate), and the application menu |
 | `view.rs` | `TerminalView`, the flipped content view: key, mouse, wheel, tracking area, `drawRect:` and the `NSTextInputClient` methods, and `PaletteView`, the card's paint and click |
-| `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the palette state, the IME composition. No AppKit except the `Frame` it owns |
-| `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the palette card's layout and paint, the pane's grid geometry |
+| `shell.rs` | Tabs and their pane trees, the renderers, chords, pointer rules, the settings load/reload, the find state, the palette state, the IME composition. No AppKit except the `Frame` each pane owns |
+| `chrome.rs` | Strip layout and hit-testing, the strip paint, each pane's fill/scrollbar/bell and its focused border, the dividers, the palette card's layout and paint, the pane grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
 | `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures, drawable presentation and the offscreen readback (ADR 073) |
 | `icon.rs` | A tab's program icon from Launch Services, the drawn application mark (ADR 058) and the bundle's iconset (ADR 074), all cached |
@@ -176,6 +187,18 @@ below `winter` sees AppKit.
 - **The iconset needs every size.** `iconutil` rejects a set missing one of the
   ten files; `WINTER_APPICON` writes them from the window icon's own drawing, and
   the packaging script compiles them (ADR 074).
+- **A pane owns its renderer and content layer.** Pane identities are global
+  so a layer outlives a tab switch; the controller creates one `CAMetalLayer`
+  per visible pane, hides the inactive tabs' layers and drops a closed pane's.
+  A rebuilt backend re-attaches to the layer (`layer_attached` is the flag); a
+  layer shared by two panes would show the wrong grid.
+- **A split spawns the new pane at the width it will keep.** Starting it at the
+  tab's old grid and resizing afterwards leaves zsh's end-of-line mark on the
+  first row. `split_pane` computes the half's rectangle before it spawns.
+- **The tick syncs the panes' layers and the find controls.** A divider drag or
+  a split changes the fractions inside the shell; the layers and the find
+  controls follow on the next 16 ms tick, so the drag moves the chrome at once
+  and the content one frame later.
 - **The strip starts after the traffic lights.** `FullSizeContentView` puts the
   content under them; `chrome::LEFT_INSET` is the gap. A full-screen window
   hides the buttons, so the shell drops the inset and the tabs start at the
@@ -204,11 +227,13 @@ hdiutil verify dist/winter-<version>-<target>.dmg
 A first frame shows the active tab in the pane's colour, the strip, the prompt
 and the cursor. `WINTER_OPEN_SETTINGS=1` exercises the settings window's
 construction on the same run, `WINTER_OPEN_PALETTE=1` puts the card over the
-pane with its rows and chords, and a crash in either happens before the
-capture.
+pane with its rows and chords, and `WINTER_SPLIT=1` splits the first tab into
+side-by-side panes with their own prompts, a divider and the focused pane's
+border. A crash in any of them happens before the capture.
 
 A machine with a display should also check: a click focuses the pane, typing
-reaches `zsh`, ⌘T opens a tab, ⌘W closes it, ⌘F opens the find field and Escape
-closes it, Shift+wheel scrolls history while a tracking program still receives
-the wheel, ⌘C copies a selection and a plain ⌃C interrupts, and a saved
-`settings.toml` reaches the scheme and the font.
+reaches `zsh`, ⌘T opens a tab, ⌘W closes it, ⌘D splits it right, ⇧⌘D splits it
+down, ⇧⌘W closes the focused pane, ⌘⌥arrows move focus and a divider drags,
+⌘F opens the find field and Escape closes it, Shift+wheel scrolls history while
+a tracking program still receives the wheel, ⌘C copies a selection and a plain
+⌃C interrupts, and a saved `settings.toml` reaches the scheme and the font.

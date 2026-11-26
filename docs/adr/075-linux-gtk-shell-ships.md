@@ -55,10 +55,11 @@ These are deliberate and visible, not placeholders:
   the executable gives WinUI one (ADR 066); the GTK strip draws titles only.
 - **Linux is silent.** ADR 033 stands: the bell flashes the pane and DECPS tones
   have no Linux sink.
-- **Panes** are absent from every shipped shell; that is a Phase 9 row, not a
-  Linux row. The command palette was a gap here when this shell shipped and is
-  now this shell's: `crates/winter/src/palette.rs` holds the rows, filter and
-  selection, and the GTK card draws them. macOS draws the same rows in
+- **Panes** are the macOS shell's since ADR 085 and absent here; the
+  GTK window still holds one pane per tab, which is a shared Phase 9 row rather
+  than a Linux one. The command palette was a gap here when this shell shipped
+  and is now this shell's: `crates/winter/src/palette.rs` holds the rows, filter
+  and selection, and the GTK card draws them. macOS draws the same rows in
   `crates/cocoa`; WinUI still declines the action.
 
 ## Rationale

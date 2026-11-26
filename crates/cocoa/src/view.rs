@@ -112,36 +112,23 @@ define_class!(
                 return;
             };
             let bounds = self.bounds();
-            let titles = shell.titles();
-            let programs = shell.programs();
-            let (background, _) = shell.active_colors();
-            let (scroll, document, visible) = shell.scroll_facts();
             let layered = self.ivars().layered.get();
             let capturing = self.ivars().capturing.get();
+            let panes = shell.pane_paints(std::time::Instant::now(), layered, capturing);
+            let splits = shell.splits();
             let state = ChromeState {
                 strip: shell.strip(),
                 active: shell.active_index(),
-                titles: &titles,
-                programs: &programs,
+                titles: shell.titles(),
+                programs: shell.programs(),
                 hovered_tab: shell.hovered_tab(),
                 hovered_close: shell.hovered_close(),
                 hovered_new: shell.hovered_new(),
                 hovered_menu: shell.hovered_menu(),
                 colors: shell.strip_colors(),
-                pane: chrome::rgb(background),
-                frame: if layered && shell.layer_presented() && !capturing {
-                    None
-                } else {
-                    Some(shell.frame())
-                },
+                panes: &panes,
+                splits: &splits,
                 overlays: !layered || capturing,
-                scale: f64::from(shell.scale()),
-                grid: shell.grid(),
-                cell: shell.cell(),
-                scroll: (scroll, document, visible),
-                marks: shell.marks(),
-                bell_alpha: shell.bell_alpha(std::time::Instant::now()),
-                find_open: shell.find_open(),
             };
             chrome::paint(bounds, &state, mtm);
         }

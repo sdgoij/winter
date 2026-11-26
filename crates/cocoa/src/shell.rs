@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use objc2_foundation::{NSPoint, NSRect, NSSize};
 use renderer::renderer::Renderer;
 use renderer::{
     AtlasEngine, CellSizeInDIP, Composition, FontDueRasterizer, FontFace, FontInfo, IBackend, RenderSettings,
@@ -22,6 +23,7 @@ use utils::Size;
 
 use winter::find::FindBar;
 use winter::input;
+use winter::layout::{self, Axis, Direction, Fraction, Layout, PaneId, SplitPath};
 use winter::palette::{self, Palette};
 use winter::scrollbar::{self, Press, Scrollbar};
 use winter::session::Session;
@@ -44,14 +46,92 @@ pub(crate) const TICK: Duration = Duration::from_millis(16);
 /// The cursor's blink half-period, matching the GTK and WinUI shells.
 const BLINK: Duration = Duration::from_millis(500);
 
-/// One tab: its own terminal, viewport and find bar.
-pub(crate) struct Tab {
+/// One pane: its own terminal, viewport, find bar and renderer.
+pub(crate) struct Pane {
+    pub(crate) id: PaneId,
     pub(crate) control: Control,
     pub(crate) view: ViewState,
-    pub(crate) title: String,
     pub(crate) find: FindBar,
-    /// The program the tab runs, so the strip can find the tab's icon.
+    /// The title the pane's program asked for.
+    pub(crate) title: Option<String>,
+    /// The program the pane runs, so the strip can find the tab's icon.
     pub(crate) program: String,
+    pub(crate) renderer: Renderer<TerminalData>,
+    pub(crate) content: Content,
+    pub(crate) frame: Frame,
+    /// The pane's grid in cells.
+    pub(crate) grid: (i32, i32),
+}
+
+impl Pane {
+    /// Starts a terminal and its renderer for `terminal`.
+    fn new(
+        id: PaneId,
+        terminal: &TerminalSettings,
+        grid: (i32, i32),
+        fonts: Fonts,
+        mtm: objc2::MainThreadMarker,
+    ) -> Result<Self, String> {
+        let session = spawn_shell(&terminal.command, pty_size(grid))?;
+        let mut control = Control::new(Box::new(session), grid);
+        control.apply_scheme(terminal.scheme.as_ref());
+        let (renderer, content) = renderer_for(fonts, grid);
+        let frame = Frame::new(1, 1, mtm).ok_or("cannot allocate the terminal's pixel buffer")?;
+
+        Ok(Self {
+            id,
+            control,
+            view: ViewState::new(),
+            find: FindBar::default(),
+            title: None,
+            program: terminal.command.program().to_string_lossy().into_owned(),
+            renderer,
+            content,
+            frame,
+            grid,
+        })
+    }
+}
+
+/// One tab: a pane tree, its focused pane and a title.
+pub(crate) struct Tab {
+    pub(crate) panes: Vec<Pane>,
+    pub(crate) layout: Layout,
+    pub(crate) focused: PaneId,
+    /// The terminal settings a split starts from.
+    pub(crate) terminal: TerminalSettings,
+    /// The title to show until the focused pane's shell sets one.
+    pub(crate) title: String,
+}
+
+impl Tab {
+    fn pane(&self, id: PaneId) -> Option<&Pane> {
+        self.panes.iter().find(|pane| pane.id == id)
+    }
+
+    fn pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
+        self.panes.iter_mut().find(|pane| pane.id == id)
+    }
+
+    pub(crate) fn focused_pane(&self) -> Option<&Pane> {
+        self.pane(self.focused)
+    }
+
+    pub(crate) fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
+        self.pane_mut(self.focused)
+    }
+
+    /// The title the strip shows: the focused pane's OSC title, else the tab's.
+    pub(crate) fn label(&self) -> &str {
+        self.focused_pane()
+            .and_then(|pane| pane.title.as_deref())
+            .unwrap_or(&self.title)
+    }
+
+    /// The program the focused pane runs, for the tab's icon.
+    pub(crate) fn program(&self) -> &str {
+        self.focused_pane().map_or("", |pane| pane.program.as_str())
+    }
 }
 
 /// What one tick asks the controller to do.
@@ -84,8 +164,9 @@ pub(crate) struct Shell {
     warnings: Vec<String>,
     migrated_from: Option<PathBuf>,
     settings_error: Option<String>,
-    renderer: Renderer<TerminalData>,
-    shared: Content,
+    /// The next pane identity, unique across tabs so a pane's layer can be
+    /// tracked for the life of the window.
+    next_pane: u64,
     face: FontFace,
     font_size: f32,
     /// The cell in physical pixels.
@@ -94,8 +175,8 @@ pub(crate) struct Shell {
     scale: f32,
     /// The view's bounds in points.
     size: (f64, f64),
+    /// The whole content area's grid, the size a new pane opens at.
     grid: (i32, i32),
-    frame: Frame,
     /// Whether the window is in full screen, where AppKit hides the traffic
     /// lights and the strip starts at the window's edge.
     fullscreen: bool,
@@ -104,16 +185,21 @@ pub(crate) struct Shell {
     blink_at: Instant,
     focused: bool,
     scrollbar: Scrollbar,
-    scrollbar_press: bool,
     hover: Option<f64>,
     hovered_tab: Option<usize>,
     hovered_close: Option<usize>,
     /// The cell a forwarded move last reported, so a still pointer is silent.
     last_mouse_cell: Option<(i32, i32)>,
+    /// The pane the current press started in.
+    press_pane: Option<PaneId>,
     /// The cell a press started on, so the first move starts a selection.
     press: Option<((i32, i32), bool)>,
     /// The tab a press grabbed, until the drag ends.
     tab_drag: Option<usize>,
+    /// The split whose divider the pointer is dragging.
+    divider: Option<(SplitPath, Axis, NSRect)>,
+    /// The pane whose scrollbar is being dragged.
+    scrollbar_pane: Option<PaneId>,
     /// The cell the pointer is over, so a wheel can be aimed at a program.
     pointer_cell: Option<(i32, i32)>,
     /// Fractional trackpad scrolling waiting to make a row.
@@ -136,6 +222,17 @@ pub(crate) struct Shell {
     sound: Sound,
 }
 
+/// One pane as the controller lays its content layer.
+pub(crate) struct PaneView {
+    pub(crate) id: PaneId,
+    /// The pane's area in view points.
+    pub(crate) rect: NSRect,
+    /// The grid's rectangle in view points.
+    pub(crate) grid_rect: NSRect,
+    /// The Metal backend, when the pane presents through a layer.
+    pub(crate) metal: Option<metal::Metal>,
+}
+
 impl Shell {
     /// Starts the shell from the settings file and a host face.
     ///
@@ -154,27 +251,17 @@ impl Shell {
         let profiles = loaded.settings.profiles.clone();
         let warnings: Vec<String> = loaded.warnings.iter().map(ToString::to_string).collect();
 
-        let size = PtySize::new(INITIAL_GRID.0 as u16, INITIAL_GRID.1 as u16);
-        let session = spawn_shell(&template.command, size)?;
-        let mut control = Control::new(Box::new(session), INITIAL_GRID);
-        control.apply_scheme(template.scheme.as_ref());
-        let (_background, _foreground) = control.default_colors();
-
         let fonts = font_setup(&face, font_size, scale, INITIAL_GRID)?;
         let cell = fonts.settings.font.cell_size;
-        let (renderer, shared) = renderer_for(fonts, INITIAL_GRID);
-
-        let Some(frame) = Frame::new(1, 1, mtm) else {
-            return Err("cannot allocate the terminal's pixel buffer".to_string());
-        };
+        let pane = Pane::new(PaneId(0), &template, INITIAL_GRID, fonts, mtm)?;
 
         Ok(Self {
             tabs: Tabs::new(Tab {
-                control,
-                view: ViewState::new(),
+                panes: vec![pane],
+                layout: Layout::leaf(PaneId(0)),
+                focused: PaneId(0),
+                terminal: template.clone(),
                 title: template.title.clone(),
-                find: FindBar::default(),
-                program: template.command.program().to_string_lossy().into_owned(),
             }),
             template,
             bindings,
@@ -186,28 +273,28 @@ impl Shell {
             warnings,
             migrated_from: loaded.migrated_from,
             settings_error: loaded.error.map(|error| error.to_string()),
-            renderer,
-            shared,
+            next_pane: 1,
             face,
             font_size,
             cell,
             scale,
             size: (0.0, 0.0),
             grid: INITIAL_GRID,
-            frame,
             fullscreen: false,
             sides: input::ModifierSides::default(),
             blink_on: true,
             blink_at: Instant::now(),
             focused: true,
             scrollbar: Scrollbar::default(),
-            scrollbar_press: false,
             hover: None,
             hovered_tab: None,
             hovered_close: None,
             last_mouse_cell: None,
+            press_pane: None,
             press: None,
             tab_drag: None,
+            divider: None,
+            scrollbar_pane: None,
             pointer_cell: None,
             wheel_pixels: 0.0,
             menu_requested: false,
@@ -223,19 +310,19 @@ impl Shell {
 
     /// The active tab's title, or the application's name.
     pub(crate) fn title(&self) -> &str {
-        self.tabs.active().map_or("Winter", |tab| tab.title.as_str())
+        self.tabs.active().map_or("Winter", |tab| tab.label())
     }
 
     pub(crate) fn titles(&self) -> Vec<String> {
         (0..self.tabs.len())
-            .filter_map(|index| self.tabs.get(index).map(|tab| tab.title.clone()))
+            .filter_map(|index| self.tabs.get(index).map(|tab| tab.label().to_string()))
             .collect()
     }
 
     /// The program each tab runs, in strip order.
     pub(crate) fn programs(&self) -> Vec<String> {
         (0..self.tabs.len())
-            .filter_map(|index| self.tabs.get(index).map(|tab| tab.program.clone()))
+            .filter_map(|index| self.tabs.get(index).map(|tab| tab.program().to_string()))
             .collect()
     }
 
@@ -262,26 +349,107 @@ impl Shell {
         self.scale
     }
 
-    pub(crate) fn grid(&self) -> (i32, i32) {
-        self.grid
+    /// One pane as the controller lays its content layer.
+    pub(crate) fn pane_views(&self) -> Vec<PaneView> {
+        let Some(tab) = self.tabs.active() else {
+            return Vec::new();
+        };
+        let area = self.pane_area();
+        tab.layout
+            .rects()
+            .into_iter()
+            .filter_map(|(id, fraction)| {
+                let pane = tab.pane(id)?;
+                let rect = chrome::fraction_rect(area, fraction);
+                let grid_rect = chrome::pane_grid_rect(rect, f64::from(finite_scale(self.scale)), self.cell, pane.grid);
+                Some(PaneView {
+                    id,
+                    rect,
+                    grid_rect,
+                    metal: match &pane.content {
+                        Content::Metal(backend) => Some(backend.clone()),
+                        Content::Software(_) => None,
+                    },
+                })
+            })
+            .collect()
     }
 
-    pub(crate) fn frame(&self) -> &Frame {
-        &self.frame
+    /// The active tab's focused pane rectangle, in view points.
+    pub(crate) fn focused_pane_rect(&self) -> Option<NSRect> {
+        self.pane_views()
+            .into_iter()
+            .find(|view| self.tabs.active().is_some_and(|tab| tab.focused == view.id))
+            .map(|view| view.rect)
     }
 
-    /// The Metal content backend, when the GPU path is the one painting.
-    pub(crate) fn metal(&self) -> Option<metal::Metal> {
-        match &self.shared {
-            Content::Metal(backend) => Some(backend.clone()),
-            Content::Software(_) => None,
-        }
+    /// Every pane in every tab, so the controller can drop a closed pane's layer.
+    pub(crate) fn pane_ids(&self) -> Vec<PaneId> {
+        (0..self.tabs.len())
+            .filter_map(|index| self.tabs.get(index))
+            .flat_map(|tab| tab.panes.iter().map(|pane| pane.id))
+            .collect()
     }
 
-    /// Whether the last frame reached the window through a drawable, so the
-    /// view does not blit it again.
-    pub(crate) fn layer_presented(&self) -> bool {
-        self.shared.layer_presented()
+    /// The active tab's split tree, for the chrome's dividers.
+    pub(crate) fn splits(&self) -> Vec<(SplitPath, Axis, Fraction, f32)> {
+        self.tabs.active().map_or_else(Vec::new, |tab| tab.layout.splits())
+    }
+
+    /// The panes as the view paints them, with their frames borrowed.
+    pub(crate) fn pane_paints(&self, now: Instant, layered: bool, capturing: bool) -> Vec<chrome::PanePaint<'_>> {
+        let Some(tab) = self.tabs.active() else {
+            return Vec::new();
+        };
+        let area = self.pane_area();
+        tab.layout
+            .rects()
+            .into_iter()
+            .filter_map(|(id, fraction)| {
+                let pane = tab.pane(id)?;
+                let rect = chrome::fraction_rect(area, fraction);
+                let grid_rect = chrome::pane_grid_rect(rect, f64::from(finite_scale(self.scale)), self.cell, pane.grid);
+                Some(chrome::PanePaint {
+                    rect,
+                    grid_rect,
+                    fill: chrome::rgb(pane.control.default_colors().0),
+                    frame: if layered && pane.content.layer_presented() && !capturing {
+                        None
+                    } else {
+                        Some(&pane.frame)
+                    },
+                    scroll: (
+                        pane.view.scroll(),
+                        pane.renderer.data().document_height(),
+                        pane.control.size().1,
+                    ),
+                    marks: pane.renderer.data().marks(),
+                    bell: pane.control.bell_alpha(now),
+                    find_open: pane.id == tab.focused && pane.find.open,
+                    focused: pane.id == tab.focused,
+                })
+            })
+            .collect()
+    }
+
+    /// The window's content area, below the strip.
+    fn pane_area(&self) -> NSRect {
+        chrome::pane_rect(NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(self.size.0, self.size.1),
+        ))
+    }
+
+    /// The focused pane's terminal pixels, when the view blits them.
+    pub(crate) fn focused_pane(&self) -> Option<&Pane> {
+        self.tabs.active().and_then(|tab| tab.focused_pane())
+    }
+
+    /// Whether the GPU path paints any pane.
+    pub(crate) fn uses_metal(&self) -> bool {
+        self.tabs
+            .active()
+            .is_some_and(|tab| tab.panes.iter().any(|pane| matches!(pane.content, Content::Metal(_))))
     }
 
     /// Shows or clears the input method's marked text.
@@ -295,13 +463,19 @@ impl Shell {
 
     /// The caret's box in view points, for anchoring the candidate window.
     pub(crate) fn caret_rect(&self) -> (f64, f64, f64, f64) {
-        let point = self.renderer.data().cursor_screen();
+        let Some(pane) = self.focused_pane() else {
+            return (0.0, 0.0, 1.0, 1.0);
+        };
+        let origin = self
+            .focused_pane_rect()
+            .map_or(NSPoint::new(0.0, STRIP_HEIGHT), |rect| rect.origin);
+        let point = pane.renderer.data().cursor_screen();
         let scale = f64::from(finite_scale(self.scale));
         let width = f64::from(self.cell.0) / scale;
         let height = f64::from(self.cell.1) / scale;
         (
-            chrome::PANE_LEFT + f64::from(point.x()) * width,
-            STRIP_HEIGHT + f64::from(point.y()) * height,
+            origin.x + chrome::PANE_LEFT + f64::from(point.x()) * width,
+            origin.y + f64::from(point.y()) * height,
             width.max(1.0),
             height.max(1.0),
         )
@@ -313,7 +487,8 @@ impl Shell {
 
     /// The visible screen as plain text, for the accessibility client.
     pub(crate) fn accessible_text(&self) -> String {
-        self.renderer.data().visible_text()
+        self.focused_pane()
+            .map_or_else(String::new, |pane| pane.renderer.data().visible_text())
     }
 
     pub(crate) fn menu_requested(&mut self) -> bool {
@@ -366,11 +541,10 @@ impl Shell {
         chrome::strip_colors(background, foreground, row, active, inactive)
     }
 
-    /// The active pane's background and foreground, as `COLORREF`s.
+    /// The focused pane's background and foreground, as `COLORREF`s.
     pub(crate) fn active_colors(&self) -> (u32, u32) {
-        self.tabs
-            .active()
-            .map_or((0x000C_0C0C, 0x00CC_CCCC), |tab| tab.control.default_colors())
+        self.focused_pane()
+            .map_or((0x000C_0C0C, 0x00CC_CCCC), |pane| pane.control.default_colors())
     }
 
     /// Whether AppKit's dark appearance reads best on the active pane.
@@ -379,38 +553,30 @@ impl Shell {
         chrome::dark_background(background)
     }
 
-    /// The scrollbar's scroll, document height and visible rows.
-    pub(crate) fn scroll_facts(&self) -> (i32, i32, i32) {
-        let Some(tab) = self.tabs.active() else {
-            return (0, 0, 0);
-        };
-        let document = self.renderer.data().document_height();
-        (tab.view.scroll(), document, tab.control.size().1)
-    }
-
-    pub(crate) fn marks(&self) -> &[winter::grid::MarkTick] {
-        self.renderer.data().marks()
-    }
-
-    /// The bell's fade at `now`, while the active pane flashes.
+    /// The bell's fade at `now`, while the focused pane flashes.
     pub(crate) fn bell_alpha(&self, now: Instant) -> Option<f32> {
-        self.tabs.active().and_then(|tab| tab.control.bell_alpha(now))
+        self.focused_pane().and_then(|pane| pane.control.bell_alpha(now))
     }
 
     /// The find bar's query, current match and match count.
     pub(crate) fn find_state(&self) -> (bool, String, usize, usize) {
-        let Some(tab) = self.tabs.active() else {
+        let Some(pane) = self.focused_pane() else {
             return (false, String::new(), 0, 0);
         };
-        let current = tab.find.current.map_or(0, |index| index + 1);
-        (tab.find.open, tab.find.query.clone(), current, tab.find.matches.len())
+        let current = pane.find.current.map_or(0, |index| index + 1);
+        (
+            pane.find.open,
+            pane.find.query.clone(),
+            current,
+            pane.find.matches.len(),
+        )
     }
 
     pub(crate) fn find_open(&self) -> bool {
-        self.tabs.active().is_some_and(|tab| tab.find.open)
+        self.focused_pane().is_some_and(|pane| pane.find.open)
     }
 
-    /// Fits the grid and the face to a new view size.
+    /// Fits the grids and the face to a new view size.
     pub(crate) fn resize(&mut self, size: (f64, f64), scale: f32) {
         let scale = finite_scale(scale);
         self.size = size;
@@ -420,45 +586,88 @@ impl Shell {
             self.rebuild_face();
         }
 
-        let bounds = objc2_foundation::NSRect::new(
-            objc2_foundation::NSPoint::new(0.0, 0.0),
-            objc2_foundation::NSSize::new(size.0, size.1),
-        );
-        let grid = chrome::grid_for(bounds, f64::from(scale), self.cell);
-        if rescaled || grid != self.grid {
-            self.apply_grid(grid);
-        }
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(size.0, size.1));
+        self.apply_grid(chrome::grid_for(bounds, f64::from(scale), self.cell));
     }
 
-    /// Replaces the renderer with one whose face is `scale` times the DIP size.
+    /// Replaces every pane's renderer with one whose face is `scale` times the
+    /// DIP size.
     fn rebuild_face(&mut self) {
-        let Ok(fonts) = font_setup(&self.face, self.font_size, self.scale, self.grid) else {
-            return;
-        };
-        self.cell = fonts.settings.font.cell_size;
-        let (renderer, shared) = renderer_for(fonts, self.grid);
-        self.renderer = renderer;
-        self.shared = shared;
-    }
+        let face = &self.face;
+        let (font_size, scale) = (self.font_size, self.scale);
+        let mut cell = self.cell;
 
-    /// Tells every tab and the renderer how large the grid is.
-    fn apply_grid(&mut self, grid: (i32, i32)) {
-        self.grid = grid;
         for index in 0..self.tabs.len() {
-            if let Some(tab) = self.tabs.get_mut(index) {
-                tab.control.resize(grid.0, grid.1);
+            let Some(tab) = self.tabs.get_mut(index) else {
+                continue;
+            };
+            for pane in &mut tab.panes {
+                let Ok(fonts) = font_setup(face, font_size, scale, pane.grid) else {
+                    continue;
+                };
+                cell = fonts.settings.font.cell_size;
+                let (renderer, content) = renderer_for(fonts, pane.grid);
+                pane.renderer = renderer;
+                pane.content = content;
             }
         }
 
-        let target = target_size(self.cell, grid);
-        let _ = self.renderer.resize(target, chrome::viewport(grid));
+        self.cell = cell;
+    }
+
+    /// Fits every pane's terminal and renderer to its part of the window.
+    fn apply_grid(&mut self, grid: (i32, i32)) {
+        self.grid = grid;
+        let area = self.pane_area();
+        let (cell, scale) = (self.cell, f64::from(finite_scale(self.scale)));
+
+        for index in 0..self.tabs.len() {
+            let Some(tab) = self.tabs.get_mut(index) else {
+                continue;
+            };
+            for (id, fraction) in tab.layout.rects() {
+                let Some(pane) = tab.pane_mut(id) else {
+                    continue;
+                };
+                let rect = chrome::fraction_rect(area, fraction);
+                let cells = chrome::pane_grid(rect, scale, cell);
+                if cells == pane.grid {
+                    continue;
+                }
+                pane.grid = cells;
+                pane.control.resize(cells.0, cells.1);
+                let _ = pane.renderer.resize(target_size(cell, cells), chrome::viewport(cells));
+            }
+        }
+    }
+
+    /// Fits the panes of one tab after a split, a close or a divider drag.
+    fn resize_tab(&mut self, index: usize) {
+        let area = self.pane_area();
+        let (cell, scale) = (self.cell, f64::from(finite_scale(self.scale)));
+        let Some(tab) = self.tabs.get_mut(index) else {
+            return;
+        };
+        for (id, fraction) in tab.layout.rects() {
+            let Some(pane) = tab.pane_mut(id) else {
+                continue;
+            };
+            let rect = chrome::fraction_rect(area, fraction);
+            let cells = chrome::pane_grid(rect, scale, cell);
+            if cells == pane.grid {
+                continue;
+            }
+            pane.grid = cells;
+            pane.control.resize(cells.0, cells.1);
+            let _ = pane.renderer.resize(target_size(cell, cells), chrome::viewport(cells));
+        }
     }
 
     /// Pumps every pty, repaints the active tab and re-arms nothing: the
     /// controller's timer calls this again.
     pub(crate) fn tick(&mut self, now: Instant, mtm: objc2::MainThreadMarker) -> Tick {
         let mut tick = Tick::default();
-        let mut exited = Vec::new();
+        let mut exited: Vec<(usize, PaneId)> = Vec::new();
         let mut title_changed = false;
         let mut notes = Vec::new();
 
@@ -471,20 +680,22 @@ impl Shell {
             let Some(tab) = self.tabs.get_mut(index) else {
                 continue;
             };
-            tab.control.pump();
-            notes.extend(tab.control.take_sounds());
-            for event in tab.control.take_events(now) {
-                match event {
-                    TerminalEvent::Exited => exited.push(index),
-                    TerminalEvent::Bell => tick.bell = true,
-                    TerminalEvent::Notification { title, body } => tick.notifications.push((title, body)),
+            for pane in &mut tab.panes {
+                pane.control.pump();
+                notes.extend(pane.control.take_sounds());
+                for event in pane.control.take_events(now) {
+                    match event {
+                        TerminalEvent::Exited => exited.push((index, pane.id)),
+                        TerminalEvent::Bell => tick.bell = true,
+                        TerminalEvent::Notification { title, body } => tick.notifications.push((title, body)),
+                    }
                 }
-            }
-            if let Some(title) = tab.control.title().map(str::to_string)
-                && tab.title != title
-            {
-                tab.title = title;
-                title_changed = true;
+                if let Some(title) = pane.control.title().map(str::to_string)
+                    && pane.title.as_deref() != Some(title.as_str())
+                {
+                    pane.title = Some(title);
+                    title_changed = true;
+                }
             }
         }
 
@@ -492,11 +703,18 @@ impl Shell {
             self.sound.play(audio::midi::tones(&notes));
         }
 
-        for index in exited.into_iter().rev() {
-            if !self.tabs.close(index) {
-                self.close_requested = true;
-                tick.close_window = true;
-                return tick;
+        for (index, pane_id) in exited.into_iter().rev() {
+            if self.tabs.get(index).is_none() {
+                continue;
+            }
+            if self.tabs.get(index).is_some_and(|tab| tab.layout.is_single()) {
+                if !self.tabs.close(index) {
+                    self.close_requested = true;
+                    tick.close_window = true;
+                    return tick;
+                }
+            } else {
+                self.remove_pane(index, pane_id);
             }
             self.title_dirty = true;
         }
@@ -522,55 +740,83 @@ impl Shell {
         tick
     }
 
-    /// Refreshes the renderer's copy and paints one frame into the frame buffer.
-    fn paint(&mut self, _now: Instant, mtm: objc2::MainThreadMarker) {
-        let blink_on = self.blink_on;
-        let painted = {
-            let Shell {
-                renderer,
-                tabs,
-                composition,
-                ..
-            } = self;
-            let Some(tab) = tabs.active_mut() else {
-                return;
-            };
-            renderer
-                .data_mut()
-                .refresh(&mut tab.control, &tab.view, blink_on, Some(&tab.find));
-
-            let (background, foreground) = tab.control.default_colors();
-            let _ = renderer.set_default_colors(background, foreground);
-            if let Ok(table) = tab.control.color_table().lock() {
-                renderer.settings_mut().set_color_table(table.clone());
+    /// Removes a pane from a tab, closing the tab when it was its only one.
+    fn remove_pane(&mut self, index: usize, pane_id: PaneId) {
+        if self.tabs.get(index).is_some_and(|tab| tab.layout.is_single()) {
+            if !self.tabs.close(index) {
+                self.close_requested = true;
             }
-            renderer.data_mut().set_composition(composition.clone());
-            renderer.invalidate_all();
-            renderer.paint_frame().is_ok()
-        };
-
-        if !painted {
             return;
         }
 
-        // A presented drawable is not the frame's reader; only the fallback and
-        // a capture copy the pixels into the bitmap.
-        if !self.shared.layer_presented() {
-            let width = self.shared.width();
-            let height = self.shared.height();
-            let frame = &mut self.frame;
-            self.shared.with_pixels(|pixels| {
+        {
+            let Some(tab) = self.tabs.get_mut(index) else {
+                return;
+            };
+            if !tab.layout.remove(pane_id) {
+                return;
+            }
+            tab.panes.retain(|pane| pane.id != pane_id);
+            if tab.focused == pane_id
+                && let Some(next) = tab.layout.leaves().first().copied()
+            {
+                tab.focused = next;
+            }
+        }
+
+        self.resize_tab(index);
+    }
+
+    /// Refreshes every pane's copy and paints the active tab.
+    fn paint(&mut self, _now: Instant, mtm: objc2::MainThreadMarker) {
+        let blink_on = self.blink_on;
+        let Shell { tabs, composition, .. } = self;
+        let Some(tab) = tabs.active_mut() else {
+            return;
+        };
+
+        for pane in &mut tab.panes {
+            pane.renderer
+                .data_mut()
+                .refresh(&mut pane.control, &pane.view, blink_on, Some(&pane.find));
+
+            let (background, foreground) = pane.control.default_colors();
+            let _ = pane.renderer.set_default_colors(background, foreground);
+            if let Ok(table) = pane.control.color_table().lock() {
+                pane.renderer.settings_mut().set_color_table(table.clone());
+            }
+            let marked = if pane.id == tab.focused {
+                composition.clone()
+            } else {
+                Composition::default()
+            };
+            pane.renderer.data_mut().set_composition(marked);
+            pane.renderer.invalidate_all();
+
+            if pane.renderer.paint_frame().is_err() || pane.content.layer_presented() {
+                continue;
+            }
+            // A presented drawable is not the frame's reader; only the fallback
+            // and a capture copy the pixels into the bitmap.
+            let width = pane.content.width();
+            let height = pane.content.height();
+            let frame = &mut pane.frame;
+            pane.content.with_pixels(|pixels| {
                 frame.copy(pixels, width, height, mtm);
             });
         }
     }
 
-    /// Repaints one frame into the frame buffer for `WINTER_SCREENSHOT`.
+    /// Repaints every pane into its frame buffer for `WINTER_SCREENSHOT`.
     ///
-    /// The layer's drawable never appears in the view's cached display, so the
+    /// A layer's drawable never appears in the view's cached display, so the
     /// capture needs the offscreen pixels that a presenting frame skips.
     pub(crate) fn prepare_capture(&mut self, mtm: objc2::MainThreadMarker) {
-        self.shared.force_readback();
+        if let Some(tab) = self.tabs.active() {
+            for pane in &tab.panes {
+                pane.content.force_readback();
+            }
+        }
         self.paint(Instant::now(), mtm);
     }
 
@@ -607,17 +853,16 @@ impl Shell {
         if font_size != self.font_size {
             self.font_size = font_size;
             self.rebuild_face();
-            let bounds = objc2_foundation::NSRect::new(
-                objc2_foundation::NSPoint::new(0.0, 0.0),
-                objc2_foundation::NSSize::new(self.size.0, self.size.1),
-            );
+            let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
             self.apply_grid(chrome::grid_for(bounds, f64::from(self.scale), self.cell));
         }
 
         let scheme = self.template.scheme.clone();
         for index in 0..self.tabs.len() {
             if let Some(tab) = self.tabs.get_mut(index) {
-                tab.control.apply_scheme(scheme.as_ref());
+                for pane in &mut tab.panes {
+                    pane.control.apply_scheme(scheme.as_ref());
+                }
             }
         }
     }
@@ -653,22 +898,124 @@ impl Shell {
 
     /// Starts a terminal and adds it as the active tab.
     pub(crate) fn add_tab(&mut self, terminal: TerminalSettings) {
-        self.clear_composition();
-        let size = pty_size(self.grid);
-        let Ok(session) = spawn_shell(&terminal.command, size) else {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
             return;
         };
-        let mut control = Control::new(Box::new(session), self.grid);
-        control.apply_scheme(terminal.scheme.as_ref());
+        self.clear_composition();
+        let title = terminal.title.clone();
+        let Ok(fonts) = font_setup(&self.face, self.font_size, self.scale, self.grid) else {
+            return;
+        };
+        let id = PaneId(self.next_pane);
+        let Ok(pane) = Pane::new(id, &terminal, self.grid, fonts, mtm) else {
+            return;
+        };
+        self.next_pane += 1;
 
         self.tabs.add(Tab {
-            control,
-            view: ViewState::new(),
-            title: terminal.title,
-            find: FindBar::default(),
-            program: terminal.command.program().to_string_lossy().into_owned(),
+            panes: vec![pane],
+            layout: Layout::leaf(id),
+            focused: id,
+            terminal,
+            title,
         });
+        let index = self.tabs.index();
+        self.resize_tab(index);
         self.title_dirty = true;
+    }
+
+    /// Splits the focused pane and focuses the new half.
+    pub(crate) fn split_pane(&mut self, axis: Axis) {
+        let Some(mtm) = objc2::MainThreadMarker::new() else {
+            return;
+        };
+        self.clear_composition();
+
+        let (focused, terminal, grid) = {
+            let Some(tab) = self.tabs.active() else {
+                return;
+            };
+            let focused = tab.focused;
+            let grid = tab.focused_pane().map_or(self.grid, |pane| {
+                // Spawn the new half at the size it will fill, so its shell lays
+                // its first prompt out for the width it will keep.
+                let scale = f64::from(finite_scale(self.scale));
+                self.pane_rect(focused)
+                    .map(|rect| chrome::split_second(rect, axis))
+                    .map_or(pane.grid, |rect| chrome::pane_grid(rect, scale, self.cell))
+            });
+            (focused, tab.terminal.clone(), grid)
+        };
+        let Ok(fonts) = font_setup(&self.face, self.font_size, self.scale, grid) else {
+            return;
+        };
+        let id = PaneId(self.next_pane);
+        let Ok(pane) = Pane::new(id, &terminal, grid, fonts, mtm) else {
+            return;
+        };
+        self.next_pane += 1;
+
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        if !tab.layout.split(focused, axis, id) {
+            return;
+        }
+        tab.panes.push(pane);
+        tab.focused = id;
+
+        let index = self.tabs.index();
+        self.resize_tab(index);
+        self.title_dirty = true;
+    }
+
+    /// Closes the focused pane, or the tab when it is the last one.
+    pub(crate) fn close_pane(&mut self) {
+        self.clear_composition();
+        let index = self.tabs.index();
+        let Some(focused) = self.tabs.active().map(|tab| tab.focused) else {
+            return;
+        };
+        if self.tabs.get(index).is_some_and(|tab| tab.layout.is_single()) {
+            if !self.tabs.close(index) {
+                self.close_requested = true;
+            }
+        } else {
+            self.remove_pane(index, focused);
+        }
+        self.title_dirty = true;
+    }
+
+    /// Moves the focus to the nearest pane in `direction`.
+    pub(crate) fn focus_pane(&mut self, direction: Direction) {
+        let changed = {
+            let Some(tab) = self.tabs.active_mut() else {
+                return;
+            };
+            let Some(next) = layout::neighbour(&tab.layout.rects(), tab.focused, direction) else {
+                return;
+            };
+            let changed = tab.focused != next;
+            tab.focused = next;
+            changed
+        };
+        if changed {
+            self.clear_composition();
+            self.title_dirty = true;
+        }
+    }
+
+    /// Grows the focused pane one step in `direction`.
+    pub(crate) fn resize_pane(&mut self, direction: Direction) {
+        let index = self.tabs.index();
+        let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let focused = tab.focused;
+        if !tab.layout.resize(focused, direction, 0.05) {
+            return;
+        }
+        self.resize_tab(index);
     }
 
     pub(crate) fn select_tab(&mut self, index: usize) {
@@ -839,15 +1186,28 @@ impl Shell {
     /// Runs a command-key shortcut.
     fn command_shortcut(&mut self, key: Key, modifiers: input::Modifiers) -> bool {
         let shift = modifiers.shift;
+        let alt = modifiers.alt;
+        let ctrl = modifiers.ctrl;
         match key {
             Key::Char('c') if !shift => {
                 self.copy_selection();
             }
             Key::Char('v') if !shift => self.paste_clipboard(),
             Key::Char('t') if !shift => self.open_tab(),
+            Key::Char('w') if shift => self.close_pane(),
             Key::Char('w') => self.close_active_tab(),
+            Key::Char('d') if shift => self.split_pane(Axis::Vertical),
+            Key::Char('d') => self.split_pane(Axis::Horizontal),
             Key::Char('f') if !shift => self.toggle_find(),
             Key::Char(',') => self.settings_requested = true,
+            Key::Left if alt && ctrl => self.resize_pane(Direction::Left),
+            Key::Right if alt && ctrl => self.resize_pane(Direction::Right),
+            Key::Up if alt && ctrl => self.resize_pane(Direction::Up),
+            Key::Down if alt && ctrl => self.resize_pane(Direction::Down),
+            Key::Left if alt => self.focus_pane(Direction::Left),
+            Key::Right if alt => self.focus_pane(Direction::Right),
+            Key::Up if alt => self.focus_pane(Direction::Up),
+            Key::Down if alt => self.focus_pane(Direction::Down),
             Key::Char(character @ '1'..='9') => {
                 let index = character as usize - '1' as usize;
                 self.select_tab(index);
@@ -866,6 +1226,16 @@ impl Shell {
             settings::Action::CloseTab => self.close_active_tab(),
             settings::Action::NextTab => self.step_tab(1),
             settings::Action::PrevTab => self.step_tab(-1),
+            settings::Action::SplitHorizontal => self.split_pane(Axis::Horizontal),
+            settings::Action::SplitVertical => self.split_pane(Axis::Vertical),
+            settings::Action::FocusLeft => self.focus_pane(Direction::Left),
+            settings::Action::FocusRight => self.focus_pane(Direction::Right),
+            settings::Action::FocusUp => self.focus_pane(Direction::Up),
+            settings::Action::FocusDown => self.focus_pane(Direction::Down),
+            settings::Action::ResizeLeft => self.resize_pane(Direction::Left),
+            settings::Action::ResizeRight => self.resize_pane(Direction::Right),
+            settings::Action::ResizeUp => self.resize_pane(Direction::Up),
+            settings::Action::ResizeDown => self.resize_pane(Direction::Down),
             settings::Action::Copy => return self.copy_selection(),
             settings::Action::Paste => self.paste_clipboard(),
             settings::Action::ScrollUp => self.scroll_active(1),
@@ -886,33 +1256,37 @@ impl Shell {
     fn send_input(&mut self, event: &input::Event) {
         // A printable key travels as the character it typed, unless the program
         // asked for every key: then the key and its release travel instead.
-        let modes = self.tabs.active().map(|tab| tab.control.input_modes());
+        let modes = self.focused_pane().map(|pane| pane.control.input_modes());
         let win32 = modes.is_some_and(|modes| modes.win32_input);
         let keys = modes.is_some_and(|modes| modes.reports_all_keys());
         let outcome = input::translate(event, &mut self.sides, win32, keys);
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
         if outcome.activity {
-            tab.view.scroll_to_bottom();
+            pane.view.scroll_to_bottom();
         }
         if let Some(text) = outcome.paste {
-            tab.control.paste(&text);
+            pane.control.paste(&text);
         }
         for key in outcome.keys {
-            tab.control.send_key(&key);
+            pane.control.send_key(&key);
         }
     }
 
-    /// Puts the selection on the clipboard, clearing it like upstream.
+    /// Puts the focused pane's selection on the clipboard, clearing it like
+    /// upstream.
     pub(crate) fn copy_selection(&mut self) -> bool {
         let Some(tab) = self.tabs.active_mut() else {
             return false;
         };
-        let Some(selection) = tab.view.selection().copied() else {
+        let Some(pane) = tab.focused_pane_mut() else {
             return false;
         };
-        let Some(text) = tab.control.selection_text(&selection) else {
+        let Some(selection) = pane.view.selection().copied() else {
+            return false;
+        };
+        let Some(text) = pane.control.selection_text(&selection) else {
             return false;
         };
 
@@ -920,12 +1294,12 @@ impl Shell {
             .and_then(|mut clipboard| clipboard.set_text(text))
             .is_ok();
         if copied {
-            tab.view.clear_selection();
+            pane.view.clear_selection();
         }
         copied
     }
 
-    /// Sends the clipboard through the terminal's bracketed-paste filter.
+    /// Sends the clipboard through the focused pane's bracketed-paste filter.
     pub(crate) fn paste_clipboard(&mut self) {
         let Ok(mut clipboard) = arboard::Clipboard::new() else {
             return;
@@ -933,20 +1307,23 @@ impl Shell {
         let Ok(text) = clipboard.get_text() else {
             return;
         };
-        if let Some(tab) = self.tabs.active_mut() {
-            tab.control.paste(&text);
+        if let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) {
+            pane.control.paste(&text);
         }
     }
 
-    /// Shows or hides the active tab's find bar.
+    /// Shows or hides the focused pane's find bar.
     pub(crate) fn toggle_find(&mut self) {
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
-        tab.find.toggle();
-        if tab.find.open {
-            tab.find.refresh(&mut tab.control);
-            tab.find.scroll_to(&tab.control, &mut tab.view);
+        let Some(pane) = tab.focused_pane_mut() else {
+            return;
+        };
+        pane.find.toggle();
+        if pane.find.open {
+            pane.find.refresh(&mut pane.control);
+            pane.find.scroll_to(&pane.control, &mut pane.view);
             self.find_focus = true;
             // The field takes the keyboard, so a half-composed terminal
             // preview is no longer where the user is typing.
@@ -954,32 +1331,32 @@ impl Shell {
         }
     }
 
-    /// Sets the find query and recomputes the matches.
+    /// Sets the find query and recomputes the focused pane's matches.
     pub(crate) fn find_query(&mut self, query: String) {
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
-        tab.find.query = query;
-        tab.find.refresh(&mut tab.control);
-        tab.find.scroll_to(&tab.control, &mut tab.view);
+        pane.find.query = query;
+        pane.find.refresh(&mut pane.control);
+        pane.find.scroll_to(&pane.control, &mut pane.view);
     }
 
-    /// Moves to the next (true) or previous match.
+    /// Moves to the focused pane's next (true) or previous match.
     pub(crate) fn find_step(&mut self, forward: bool) {
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
-        if tab.find.searched != tab.find.query {
-            tab.find.refresh(&mut tab.control);
+        if pane.find.searched != pane.find.query {
+            pane.find.refresh(&mut pane.control);
         }
-        tab.find.step(forward);
-        tab.find.scroll_to(&tab.control, &mut tab.view);
+        pane.find.step(forward);
+        pane.find.scroll_to(&pane.control, &mut pane.view);
     }
 
-    /// Closes the find bar.
+    /// Closes the focused pane's find bar.
     pub(crate) fn close_find(&mut self) {
-        if let Some(tab) = self.tabs.active_mut() {
-            tab.find.hide();
+        if let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) {
+            pane.find.hide();
         }
     }
 
@@ -1077,68 +1454,102 @@ impl Shell {
         std::mem::take(&mut self.palette.focus)
     }
 
-    fn active_tracking(&self) -> bool {
-        self.tabs.active().is_some_and(|tab| tab.control.is_tracking_mouse())
-    }
-
     fn scroll_active(&mut self, rows: i32) {
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
-        let max = tab.control.max_scroll();
-        tab.view.scroll_by(rows, max);
+        let max = pane.control.max_scroll();
+        pane.view.scroll_by(rows, max);
     }
 
     fn scroll_page(&mut self, direction: i32) {
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
-        let rows = (tab.control.size().1 - 1).max(1) * direction.signum();
-        let max = tab.control.max_scroll();
-        tab.view.scroll_by(rows, max);
+        let rows = (pane.control.size().1 - 1).max(1) * direction.signum();
+        let max = pane.control.max_scroll();
+        pane.view.scroll_by(rows, max);
     }
 
     fn scroll_to(&mut self, bottom: bool) {
-        let Some(tab) = self.tabs.active_mut() else {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
             return;
         };
         if bottom {
-            tab.view.scroll_to_bottom();
+            pane.view.scroll_to_bottom();
         } else {
-            let max = tab.control.max_scroll();
-            tab.view.set_scroll(max, max);
+            let max = pane.control.max_scroll();
+            pane.view.set_scroll(max, max);
         }
     }
 
-    /// The cell a point in the view names, below the strip and right of its
-    /// left inset.
-    pub(crate) fn cell_at(&self, point: (f64, f64)) -> Option<(i32, i32)> {
+    /// The active tab's pane under `point`, with its area in view points.
+    fn pane_at(&self, point: (f64, f64)) -> Option<(PaneId, NSRect)> {
+        let tab = self.tabs.active()?;
+        let area = self.pane_area();
+        tab.layout.rects().into_iter().find_map(|(id, fraction)| {
+            let rect = chrome::fraction_rect(area, fraction);
+            let inside = point.0 >= rect.origin.x
+                && point.0 < rect.origin.x + rect.size.width
+                && point.1 >= rect.origin.y
+                && point.1 < rect.origin.y + rect.size.height;
+            inside.then_some((id, rect))
+        })
+    }
+
+    /// A pane's area in view points.
+    fn pane_rect(&self, pane_id: PaneId) -> Option<NSRect> {
+        let tab = self.tabs.active()?;
+        let area = self.pane_area();
+        tab.layout
+            .rects()
+            .into_iter()
+            .find(|(id, _)| *id == pane_id)
+            .map(|(_, fraction)| chrome::fraction_rect(area, fraction))
+    }
+
+    /// The cell a point in `rect` names, inside `pane`'s grid.
+    fn cell_in(&self, pane: &Pane, rect: NSRect, point: (f64, f64)) -> Option<(i32, i32)> {
         let scale = f64::from(finite_scale(self.scale));
         let width = f64::from(self.cell.0) / scale;
         let height = f64::from(self.cell.1) / scale;
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
-        let column = ((point.0 - chrome::PANE_LEFT) / width).floor() as i32;
-        let row = ((point.1 - STRIP_HEIGHT) / height).floor() as i32;
-        let (columns, rows) = self.grid;
+        let column = ((point.0 - rect.origin.x - chrome::PANE_LEFT) / width).floor() as i32;
+        let row = ((point.1 - rect.origin.y) / height).floor() as i32;
+        let (columns, rows) = pane.grid;
         (column >= 0 && row >= 0 && column < columns && row < rows).then_some((column, row))
     }
 
-    /// The cell a point names, or the nearest in-range cell.
-    fn clamped_cell(&self, point: (f64, f64)) -> Option<(i32, i32)> {
+    /// The cell a point names, or the nearest in-range cell of `pane`.
+    fn clamped_cell_in(&self, pane: &Pane, rect: NSRect, point: (f64, f64)) -> Option<(i32, i32)> {
         let scale = f64::from(finite_scale(self.scale));
         let width = f64::from(self.cell.0) / scale;
         let height = f64::from(self.cell.1) / scale;
         if width <= 0.0 || height <= 0.0 {
             return None;
         }
-        let column = ((point.0 - chrome::PANE_LEFT) / width).floor() as i32;
-        let row = ((point.1 - STRIP_HEIGHT) / height).floor() as i32;
-        Some((
-            column.clamp(0, self.grid.0.max(1) - 1),
-            row.clamp(0, self.grid.1.max(1) - 1),
-        ))
+        let column = ((point.0 - rect.origin.x - chrome::PANE_LEFT) / width).floor() as i32;
+        let row = ((point.1 - rect.origin.y) / height).floor() as i32;
+        let (columns, rows) = pane.grid;
+        Some((column.clamp(0, columns.max(1) - 1), row.clamp(0, rows.max(1) - 1)))
+    }
+
+    /// Focuses a pane of the active tab.
+    fn focus_at(&mut self, pane_id: PaneId) {
+        let changed = {
+            let Some(tab) = self.tabs.active_mut() else {
+                return;
+            };
+            let changed = tab.focused != pane_id;
+            tab.focused = pane_id;
+            changed
+        };
+        if changed {
+            self.clear_composition();
+            self.title_dirty = true;
+        }
     }
 
     /// Handles a press, returning whether it was consumed.
@@ -1167,19 +1578,40 @@ impl Shell {
             return self.strip_pressed(point);
         }
 
+        // A divider is grabbed before the panes it separates.
+        if button == MouseButton::Left {
+            let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
+            if let Some((path, axis, split)) = chrome::divider_at(bounds, &self.splits(), point, 3.0) {
+                self.divider = Some((path, axis, split));
+                return true;
+            }
+        }
+
+        let Some((pane_id, rect)) = self.pane_at(point) else {
+            return true;
+        };
+        self.focus_at(pane_id);
+
         if self.find_open() {
             self.close_find();
         }
 
         if button == MouseButton::Left
-            && point.0 >= self.size.0 - f64::from(scrollbar::WIDTH)
-            && self.scrollbar_pressed(point.1)
+            && point.0 >= rect.origin.x + rect.size.width - f64::from(scrollbar::WIDTH)
+            && self.scrollbar_pressed(pane_id, point.1)
         {
             return true;
         }
 
-        let forward = input::forwards_to_application(self.active_tracking(), modifiers.shift);
-        let cell = self.cell_at(point);
+        let Some(tab) = self.tabs.active() else {
+            return true;
+        };
+        let Some(pane_ref) = tab.pane(pane_id) else {
+            return true;
+        };
+        let tracking = pane_ref.control.is_tracking_mouse();
+        let cell = self.cell_in(pane_ref, rect, point);
+        let forward = input::forwards_to_application(tracking, modifiers.shift);
         self.pointer_cell = cell;
 
         if button != MouseButton::Left && !forward {
@@ -1190,11 +1622,14 @@ impl Shell {
         let Some(tab) = self.tabs.active_mut() else {
             return true;
         };
+        let Some(pane) = tab.pane_mut(pane_id) else {
+            return true;
+        };
 
         if forward {
             if let Some(position) = cell {
                 let chord = input::key_modifiers(modifiers, self.sides.right_alt, self.sides.right_ctrl);
-                tab.control.send_mouse(&MouseEvent {
+                pane.control.send_mouse(&MouseEvent {
                     position,
                     kind: MouseEventKind::Press(button),
                     buttons,
@@ -1209,21 +1644,24 @@ impl Shell {
         let Some((column, row)) = cell else {
             return true;
         };
-        let history = tab.control.max_scroll();
-        let position = (column, input::screen_to_document(history, tab.view.scroll(), row));
+        let history = pane.control.max_scroll();
+        let position = (column, input::screen_to_document(history, pane.view.scroll(), row));
 
-        let count = tab.view.click(position, Instant::now());
+        let count = pane.view.click(position, Instant::now());
         if count >= 3 {
-            let width = tab.control.screen_width();
-            tab.view.select_line(position.1, width);
+            let width = pane.control.screen_width();
+            pane.view.select_line(position.1, width);
             self.press = None;
+            self.press_pane = None;
         } else if count == 2 {
-            let text = tab.control.row_text(position.1);
-            tab.view.select_word(&text, position);
+            let text = pane.control.row_text(position.1);
+            pane.view.select_word(&text, position);
             self.press = None;
+            self.press_pane = None;
         } else {
-            tab.view.clear_selection();
+            pane.view.clear_selection();
             self.press = Some((position, modifiers.alt));
+            self.press_pane = Some(pane_id);
         }
         true
     }
@@ -1251,11 +1689,31 @@ impl Shell {
             return;
         }
 
-        if self.scrollbar_press {
+        if let Some((path, axis, split)) = self.divider.clone() {
+            if !buttons.left {
+                self.divider = None;
+                return;
+            }
+            let (origin, extent) = match axis {
+                Axis::Horizontal => (point.0 - split.origin.x, split.size.width),
+                Axis::Vertical => (point.1 - split.origin.y, split.size.height),
+            };
+            if extent > 0.0 {
+                let ratio = (origin / extent).clamp(0.0, 1.0) as f32;
+                let index = self.tabs.index();
+                if let Some(tab) = self.tabs.active_mut() {
+                    tab.layout.set_ratio(&path, ratio);
+                }
+                self.resize_tab(index);
+            }
+            return;
+        }
+
+        if let Some(pane_id) = self.scrollbar_pane {
             if buttons.left {
-                self.scrollbar_dragged(point.1);
+                self.scrollbar_dragged(pane_id, point.1);
             } else {
-                self.scrollbar_press = false;
+                self.scrollbar_pane = None;
                 self.scrollbar.release();
             }
             return;
@@ -1266,28 +1724,31 @@ impl Shell {
             return;
         }
 
-        let (columns, rows) = self.grid;
-        let cell = self.cell_at(point);
+        // A selection in progress belongs to the pane the press started in; a
+        // forwarded move follows the pointer.
+        let target = self.press_pane.or_else(|| self.pane_at(point).map(|(id, _)| id));
+        let Some(pane_id) = target else {
+            return;
+        };
+        let Some(rect) = self.pane_rect(pane_id) else {
+            return;
+        };
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        let Some(pane_ref) = tab.pane(pane_id) else {
+            return;
+        };
+        let tracking = pane_ref.control.is_tracking_mouse();
+        let cell = self.clamped_cell_in(pane_ref, rect, point);
         self.pointer_cell = cell;
-        let forward = input::forwards_to_application(self.active_tracking(), modifiers.shift);
-
-        let scale = f64::from(finite_scale(self.scale));
-        let width = f64::from(self.cell.0) / scale;
-        let height = f64::from(self.cell.1) / scale;
-        let outside = if point.1 < STRIP_HEIGHT {
-            -1
-        } else if height > 0.0 && point.1 >= STRIP_HEIGHT + f64::from(rows.max(0)) * height {
-            1
-        } else {
-            0
-        };
-        let column = if width > 0.0 {
-            ((point.0 - chrome::PANE_LEFT) / width).floor() as i32
-        } else {
-            0
-        };
+        let forward = input::forwards_to_application(tracking, modifiers.shift);
+        let (columns, rows) = pane_ref.grid;
 
         let Some(tab) = self.tabs.active_mut() else {
+            return;
+        };
+        let Some(pane) = tab.pane_mut(pane_id) else {
             return;
         };
 
@@ -1296,7 +1757,7 @@ impl Shell {
                 let dragging = buttons.left || buttons.middle || buttons.right;
                 if self.last_mouse_cell != Some(position) || dragging {
                     let chord = input::key_modifiers(modifiers, self.sides.right_alt, self.sides.right_ctrl);
-                    tab.control.send_mouse(&MouseEvent {
+                    pane.control.send_mouse(&MouseEvent {
                         position,
                         kind: MouseEventKind::Move,
                         buttons,
@@ -1315,16 +1776,32 @@ impl Shell {
             return;
         }
 
+        let scale = f64::from(finite_scale(self.scale));
+        let width = f64::from(self.cell.0) / scale;
+        let height = f64::from(self.cell.1) / scale;
+        let outside = if point.1 < rect.origin.y {
+            -1
+        } else if height > 0.0 && point.1 >= rect.origin.y + f64::from(rows.max(0)) * height {
+            1
+        } else {
+            0
+        };
+        let column = if width > 0.0 {
+            ((point.0 - rect.origin.x - chrome::PANE_LEFT) / width).floor() as i32
+        } else {
+            0
+        };
+
         let position = if outside != 0 {
-            let max = tab.control.max_scroll();
-            tab.view.drag_scroll(outside, max, Instant::now());
+            let max = pane.control.max_scroll();
+            pane.view.drag_scroll(outside, max, Instant::now());
             let row = if outside < 0 { 0 } else { rows.max(1) - 1 };
             let column = column.clamp(0, columns.max(1) - 1);
-            Some((column, input::screen_to_document(max, tab.view.scroll(), row)))
+            Some((column, input::screen_to_document(max, pane.view.scroll(), row)))
         } else {
             cell.map(|(column, row)| {
-                let history = tab.control.max_scroll();
-                (column, input::screen_to_document(history, tab.view.scroll(), row))
+                let history = pane.control.max_scroll();
+                (column, input::screen_to_document(history, pane.view.scroll(), row))
             })
         };
 
@@ -1333,11 +1810,11 @@ impl Shell {
         };
         match self.press.take() {
             Some((anchor, block)) if position != anchor => {
-                tab.view.select(anchor, block);
-                tab.view.extend(position);
+                pane.view.select(anchor, block);
+                pane.view.extend(position);
             }
             Some(press) => self.press = Some(press),
-            None => tab.view.extend(position),
+            None => pane.view.extend(position),
         }
     }
 
@@ -1356,28 +1833,51 @@ impl Shell {
         if self.tab_drag.take().is_some() {
             return;
         }
+        if self.divider.take().is_some() {
+            self.press = None;
+            self.press_pane = None;
+            return;
+        }
 
-        if self.scrollbar_press {
-            self.scrollbar_press = false;
+        if self.scrollbar_pane.take().is_some() {
             self.scrollbar.release();
             self.press = None;
+            self.press_pane = None;
             self.last_mouse_cell = None;
             return;
         }
 
-        if !input::forwards_to_application(self.active_tracking(), modifiers.shift) {
-            self.last_mouse_cell = None;
+        let target = self.press_pane.take().or_else(|| self.pane_at(point).map(|(id, _)| id));
+        let Some(pane_id) = target else {
             self.press = None;
-            return;
-        }
-
-        let cell = self.cell_at(point);
-        let Some(tab) = self.tabs.active_mut() else {
+            self.last_mouse_cell = None;
             return;
         };
-        if let Some(position) = cell {
+        let Some(rect) = self.pane_rect(pane_id) else {
+            self.press = None;
+            self.last_mouse_cell = None;
+            return;
+        };
+        let release = {
+            let Some(tab) = self.tabs.active() else {
+                return;
+            };
+            let Some(pane) = tab.pane(pane_id) else {
+                return;
+            };
+            input::forwards_to_application(pane.control.is_tracking_mouse(), modifiers.shift)
+                .then(|| self.clamped_cell_in(pane, rect, point))
+                .flatten()
+        };
+        if let Some(position) = release {
+            let Some(tab) = self.tabs.active_mut() else {
+                return;
+            };
+            let Some(pane) = tab.pane_mut(pane_id) else {
+                return;
+            };
             let chord = input::key_modifiers(modifiers, self.sides.right_alt, self.sides.right_ctrl);
-            tab.control.send_mouse(&MouseEvent {
+            pane.control.send_mouse(&MouseEvent {
                 position,
                 kind: MouseEventKind::Release(button),
                 buttons,
@@ -1386,6 +1886,7 @@ impl Shell {
             });
         }
         self.last_mouse_cell = None;
+        self.press = None;
     }
 
     /// Updates the strip's hover state from a pointer position.
@@ -1437,7 +1938,8 @@ impl Shell {
         self.hovered_close
     }
 
-    /// Turns a wheel or trackpad scroll into history rows or a mouse report.
+    /// Turns a wheel or trackpad scroll into history rows or a mouse report in
+    /// the pane under the pointer.
     pub(crate) fn wheel(&mut self, point: (f64, f64), delta: f64, precise: bool, shift: bool) {
         // The palette's list owns the wheel while it shows; the pane behind it
         // must not move.
@@ -1462,67 +1964,101 @@ impl Shell {
             return;
         }
 
-        self.pointer_cell = self.clamped_cell(point);
+        let target = self
+            .pane_at(point)
+            .map(|(id, _)| id)
+            .or_else(|| self.tabs.active().map(|tab| tab.focused));
+        let Some(pane_id) = target else {
+            return;
+        };
+        let Some(rect) = self.pane_rect(pane_id) else {
+            return;
+        };
+        let cell = {
+            let Some(tab) = self.tabs.active() else {
+                return;
+            };
+            let Some(pane) = tab.pane(pane_id) else {
+                return;
+            };
+            self.clamped_cell_in(pane, rect, point)
+        };
+        self.pointer_cell = cell;
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
-        if input::forwards_to_application(tab.control.is_tracking_mouse(), shift)
-            && let Some(position) = self.pointer_cell
-            && tab
+        let Some(pane) = tab.pane_mut(pane_id) else {
+            return;
+        };
+        if input::forwards_to_application(pane.control.is_tracking_mouse(), shift)
+            && let Some(position) = cell
+            && pane
                 .control
                 .send_mouse(&MouseEvent::wheel(position, WheelAxis::Vertical, rows * WHEEL_DELTA))
         {
             return;
         }
 
-        let max = tab.control.max_scroll();
-        tab.view.scroll_by(rows, max);
+        let max = pane.control.max_scroll();
+        pane.view.scroll_by(rows, max);
     }
 
-    /// The scrollbar's press, if `y` is on its strip.
-    fn scrollbar_pressed(&mut self, y: f64) -> bool {
-        let track = self.size.1 - STRIP_HEIGHT;
+    /// The pane's scrollbar press, if `y` is on its track.
+    fn scrollbar_pressed(&mut self, pane_id: PaneId, y: f64) -> bool {
+        let Some(rect) = self.pane_rect(pane_id) else {
+            return false;
+        };
+        let track = rect.size.height.max(0.0);
         if track <= 0.0 {
             return false;
         }
         let Some(tab) = self.tabs.active_mut() else {
             return false;
         };
-        let (document, marks) = tab.control.scroll_facts();
-        let visible = tab.control.size().1;
+        let Some(pane) = tab.pane_mut(pane_id) else {
+            return false;
+        };
+        let (document, marks) = pane.control.scroll_facts();
+        let visible = pane.control.size().1;
         if document <= visible {
             self.scrollbar.release();
             return false;
         }
 
-        let fraction = ((y - STRIP_HEIGHT) / track).clamp(0.0, 1.0) as f32;
+        let fraction = ((y - rect.origin.y) / track).clamp(0.0, 1.0) as f32;
         let positions: Vec<f32> = marks
             .iter()
             .map(|mark| scrollbar::position(mark.row, document))
             .collect();
         if let Some(index) = scrollbar::tick_at(&positions, fraction, scrollbar::MARK_GRAB / track as f32) {
-            tab.view.scroll_to_row(marks[index].row, visible, document);
-        } else if let Press::Jump(scroll) = self.scrollbar.press(fraction, tab.view.scroll(), document, visible) {
-            tab.view.set_scroll(scroll, document - visible);
+            pane.view.scroll_to_row(marks[index].row, visible, document);
+        } else if let Press::Jump(scroll) = self.scrollbar.press(fraction, pane.view.scroll(), document, visible) {
+            pane.view.set_scroll(scroll, document - visible);
         }
 
-        self.scrollbar_press = true;
+        self.scrollbar_pane = Some(pane_id);
         true
     }
 
-    fn scrollbar_dragged(&mut self, y: f64) {
-        let track = self.size.1 - STRIP_HEIGHT;
+    fn scrollbar_dragged(&mut self, pane_id: PaneId, y: f64) {
+        let Some(rect) = self.pane_rect(pane_id) else {
+            return;
+        };
+        let track = rect.size.height.max(0.0);
         if track <= 0.0 {
             return;
         }
+        let fraction = ((y - rect.origin.y) / track).clamp(0.0, 1.0) as f32;
         let Some(tab) = self.tabs.active_mut() else {
             return;
         };
-        let visible = tab.control.size().1;
-        let document = tab.control.max_scroll() + visible;
-        let fraction = ((y - STRIP_HEIGHT) / track).clamp(0.0, 1.0) as f32;
+        let Some(pane) = tab.pane_mut(pane_id) else {
+            return;
+        };
+        let visible = pane.control.size().1;
+        let document = pane.control.max_scroll() + visible;
         if let Some(scroll) = self.scrollbar.drag(fraction, document, visible) {
-            tab.view.set_scroll(scroll, document - visible);
+            pane.view.set_scroll(scroll, document - visible);
         }
     }
 }
@@ -1546,6 +2082,16 @@ fn palette_supports(action: settings::Action) -> bool {
             | Action::CloseTab
             | Action::NextTab
             | Action::PrevTab
+            | Action::SplitHorizontal
+            | Action::SplitVertical
+            | Action::FocusLeft
+            | Action::FocusRight
+            | Action::FocusUp
+            | Action::FocusDown
+            | Action::ResizeLeft
+            | Action::ResizeRight
+            | Action::ResizeUp
+            | Action::ResizeDown
             | Action::Copy
             | Action::Paste
             | Action::ScrollUp
@@ -1683,7 +2229,7 @@ fn renderer_for(fonts: Fonts, grid: (i32, i32)) -> (Renderer<TerminalData>, Cont
 /// Both variants hand the shell the same `0xAARRGGBB` pixels; only the work
 /// that produced them differs.
 #[derive(Clone)]
-enum Content {
+pub(crate) enum Content {
     Software(SharedBackend),
     Metal(metal::Metal),
 }
@@ -1805,34 +2351,12 @@ mod tests {
     fn the_palette_offers_exactly_the_actions_this_shell_runs() {
         use settings::Action;
 
-        for action in [
-            Action::NewTab,
-            Action::CloseTab,
-            Action::NextTab,
-            Action::PrevTab,
-            Action::Copy,
-            Action::Paste,
-            Action::ScrollUp,
-            Action::ScrollDown,
-            Action::ScrollUpPage,
-            Action::ScrollDownPage,
-            Action::ScrollToTop,
-            Action::ScrollToBottom,
-            Action::Find,
-            Action::OpenSettings,
-        ] {
-            assert!(palette_supports(action), "{action:?}");
+        // Every action in the vocabulary is performed except the palette's own
+        // row, which would recurse, and `Unbound`, which never reaches a list.
+        for action in Action::ALL {
+            let expected = !matches!(action, Action::CommandPalette);
+            assert_eq!(palette_supports(*action), expected, "{action:?}");
         }
-        // Panes and the palette's own row are not performed here.
-        for action in [
-            Action::SplitHorizontal,
-            Action::SplitVertical,
-            Action::FocusLeft,
-            Action::ResizeUp,
-            Action::CommandPalette,
-            Action::Unbound,
-        ] {
-            assert!(!palette_supports(action), "{action:?}");
-        }
+        assert!(!palette_supports(Action::Unbound));
     }
 }

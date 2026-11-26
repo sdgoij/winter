@@ -135,8 +135,9 @@ Negative:
   text interface — the `NSAccessibility` text methods — is the follow-up if
   navigation by character or line is needed; this is the same shape as the
   WinUI shell's UIA gap.
-- **No panes.** Panes are unported on WinUI as well; the command palette is
-  now this shell's as it is the GTK shell's (ADR 075).
+- **Panes came later.** This ADR's shell drew one pane per tab; ADR 085 adds
+  the split tree, a renderer and a content layer per pane, and the chords that
+  split, close, focus and resize them.
 - **A preview crate.** `objc2` 0.6 is a stable release of the family, but the
   AppKit surface is generated and some generated APIs are deprecated; pin the
   versions and treat a move as deliberate.

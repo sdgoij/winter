@@ -16,6 +16,7 @@ use objc2_foundation::{
 };
 use utils::InclusiveRect;
 
+use winter::layout::{Axis, Fraction, SplitPath};
 use winter::scrollbar;
 use winter::tabs::{self, TabBox};
 
@@ -216,22 +217,99 @@ pub(crate) fn pane_rect(bounds: NSRect) -> NSRect {
     )
 }
 
-/// The whole-cell area the terminal's pixels fill.
-pub(crate) fn grid_rect(_bounds: NSRect, scale: f64, cell: (u16, u16), grid: (i32, i32)) -> NSRect {
-    let width = f64::from(cell.0) * f64::from(grid.0.max(1)) / scale;
-    let height = f64::from(cell.1) * f64::from(grid.1.max(1)) / scale;
-    NSRect::new(NSPoint::new(PANE_LEFT, STRIP_HEIGHT), NSSize::new(width, height))
+/// The part of `area` a pane's fraction covers.
+pub(crate) fn fraction_rect(area: NSRect, fraction: Fraction) -> NSRect {
+    NSRect::new(
+        NSPoint::new(
+            area.origin.x + area.size.width * f64::from(fraction.x),
+            area.origin.y + area.size.height * f64::from(fraction.y),
+        ),
+        NSSize::new(
+            area.size.width * f64::from(fraction.width),
+            area.size.height * f64::from(fraction.height),
+        ),
+    )
 }
 
-/// The find bar's backdrop, behind the field, buttons and count.
+/// The whole-cell area the terminal's pixels fill.
+pub(crate) fn pane_grid_rect(rect: NSRect, scale: f64, cell: (u16, u16), grid: (i32, i32)) -> NSRect {
+    let width = f64::from(cell.0) * f64::from(grid.0.max(1)) / scale;
+    let height = f64::from(cell.1) * f64::from(grid.1.max(1)) / scale;
+    NSRect::new(
+        NSPoint::new(rect.origin.x + PANE_LEFT, rect.origin.y),
+        NSSize::new(width, height),
+    )
+}
+
+/// The half a split of `rect` gives its new, second pane.
+pub(crate) fn split_second(rect: NSRect, axis: Axis) -> NSRect {
+    match axis {
+        Axis::Horizontal => NSRect::new(
+            NSPoint::new(rect.origin.x + rect.size.width / 2.0, rect.origin.y),
+            NSSize::new(rect.size.width / 2.0, rect.size.height),
+        ),
+        Axis::Vertical => NSRect::new(
+            NSPoint::new(rect.origin.x, rect.origin.y + rect.size.height / 2.0),
+            NSSize::new(rect.size.width, rect.size.height / 2.0),
+        ),
+    }
+}
+
+/// A pane's scrollbar track, on its right edge.
+pub(crate) fn pane_scrollbar_rect(rect: NSRect) -> NSRect {
+    NSRect::new(
+        NSPoint::new(
+            rect.origin.x + rect.size.width - f64::from(scrollbar::WIDTH),
+            rect.origin.y,
+        ),
+        NSSize::new(f64::from(scrollbar::WIDTH), rect.size.height),
+    )
+}
+
+/// The split whose divider is within `grab` points of `point`, if any.
+pub(crate) fn divider_at(
+    bounds: NSRect,
+    splits: &[(SplitPath, Axis, Fraction, f32)],
+    point: (f64, f64),
+    grab: f64,
+) -> Option<(SplitPath, Axis, NSRect)> {
+    let area = pane_rect(bounds);
+    // The deepest split wins, so a nested divider is not lost under its parent.
+    for (path, axis, fraction, ratio) in splits.iter().rev() {
+        let split = fraction_rect(area, *fraction);
+        match axis {
+            Axis::Horizontal => {
+                let x = split.origin.x + split.size.width * f64::from(*ratio);
+                if (point.0 - x).abs() <= grab
+                    && point.1 >= split.origin.y
+                    && point.1 <= split.origin.y + split.size.height
+                {
+                    return Some((path.clone(), *axis, split));
+                }
+            }
+            Axis::Vertical => {
+                let y = split.origin.y + split.size.height * f64::from(*ratio);
+                if (point.1 - y).abs() <= grab
+                    && point.0 >= split.origin.x
+                    && point.0 <= split.origin.x + split.size.width
+                {
+                    return Some((path.clone(), *axis, split));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The find bar's backdrop inside a pane.
 ///
 /// The controls are subviews; this is the panel behind them, so the terminal's
 /// text does not show through the count or beside the field. The overlay layer
 /// the Metal path draws above its content uses the same geometry.
-pub(crate) fn find_backdrop_rect(bounds: NSRect) -> NSRect {
-    let width = (bounds.size.width - 16.0).clamp(0.0, 342.0);
+pub(crate) fn find_backdrop_rect(pane: NSRect) -> NSRect {
+    let width = (pane.size.width - 16.0).clamp(0.0, 342.0);
     NSRect::new(
-        NSPoint::new(bounds.size.width - width - 8.0, STRIP_HEIGHT + 4.0),
+        NSPoint::new(pane.origin.x + pane.size.width - width - 8.0, pane.origin.y + 4.0),
         NSSize::new(width, 32.0),
     )
 }
@@ -376,6 +454,28 @@ fn text_width(text: &str, font: &NSFont, mtm: MainThreadMarker) -> f64 {
     attributed(text, &attributes).map_or(0.0, |text| text.size().width)
 }
 
+/// One pane the chrome paints.
+pub(crate) struct PanePaint<'a> {
+    /// The pane's area in the view's points.
+    pub(crate) rect: NSRect,
+    /// The grid's rectangle inside the pane.
+    pub(crate) grid_rect: NSRect,
+    /// The pane's own fill.
+    pub(crate) fill: (u8, u8, u8),
+    /// The terminal's pixels, when the view blits them.
+    pub(crate) frame: Option<&'a crate::frame::Frame>,
+    /// The scrollbar's scroll, document height and visible rows.
+    pub(crate) scroll: (i32, i32, i32),
+    /// The prompt ticks.
+    pub(crate) marks: &'a [winter::grid::MarkTick],
+    /// The bell's opacity, while this pane flashes.
+    pub(crate) bell: Option<f32>,
+    /// Whether this pane's find bar is showing.
+    pub(crate) find_open: bool,
+    /// Whether this pane has the focus.
+    pub(crate) focused: bool,
+}
+
 /// What the chrome paints from.
 pub(crate) struct ChromeState<'a> {
     /// The strip's layout.
@@ -383,9 +483,9 @@ pub(crate) struct ChromeState<'a> {
     /// The active tab's index.
     pub(crate) active: usize,
     /// The tab titles, in order.
-    pub(crate) titles: &'a [String],
+    pub(crate) titles: Vec<String>,
     /// The program each tab runs, in order, for the tabs' icons.
-    pub(crate) programs: &'a [String],
+    pub(crate) programs: Vec<String>,
     /// The tab the pointer is over.
     pub(crate) hovered_tab: Option<usize>,
     /// The tab whose close box the pointer is over.
@@ -396,30 +496,16 @@ pub(crate) struct ChromeState<'a> {
     pub(crate) hovered_menu: bool,
     /// The strip's colours.
     pub(crate) colors: StripColors,
-    /// The pane's own fill.
-    pub(crate) pane: (u8, u8, u8),
-    /// The terminal's pixels.
-    pub(crate) frame: Option<&'a crate::frame::Frame>,
-    /// Whether to paint the find backdrop and the bell. The Metal path draws
+    /// The active tab's panes.
+    pub(crate) panes: &'a [PanePaint<'a>],
+    /// The active tab's split tree, for its dividers.
+    pub(crate) splits: &'a [(SplitPath, Axis, Fraction, f32)],
+    /// Whether to paint the find backdrop and the bells. The Metal path draws
     /// them as layers above its content instead.
     pub(crate) overlays: bool,
-    /// The scale the frame was painted at.
-    pub(crate) scale: f64,
-    /// The grid in cells.
-    pub(crate) grid: (i32, i32),
-    /// The cell size in physical pixels.
-    pub(crate) cell: (u16, u16),
-    /// The scrollbar's scroll, document height and visible rows.
-    pub(crate) scroll: (i32, i32, i32),
-    /// The prompt ticks.
-    pub(crate) marks: &'a [winter::grid::MarkTick],
-    /// The bell's opacity, while it flashes.
-    pub(crate) bell_alpha: Option<f32>,
-    /// Whether the find bar's controls are showing.
-    pub(crate) find_open: bool,
 }
 
-/// Draws the strip, the pane and its scrollbar.
+/// Draws the strip, the panes and their scrollbars.
 pub(crate) fn paint(bounds: NSRect, state: &ChromeState<'_>, mtm: MainThreadMarker) {
     let strip_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(bounds.size.width, STRIP_HEIGHT));
 
@@ -436,28 +522,51 @@ pub(crate) fn paint(bounds: NSRect, state: &ChromeState<'_>, mtm: MainThreadMark
     draw_tabs(bounds, state, mtm);
     draw_buttons(state);
 
-    // The pane covers the tabs' overhang, so a tab meets the terminal.
-    let pane = pane_rect(bounds);
-    fill(pane, state.pane);
-
-    if let Some(frame) = state.frame {
-        let rect = grid_rect(bounds, state.scale, state.cell, state.grid);
-        frame.draw(NSRect::new(
-            rect.origin,
-            NSSize::new(
-                rect.size.width.min(pane.size.width),
-                rect.size.height.min(pane.size.height),
-            ),
-        ));
+    // The panes cover the tabs' overhang, so a tab meets the terminal.
+    for pane in state.panes {
+        fill(pane.rect, pane.fill);
     }
 
-    if state.overlays && state.find_open {
-        draw_find_backdrop(bounds, state);
+    for pane in state.panes {
+        if let Some(frame) = pane.frame {
+            let room = NSRect::new(
+                pane.grid_rect.origin,
+                NSSize::new(
+                    pane.grid_rect
+                        .size
+                        .width
+                        .min((pane.rect.size.width - PANE_LEFT).max(1.0)),
+                    pane.grid_rect.size.height.min(pane.rect.size.height.max(1.0)),
+                ),
+            );
+            frame.draw(room);
+        }
     }
 
-    draw_scrollbar(bounds, state);
+    draw_dividers(bounds, state);
+
     if state.overlays {
-        draw_bell(pane, state);
+        for pane in state.panes {
+            if pane.find_open {
+                draw_find_backdrop(pane.rect, state.colors);
+            }
+        }
+    }
+
+    for pane in state.panes {
+        draw_scrollbar(pane);
+    }
+
+    if state.overlays {
+        for pane in state.panes {
+            draw_bell(pane.rect, pane.bell);
+        }
+    }
+
+    for pane in state.panes {
+        if state.panes.len() > 1 && pane.focused {
+            draw_focus_border(pane);
+        }
     }
 }
 
@@ -546,23 +655,63 @@ fn draw_buttons(state: &ChromeState<'_>) {
     glyph_chevron(menu_centre, text);
 }
 
-fn draw_scrollbar(bounds: NSRect, state: &ChromeState<'_>) {
-    let (scroll, document, visible) = state.scroll;
-    let track = (bounds.size.height - STRIP_HEIGHT).max(0.0);
+fn draw_dividers(bounds: NSRect, state: &ChromeState<'_>) {
+    if state.panes.len() < 2 {
+        return;
+    }
+    let area = pane_rect(bounds);
+    for (_path, axis, fraction, ratio) in state.splits {
+        let split = fraction_rect(area, *fraction);
+        let rect = match axis {
+            Axis::Horizontal => NSRect::new(
+                NSPoint::new(
+                    split.origin.x + split.size.width * f64::from(*ratio) - 0.5,
+                    split.origin.y,
+                ),
+                NSSize::new(1.0, split.size.height),
+            ),
+            Axis::Vertical => NSRect::new(
+                NSPoint::new(
+                    split.origin.x,
+                    split.origin.y + split.size.height * f64::from(*ratio) - 0.5,
+                ),
+                NSSize::new(split.size.width, 1.0),
+            ),
+        };
+        NSColor::colorWithSRGBRed_green_blue_alpha(0.5, 0.5, 0.5, 0.35).setFill();
+        NSBezierPath::fillRect(rect);
+    }
+}
+
+fn draw_focus_border(pane: &PanePaint<'_>) {
+    let rect = NSRect::new(
+        NSPoint::new(pane.rect.origin.x + 0.5, pane.rect.origin.y + 0.5),
+        NSSize::new(
+            (pane.rect.size.width - 1.0).max(1.0),
+            (pane.rect.size.height - 1.0).max(1.0),
+        ),
+    );
+    let path = NSBezierPath::bezierPathWithRect(rect);
+    color(blend(pane.fill, contrasting(pane.fill), 0.45)).setStroke();
+    path.setLineWidth(1.0);
+    path.stroke();
+}
+
+fn draw_scrollbar(pane: &PanePaint<'_>) {
+    let (scroll, document, visible) = pane.scroll;
+    let track_rect = pane_scrollbar_rect(pane.rect);
+    let track = track_rect.size.height.max(0.0);
     if document <= visible || track <= 0.0 {
         return;
     }
 
-    let width = f64::from(scrollbar::WIDTH);
-    let left = bounds.size.width - width;
-    let track_rect = NSRect::new(NSPoint::new(left, STRIP_HEIGHT), NSSize::new(width, track));
     NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, 0.35).setFill();
     NSBezierPath::fillRect(track_rect);
 
     let (top, height) = scrollbar::thumb_pixels(scroll, document, visible, track);
     let thumb = NSRect::new(
-        NSPoint::new(left + 1.0, STRIP_HEIGHT + top),
-        NSSize::new((width - 2.0).max(1.0), height),
+        NSPoint::new(track_rect.origin.x + 1.0, track_rect.origin.y + top),
+        NSSize::new((track_rect.size.width - 2.0).max(1.0), height),
     );
     let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(thumb, 2.0, 2.0);
     NSColor::colorWithSRGBRed_green_blue_alpha(0.63, 0.63, 0.63, 0.8).setFill();
@@ -570,10 +719,13 @@ fn draw_scrollbar(bounds: NSRect, state: &ChromeState<'_>) {
 
     // Ticks come after the thumb, the way upstream declares its mark image
     // above the scroll bar (ADR 059).
-    for mark in state.marks {
+    for mark in pane.marks {
         let position = scrollbar::position(mark.row, document);
-        let top = STRIP_HEIGHT + f64::from(position) * track - 0.75;
-        let rect = NSRect::new(NSPoint::new(left, top), NSSize::new(width, 1.5));
+        let top = track_rect.origin.y + f64::from(position) * track - 0.75;
+        let rect = NSRect::new(
+            NSPoint::new(track_rect.origin.x, top),
+            NSSize::new(track_rect.size.width, 1.5),
+        );
         if mark.error {
             NSColor::colorWithSRGBRed_green_blue_alpha(0.92, 0.35, 0.35, 0.95).setFill();
         } else {
@@ -583,17 +735,17 @@ fn draw_scrollbar(bounds: NSRect, state: &ChromeState<'_>) {
     }
 }
 
-fn draw_bell(pane: NSRect, state: &ChromeState<'_>) {
-    let Some(alpha) = state.bell_alpha else {
+fn draw_bell(rect: NSRect, bell: Option<f32>) {
+    let Some(alpha) = bell else {
         return;
     };
     NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, f64::from(alpha) * 0.12).setFill();
-    NSBezierPath::fillRect(pane);
+    NSBezierPath::fillRect(rect);
 }
 
-fn draw_find_backdrop(bounds: NSRect, state: &ChromeState<'_>) {
-    let rect = find_backdrop_rect(bounds);
-    let fill_color = state.colors.row.unwrap_or(state.colors.active);
+fn draw_find_backdrop(pane: NSRect, colors: StripColors) {
+    let rect = find_backdrop_rect(pane);
+    let fill_color = colors.row.unwrap_or(colors.active);
     let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 6.0, 6.0);
     color(fill_color).setFill();
     path.fill();
@@ -731,8 +883,13 @@ fn glyph_cross(centre: NSPoint, value: (u8, u8, u8)) {
 
 /// The pane's grid for a view of `bounds` points at `scale`.
 pub(crate) fn grid_for(bounds: NSRect, scale: f64, cell: (u16, u16)) -> (i32, i32) {
-    let width = (bounds.size.width - PANE_LEFT - f64::from(scrollbar::WIDTH)).max(0.0);
-    let height = (bounds.size.height - STRIP_HEIGHT).max(0.0);
+    pane_grid(pane_rect(bounds), scale, cell)
+}
+
+/// The grid a pane of `rect` points holds at `scale`.
+pub(crate) fn pane_grid(rect: NSRect, scale: f64, cell: (u16, u16)) -> (i32, i32) {
+    let width = (rect.size.width - PANE_LEFT - f64::from(scrollbar::WIDTH)).max(0.0);
+    let height = rect.size.height.max(0.0);
     let columns = (width * scale / f64::from(cell.0.max(1))).floor();
     let rows = (height * scale / f64::from(cell.1.max(1))).floor();
     (whole_cells(columns), whole_cells(rows))
@@ -758,6 +915,7 @@ pub(crate) const fn viewport(grid: (i32, i32)) -> InclusiveRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winter::layout::PaneId;
 
     #[test]
     fn the_strip_starts_after_the_traffic_lights() {
@@ -937,9 +1095,9 @@ mod tests {
     }
 
     #[test]
-    fn the_find_backdrop_is_a_panel_below_the_strip() {
+    fn the_find_backdrop_is_a_panel_inside_the_pane() {
         let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(900.0, 600.0));
-        let rect = find_backdrop_rect(bounds);
+        let rect = find_backdrop_rect(pane_rect(bounds));
 
         assert_eq!(rect.origin, NSPoint::new(900.0 - 342.0 - 8.0, STRIP_HEIGHT + 4.0));
         assert_eq!(rect.size, NSSize::new(342.0, 32.0));
@@ -948,10 +1106,66 @@ mod tests {
     #[test]
     fn a_narrow_window_shrinks_the_find_backdrop() {
         let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(200.0, 100.0));
-        let rect = find_backdrop_rect(bounds);
+        let rect = find_backdrop_rect(pane_rect(bounds));
 
         assert_eq!(rect.origin, NSPoint::new(8.0, STRIP_HEIGHT + 4.0));
         assert_eq!(rect.size, NSSize::new(184.0, 32.0));
+    }
+
+    #[test]
+    fn a_pane_fraction_maps_to_its_part_of_the_area_below_the_strip() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
+        let area = pane_rect(bounds);
+        let right_half = fraction_rect(
+            area,
+            Fraction {
+                x: 0.5,
+                y: 0.0,
+                width: 0.5,
+                height: 1.0,
+            },
+        );
+
+        assert_eq!(right_half.origin, NSPoint::new(400.0, STRIP_HEIGHT));
+        assert_eq!(right_half.size, NSSize::new(400.0, 566.0));
+    }
+
+    #[test]
+    fn a_pane_computes_its_own_grid() {
+        let pane = NSRect::new(NSPoint::new(400.0, STRIP_HEIGHT), NSSize::new(400.0, 566.0));
+        // 400 - 8 - 10 = 382 points, at scale 2 and an 8-pixel cell that is 95
+        // columns; 566 points is 70 rows at 16 pixels.
+        assert_eq!(pane_grid(pane, 2.0, (8, 16)), (95, 70));
+        assert_eq!(
+            pane_grid_rect(pane, 2.0, (8, 16), (95, 70)).origin,
+            NSPoint::new(400.0 + PANE_LEFT, STRIP_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn a_split_gives_the_new_pane_the_second_half() {
+        let rect = NSRect::new(NSPoint::new(100.0, 34.0), NSSize::new(400.0, 300.0));
+
+        let right = split_second(rect, Axis::Horizontal);
+        assert_eq!(right.origin, NSPoint::new(300.0, 34.0));
+        assert_eq!(right.size, NSSize::new(200.0, 300.0));
+
+        let down = split_second(rect, Axis::Vertical);
+        assert_eq!(down.origin, NSPoint::new(100.0, 184.0));
+        assert_eq!(down.size, NSSize::new(400.0, 150.0));
+    }
+
+    #[test]
+    fn a_divider_is_grabbed_within_its_width() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0));
+        let mut layout = winter::layout::Layout::leaf(PaneId(0));
+        assert!(layout.split(PaneId(0), Axis::Horizontal, PaneId(1)));
+        let splits = layout.splits();
+
+        let hit = divider_at(bounds, &splits, (401.0, 200.0), 3.0);
+        assert_eq!(hit.map(|(_, axis, _)| axis), Some(Axis::Horizontal));
+        assert!(divider_at(bounds, &splits, (420.0, 200.0), 3.0).is_none());
+        assert!(divider_at(bounds, &splits, (400.0, 10.0), 3.0).is_none(), "the strip");
     }
 
     #[test]
