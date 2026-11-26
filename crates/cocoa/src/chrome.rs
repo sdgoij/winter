@@ -232,6 +232,146 @@ pub(crate) fn find_backdrop_rect(bounds: NSRect) -> NSRect {
     )
 }
 
+/// The command palette card's width in points.
+const PALETTE_WIDTH: f64 = 480.0;
+/// The card's inner padding.
+const PALETTE_PAD: f64 = 8.0;
+/// The query field's height.
+const PALETTE_FIELD: f64 = 24.0;
+/// One row's height.
+const PALETTE_ROW: f64 = 24.0;
+/// The list's cap, matching the GTK card's 320 points.
+const PALETTE_MAX_ROWS: usize = 13;
+/// The card's top edge, below the strip.
+const PALETTE_TOP: f64 = STRIP_HEIGHT + 16.0;
+
+/// The rows the card shows for `rows` entries; an empty filter keeps one line
+/// for the notice.
+pub(crate) fn palette_visible_rows(rows: usize) -> usize {
+    rows.clamp(1, PALETTE_MAX_ROWS)
+}
+
+/// The first row drawn, so the selection stays on screen.
+pub(crate) fn palette_first_visible(rows: usize, selected: usize) -> usize {
+    let visible = palette_visible_rows(rows);
+    if rows <= visible {
+        0
+    } else {
+        selected.saturating_sub(visible - 1)
+    }
+}
+
+/// The card's frame in the view's points.
+pub(crate) fn palette_rect(bounds: NSRect, rows: usize) -> NSRect {
+    let visible = palette_visible_rows(rows);
+    let width = PALETTE_WIDTH.min((bounds.size.width - 32.0).max(160.0));
+    let height = 2.0 * PALETTE_PAD + PALETTE_FIELD + PALETTE_ROW * visible as f64;
+    NSRect::new(
+        NSPoint::new(((bounds.size.width - width) / 2.0).max(8.0), PALETTE_TOP),
+        NSSize::new(width, height),
+    )
+}
+
+/// The query field inside the card, in the card's own coordinates (its bounds
+/// origin is `0, 0`).
+pub(crate) fn palette_field_rect(card: NSRect) -> NSRect {
+    NSRect::new(
+        NSPoint::new(PALETTE_PAD, PALETTE_PAD),
+        NSSize::new((card.size.width - 2.0 * PALETTE_PAD).max(1.0), PALETTE_FIELD),
+    )
+}
+
+/// The row under `point` (in the card's coordinates), as an index into the
+/// filtered rows. `first` is the first row drawn.
+pub(crate) fn palette_row_at(point: (f64, f64), rows: usize, first: usize) -> Option<usize> {
+    let list_top = PALETTE_PAD + PALETTE_FIELD;
+    if point.1 < list_top {
+        return None;
+    }
+    let offset = ((point.1 - list_top) / PALETTE_ROW).floor() as usize;
+    if offset >= palette_visible_rows(rows) {
+        return None;
+    }
+    let index = first + offset;
+    (index < rows).then_some(index)
+}
+
+/// What the palette card paints.
+pub(crate) struct PalettePaint<'a> {
+    pub(crate) rows: &'a [winter::palette::Entry],
+    pub(crate) selected: usize,
+    pub(crate) first: usize,
+    pub(crate) colors: StripColors,
+}
+
+/// Draws the command palette's card, rows and selection.
+pub(crate) fn paint_palette(bounds: NSRect, state: &PalettePaint<'_>, mtm: MainThreadMarker) {
+    let card = state.colors.row.unwrap_or(state.colors.active);
+    let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bounds, 8.0, 8.0);
+    color(card).setFill();
+    path.fill();
+    // A hairline, because a shadow would need a layer of its own above the
+    // content layer.
+    color(blend(card, state.colors.active_text, 0.18)).setStroke();
+    path.setLineWidth(1.0);
+    path.stroke();
+
+    let text = state.colors.active_text;
+    let dim = blend(text, card, 0.45);
+    let font = NSFont::systemFontOfSize(12.0);
+    let chord_font = NSFont::systemFontOfSize(11.0);
+    let list_top = PALETTE_PAD + PALETTE_FIELD;
+    let left = PALETTE_PAD + 4.0;
+    let width = (bounds.size.width - 2.0 * PALETTE_PAD - 8.0).max(1.0);
+
+    if state.rows.is_empty() {
+        draw_text("No matching command", left, list_top + 6.0, width, dim, &font, mtm);
+        return;
+    }
+
+    for offset in 0..palette_visible_rows(state.rows.len()) {
+        let index = state.first + offset;
+        let Some(entry) = state.rows.get(index) else {
+            break;
+        };
+        let top = list_top + offset as f64 * PALETTE_ROW;
+
+        if index == state.selected {
+            let rect = NSRect::new(
+                NSPoint::new(PALETTE_PAD, top),
+                NSSize::new(bounds.size.width - 2.0 * PALETTE_PAD, PALETTE_ROW),
+            );
+            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, 4.0, 4.0);
+            color(blend(card, text, 0.18)).setFill();
+            path.fill();
+        }
+
+        let chord = entry.chord.as_deref().map(|chord| {
+            let width = text_width(chord, &chord_font, mtm);
+            (chord, width)
+        });
+        let chord_room = chord.map_or(0.0, |(_, width)| width + 12.0);
+        draw_text(&entry.label, left, top + 6.0, width - chord_room, text, &font, mtm);
+        if let Some((chord, chord_width)) = chord {
+            draw_text(
+                chord,
+                bounds.size.width - PALETTE_PAD - 4.0 - chord_width,
+                top + 7.0,
+                chord_width + 2.0,
+                dim,
+                &chord_font,
+                mtm,
+            );
+        }
+    }
+}
+
+/// The width `text` draws at with `font`.
+fn text_width(text: &str, font: &NSFont, mtm: MainThreadMarker) -> f64 {
+    let attributes = text_attributes((255, 255, 255), font, mtm);
+    attributed(text, &attributes).map_or(0.0, |text| text.size().width)
+}
+
 /// What the chrome paints from.
 pub(crate) struct ChromeState<'a> {
     /// The strip's layout.
@@ -794,5 +934,64 @@ mod tests {
 
         assert_eq!(rect.origin, NSPoint::new(8.0, STRIP_HEIGHT + 4.0));
         assert_eq!(rect.size, NSSize::new(184.0, 32.0));
+    }
+
+    #[test]
+    fn the_palette_card_is_centred_below_the_strip() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(900.0, 600.0));
+        let card = palette_rect(bounds, 3);
+
+        assert_eq!(card.origin.x, (900.0 - PALETTE_WIDTH) / 2.0);
+        assert_eq!(card.origin.y, STRIP_HEIGHT + 16.0);
+        assert_eq!(card.size.width, PALETTE_WIDTH);
+        assert_eq!(card.size.height, 2.0 * PALETTE_PAD + PALETTE_FIELD + 3.0 * PALETTE_ROW);
+    }
+
+    #[test]
+    fn an_empty_palette_keeps_one_line_for_the_notice() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(900.0, 600.0));
+        assert_eq!(palette_rect(bounds, 0).size.height, palette_rect(bounds, 1).size.height);
+    }
+
+    #[test]
+    fn a_narrow_window_shrinks_the_palette_card() {
+        let bounds = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(200.0, 100.0));
+        let card = palette_rect(bounds, 1);
+
+        assert_eq!(card.origin.x, 16.0, "still centred while it fits");
+        assert_eq!(card.size.width, 168.0);
+    }
+
+    #[test]
+    fn the_palette_keeps_the_selected_row_visible() {
+        assert_eq!(
+            palette_first_visible(3, 2),
+            0,
+            "a list shorter than the card never scrolls"
+        );
+        assert_eq!(palette_first_visible(20, 0), 0);
+        assert_eq!(palette_first_visible(20, PALETTE_MAX_ROWS - 1), 0);
+        assert_eq!(palette_first_visible(20, PALETTE_MAX_ROWS), 1);
+        assert_eq!(
+            palette_first_visible(20, 19),
+            20 - PALETTE_MAX_ROWS,
+            "the last row sits at the bottom"
+        );
+    }
+
+    #[test]
+    fn a_palette_click_names_the_row_under_it() {
+        let list_top = PALETTE_PAD + PALETTE_FIELD;
+        let point = |y: f64| (PALETTE_PAD + 1.0, y);
+
+        assert_eq!(palette_row_at(point(list_top + 1.0), 3, 0), Some(0));
+        assert_eq!(palette_row_at(point(list_top + PALETTE_ROW + 1.0), 3, 0), Some(1));
+        assert_eq!(palette_row_at(point(list_top - 1.0), 3, 0), None, "the field's row");
+        assert_eq!(
+            palette_row_at(point(list_top + 3.0 * PALETTE_ROW + 1.0), 3, 0),
+            None,
+            "past the last row"
+        );
+        assert_eq!(palette_row_at(point(list_top + 1.0), 20, 5), Some(5), "a scrolled list");
     }
 }

@@ -42,7 +42,7 @@ use objc2_quartz_core::{CALayer, CAMetalLayer, CATransaction};
 
 use self::chrome::STRIP_HEIGHT;
 use self::shell::Shell;
-use self::view::TerminalView;
+use self::view::{PaletteView, TerminalView};
 
 pub(crate) mod chrome;
 pub(crate) mod frame;
@@ -77,7 +77,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: every window and control here is created on the main thread,
     // which AppKit requires, and each is retained by the controller or by its
     // superview.
-    let (window, view, search, previous, next, count) = unsafe {
+    let (window, view, search, previous, next, count, palette, palette_field) = unsafe {
         let window = NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),
             NSRect::new(NSPoint::new(0.0, 0.0), initial),
@@ -135,7 +135,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         next.setHidden(true);
         count.setHidden(true);
 
-        (window, view, search, previous, next, count)
+        // The palette's card is the last subview, so it sits above the grid
+        // layer and the find controls; its field is part of the card.
+        let palette = PaletteView::new(Rc::clone(&shell), mtm);
+        let palette_field = NSSearchField::initWithFrame(
+            NSSearchField::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(440.0, 24.0)),
+        );
+        palette_field.setPlaceholderString(Some(&NSString::from_str("Type a command")));
+        // The action is Enter; the rows filter on `controlTextDidChange:`, so no
+        // pause or keystroke may run the selected row.
+        palette_field.setSendsSearchStringImmediately(false);
+        palette_field.setSendsWholeSearchString(true);
+        palette.addSubview(&palette_field);
+        view.addSubview(&palette);
+        palette.setHidden(true);
+
+        (window, view, search, previous, next, count, palette, palette_field)
     };
 
     set_appearance(&window, shell.borrow().prefers_dark());
@@ -150,6 +166,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         next.clone(),
         count.clone(),
         layers,
+        palette,
+        palette_field.clone(),
         mtm,
     );
 
@@ -163,6 +181,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         previous.setAction(Some(sel!(findPrevious:)));
         next.setTarget(Some(controller.as_ref()));
         next.setAction(Some(sel!(findNext:)));
+        palette_field.setTarget(Some(controller.as_ref()));
+        palette_field.setAction(Some(sel!(paletteRun:)));
+        palette_field.setDelegate(Some(ProtocolObject::from_ref(&*controller)));
 
         window.setDelegate(Some(ProtocolObject::from_ref(&*controller)));
         app.setDelegate(Some(ProtocolObject::from_ref(&*controller)));
@@ -209,6 +230,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var_os("WINTER_OPEN_FIND").is_some() {
         shell.borrow_mut().toggle_find();
         controller.sync_find();
+    }
+    if std::env::var_os("WINTER_OPEN_PALETTE").is_some() {
+        shell.borrow_mut().toggle_palette();
+        controller.sync_palette();
     }
     app.run();
 
@@ -377,6 +402,10 @@ struct ControllerIvars {
     previous: Retained<NSButton>,
     next: Retained<NSButton>,
     count: Retained<NSTextField>,
+    /// The palette's card, and the field inside it.
+    palette: Retained<PaletteView>,
+    palette_field: Retained<NSSearchField>,
+    palette_shown: Cell<bool>,
     settings_window: RefCell<Option<Retained<settings::SettingsWindow>>>,
     timer: RefCell<Option<Retained<NSTimer>>>,
     find_shown: Cell<bool>,
@@ -446,6 +475,7 @@ define_class!(
             }
 
             self.sync_find();
+            self.sync_palette();
             if tick.redraw {
                 self.ivars().view.setNeedsDisplay(true);
             }
@@ -519,6 +549,18 @@ define_class!(
             self.finish_find();
         }
 
+        #[unsafe(method(togglePalette:))]
+        fn toggle_palette(&self, _sender: Option<&AnyObject>) {
+            self.ivars().shell.borrow_mut().toggle_palette();
+            self.sync_palette();
+        }
+
+        #[unsafe(method(paletteRun:))]
+        fn palette_run(&self, _sender: Option<&AnyObject>) {
+            self.ivars().shell.borrow_mut().run_selected_palette();
+            self.sync_palette();
+        }
+
         #[unsafe(method(openSettings:))]
         fn open_settings(&self, _sender: Option<&AnyObject>) {
             self.open_settings_window();
@@ -576,6 +618,7 @@ define_class!(
                 .borrow_mut()
                 .resize((bounds.size.width, bounds.size.height), window.backingScaleFactor() as f32);
             self.layout_find();
+            self.sync_palette();
             self.sync_layers();
             self.ivars().view.setNeedsDisplay(true);
         }
@@ -599,15 +642,54 @@ define_class!(
         #[unsafe(method(control:textView:doCommandBySelector:))]
         fn control_text_view_do_command(
             &self,
-            _control: &objc2_app_kit::NSControl,
+            control: &objc2_app_kit::NSControl,
             _text_view: &NSTextView,
             selector: Sel,
         ) -> objc2::runtime::Bool {
-            if selector == sel!(cancelOperation:) {
+            let palette = std::ptr::eq(control, &***self.ivars().palette_field);
+            if palette && selector == sel!(cancelOperation:) {
+                self.finish_palette();
+                return true.into();
+            }
+            if palette && selector == sel!(moveUp:) {
+                self.step_palette(false);
+                return true.into();
+            }
+            if palette && selector == sel!(moveDown:) {
+                self.step_palette(true);
+                return true.into();
+            }
+            if palette && selector == sel!(insertNewline:) {
+                // Return runs the row even if the field editor consumes the
+                // action; `paletteRun:` covers the other path.
+                self.ivars().shell.borrow_mut().run_selected_palette();
+                self.sync_palette();
+                return true.into();
+            }
+            if !palette && selector == sel!(cancelOperation:) {
                 self.finish_find();
                 return true.into();
             }
             false.into()
+        }
+
+        #[unsafe(method(controlTextDidChange:))]
+        fn control_text_did_change(&self, notification: &NSNotification) {
+            let Some(object) = notification.object() else {
+                return;
+            };
+            let Some(field) = object.downcast_ref::<NSSearchField>() else {
+                return;
+            };
+            if !std::ptr::eq(field, &*self.ivars().palette_field) {
+                return;
+            }
+            self.ivars()
+                .shell
+                .borrow_mut()
+                .palette_filter(field.stringValue().to_string());
+            self.layout_palette();
+            self.ivars().palette.setNeedsDisplay(true);
         }
     }
 
@@ -627,6 +709,8 @@ impl Controller {
         next: Retained<NSButton>,
         count: Retained<NSTextField>,
         layers: Option<Layers>,
+        palette: Retained<PaletteView>,
+        palette_field: Retained<NSSearchField>,
         mtm: MainThreadMarker,
     ) -> Retained<Self> {
         let dark = shell.borrow().prefers_dark();
@@ -638,6 +722,9 @@ impl Controller {
             previous,
             next,
             count,
+            palette,
+            palette_field,
+            palette_shown: Cell::new(false),
             settings_window: RefCell::new(None),
             timer: RefCell::new(None),
             find_shown: Cell::new(false),
@@ -708,6 +795,46 @@ impl Controller {
             format!("{current} of {total}")
         };
         self.ivars().count.setStringValue(&NSString::from_str(&text));
+    }
+
+    /// Shows, fits or hides the palette's card to match the shell.
+    fn sync_palette(&self) {
+        let open = self.ivars().shell.borrow().palette_open();
+        let focus = self.ivars().shell.borrow_mut().take_palette_focus();
+        let ivars = self.ivars();
+
+        if open {
+            if !ivars.palette_shown.replace(true) {
+                ivars.palette.setHidden(false);
+            }
+            self.layout_palette();
+            if focus {
+                ivars.window.makeFirstResponder(Some(&ivars.palette_field));
+            }
+        } else if ivars.palette_shown.replace(false) {
+            ivars.palette.setHidden(true);
+            ivars.palette_field.setStringValue(&NSString::from_str(""));
+            ivars.window.makeFirstResponder(Some(&ivars.view));
+        }
+    }
+
+    /// Fits the card and its field to the rows the filter leaves.
+    fn layout_palette(&self) {
+        let rows = self.ivars().shell.borrow().palette_rows().len();
+        let card = chrome::palette_rect(self.ivars().view.bounds(), rows);
+        self.ivars().palette.setFrame(card);
+        self.ivars().palette_field.setFrame(chrome::palette_field_rect(card));
+    }
+
+    /// Closes the palette and gives the keyboard back to the pane.
+    fn finish_palette(&self) {
+        self.ivars().shell.borrow_mut().close_palette();
+        self.sync_palette();
+    }
+
+    fn step_palette(&self, forward: bool) {
+        self.ivars().shell.borrow_mut().palette_step(forward);
+        self.ivars().palette.setNeedsDisplay(true);
     }
 
     fn layout_find(&self) {
@@ -969,6 +1096,14 @@ fn install_menu(app: &NSApplication, controller: &Controller, mtm: MainThreadMar
             Some(sel!(toggleFind:)),
             "f",
             NSEventModifierFlags::Command,
+            target,
+        ));
+        shell_menu.addItem(&item(
+            mtm,
+            "Command Palette…",
+            Some(sel!(togglePalette:)),
+            "p",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
             target,
         ));
         shell_item.setSubmenu(Some(&shell_menu));

@@ -58,8 +58,8 @@ These are deliberate and visible, not placeholders:
 - **Panes** are absent from every shipped shell; that is a Phase 9 row, not a
   Linux row. The command palette was a gap here when this shell shipped and is
   now this shell's: `crates/winter/src/palette.rs` holds the rows, filter and
-  selection, and the GTK card draws them. WinUI and macOS still decline the
-  action.
+  selection, and the GTK card draws them. macOS draws the same rows in
+  `crates/cocoa`; WinUI still declines the action.
 
 ## Rationale
 

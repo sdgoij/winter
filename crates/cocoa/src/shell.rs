@@ -22,6 +22,7 @@ use utils::Size;
 
 use winter::find::FindBar;
 use winter::input;
+use winter::palette::{self, Palette};
 use winter::scrollbar::{self, Press, Scrollbar};
 use winter::session::Session;
 use winter::sound::Sound;
@@ -120,6 +121,8 @@ pub(crate) struct Shell {
     settings_requested: bool,
     /// The find field needs the keyboard.
     find_focus: bool,
+    /// The command palette's entries, filter and selection.
+    palette: Palette,
     /// The window should close once the last tab is gone.
     close_requested: bool,
     /// The active tab changed, so the window title must follow it.
@@ -206,6 +209,7 @@ impl Shell {
             menu_requested: false,
             settings_requested: false,
             find_focus: false,
+            palette: Palette::default(),
             close_requested: false,
             title_dirty: false,
             composition: Composition::default(),
@@ -736,6 +740,12 @@ impl Shell {
             return self.command_shortcut(key, modifiers);
         }
 
+        // The palette's field owns the keyboard; a key that still reaches the
+        // view must not reach the terminal.
+        if self.palette.open {
+            return true;
+        }
+
         if let Some(action) = input::chord_action(&self.bindings, key, modifiers)
             && self.perform(action)
         {
@@ -773,7 +783,7 @@ impl Shell {
 
     /// A key release, so a kitty-aware program sees it.
     pub(crate) fn key_up(&mut self, key: Key, modifiers: input::Modifiers) {
-        if modifiers.command {
+        if modifiers.command || self.palette.open {
             return;
         }
         // A printable key was typed through the text path, which carries no key
@@ -855,6 +865,7 @@ impl Shell {
             settings::Action::ScrollToBottom => self.scroll_to(true),
             settings::Action::OpenSettings => self.settings_requested = true,
             settings::Action::Find => self.toggle_find(),
+            settings::Action::CommandPalette => self.toggle_palette(),
             _ => {}
         }
         true
@@ -961,6 +972,100 @@ impl Shell {
         }
     }
 
+    /// Whether the command palette is showing.
+    pub(crate) fn palette_open(&self) -> bool {
+        self.palette.open
+    }
+
+    /// The palette's selected row, for the card's paint.
+    pub(crate) fn palette_selected(&self) -> usize {
+        self.palette.selected
+    }
+
+    /// The rows the current filter leaves, in display order.
+    pub(crate) fn palette_rows(&self) -> Vec<palette::Entry> {
+        let entries = palette::entries(&self.settings, palette_supports);
+        self.palette.rows(&entries).into_iter().cloned().collect()
+    }
+
+    /// Shows or hides the palette.
+    pub(crate) fn toggle_palette(&mut self) {
+        if self.palette.open {
+            self.close_palette();
+        } else {
+            self.open_palette();
+        }
+    }
+
+    /// Opens the palette with an empty query and the first row selected.
+    pub(crate) fn open_palette(&mut self) {
+        // The two overlays never share the pane; the find bar's controls would
+        // sit above the card.
+        self.close_find();
+        // The field takes the keyboard, so a half-composed preview is no longer
+        // where the user is typing.
+        self.clear_composition();
+        self.palette.show();
+    }
+
+    /// Closes the palette and forgets the query.
+    pub(crate) fn close_palette(&mut self) {
+        self.palette.hide();
+    }
+
+    /// Narrows the rows to `filter` and selects the first one.
+    pub(crate) fn palette_filter(&mut self, filter: String) {
+        self.palette.filter = filter;
+        self.palette.selected = 0;
+        let len = self.palette_rows().len();
+        self.palette.clamp(len);
+    }
+
+    /// Moves the selection one row, wrapping at both ends.
+    pub(crate) fn palette_step(&mut self, forward: bool) {
+        let len = self.palette_rows().len();
+        self.palette.step(len, forward);
+    }
+
+    /// Runs the row under a press in the palette card.
+    pub(crate) fn palette_clicked(&mut self, point: (f64, f64)) {
+        let rows = self.palette_rows();
+        let first = chrome::palette_first_visible(rows.len(), self.palette.selected);
+        if let Some(index) = chrome::palette_row_at(point, rows.len(), first) {
+            self.palette.selected = index;
+            self.run_selected_palette();
+        }
+    }
+
+    /// Runs the row Enter chose, if any.
+    pub(crate) fn run_selected_palette(&mut self) {
+        if !self.palette.open {
+            return;
+        }
+        let rows = self.palette_rows();
+        let Some(entry) = rows.get(self.palette.selected) else {
+            return;
+        };
+        let command = entry.command.clone();
+        self.close_palette();
+        self.run_palette_command(command);
+    }
+
+    /// Runs one palette row after the palette has closed.
+    fn run_palette_command(&mut self, command: palette::Command) {
+        match command {
+            palette::Command::Action(action) => {
+                self.perform(action);
+            }
+            palette::Command::Profile(name) => self.open_profile(&name),
+        }
+    }
+
+    /// The palette's focus request, once.
+    pub(crate) fn take_palette_focus(&mut self) -> bool {
+        std::mem::take(&mut self.palette.focus)
+    }
+
     fn active_tracking(&self) -> bool {
         self.tabs.active().is_some_and(|tab| tab.control.is_tracking_mouse())
     }
@@ -1036,6 +1141,14 @@ impl Shell {
         buttons: MouseButtons,
         modifiers: input::Modifiers,
     ) -> bool {
+        // The palette owns the pointer while it shows: a press outside the card
+        // dismisses it and goes no further; a press on the card is the card
+        // view's, so it never reaches this method.
+        if self.palette.open {
+            self.close_palette();
+            return true;
+        }
+
         if point.1 < STRIP_HEIGHT {
             if button != MouseButton::Left {
                 return true;
@@ -1106,6 +1219,11 @@ impl Shell {
 
     /// Handles a pointer move while `buttons` are held.
     pub(crate) fn pointer_moved(&mut self, point: (f64, f64), buttons: MouseButtons, modifiers: input::Modifiers) {
+        // The palette's list is the only thing the pointer moves while it
+        // shows.
+        if self.palette.open {
+            return;
+        }
         if let Some(from) = self.tab_drag {
             if !buttons.left {
                 self.tab_drag = None;
@@ -1220,6 +1338,10 @@ impl Shell {
         buttons: MouseButtons,
         modifiers: input::Modifiers,
     ) {
+        // A press that dismissed the palette started no selection or drag.
+        if self.palette.open {
+            return;
+        }
         if self.tab_drag.take().is_some() {
             return;
         }
@@ -1306,7 +1428,9 @@ impl Shell {
 
     /// Turns a wheel or trackpad scroll into history rows or a mouse report.
     pub(crate) fn wheel(&mut self, point: (f64, f64), delta: f64, precise: bool, shift: bool) {
-        if delta == 0.0 {
+        // The palette's list owns the wheel while it shows; the pane behind it
+        // must not move.
+        if self.palette.open || delta == 0.0 {
             return;
         }
 
@@ -1398,6 +1522,29 @@ fn resolved_settings(document: &settings::Settings) -> (TerminalSettings, Rc<[se
         TerminalSettings::resolve(document),
         document.keybindings.clone().into(),
         document.font.size,
+    )
+}
+
+/// The actions the palette may offer: the ones this shell's `perform` runs.
+fn palette_supports(action: settings::Action) -> bool {
+    use settings::Action;
+
+    matches!(
+        action,
+        Action::NewTab
+            | Action::CloseTab
+            | Action::NextTab
+            | Action::PrevTab
+            | Action::Copy
+            | Action::Paste
+            | Action::ScrollUp
+            | Action::ScrollDown
+            | Action::ScrollUpPage
+            | Action::ScrollDownPage
+            | Action::ScrollToTop
+            | Action::ScrollToBottom
+            | Action::Find
+            | Action::OpenSettings
     )
 }
 
@@ -1641,5 +1788,40 @@ mod tests {
     fn a_theme_colour_names_its_channels() {
         let color = settings::Color::parse("#123456").expect("colour");
         assert_eq!(theme_color(color), Some((0x12, 0x34, 0x56)));
+    }
+
+    #[test]
+    fn the_palette_offers_exactly_the_actions_this_shell_runs() {
+        use settings::Action;
+
+        for action in [
+            Action::NewTab,
+            Action::CloseTab,
+            Action::NextTab,
+            Action::PrevTab,
+            Action::Copy,
+            Action::Paste,
+            Action::ScrollUp,
+            Action::ScrollDown,
+            Action::ScrollUpPage,
+            Action::ScrollDownPage,
+            Action::ScrollToTop,
+            Action::ScrollToBottom,
+            Action::Find,
+            Action::OpenSettings,
+        ] {
+            assert!(palette_supports(action), "{action:?}");
+        }
+        // Panes and the palette's own row are not performed here.
+        for action in [
+            Action::SplitHorizontal,
+            Action::SplitVertical,
+            Action::FocusLeft,
+            Action::ResizeUp,
+            Action::CommandPalette,
+            Action::Unbound,
+        ] {
+            assert!(!palette_supports(action), "{action:?}");
+        }
     }
 }

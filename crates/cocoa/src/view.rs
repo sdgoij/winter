@@ -148,6 +148,11 @@ define_class!(
 
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
+            // The palette's field is the first responder while it shows; a key
+            // that still reaches the view must not reach the terminal.
+            if self.palette_open() {
+                return;
+            }
             // AppKit's text system turns the key into marked text or a commit;
             // anything it leaves alone the shell's own mapping handles below.
             let events = NSArray::from_slice(&[event]);
@@ -183,6 +188,9 @@ define_class!(
 
         #[unsafe(method(keyUp:))]
         fn key_up(&self, event: &NSEvent) {
+            if self.palette_open() {
+                return;
+            }
             let mut shell = self.ivars().shell.borrow_mut();
             let modifiers = modifiers(event.modifierFlags());
             let ignoring = event.charactersIgnoringModifiers().map(|text| text.to_string());
@@ -257,6 +265,10 @@ define_class!(
 
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, event: &NSEvent) {
+            // The palette's list owns the wheel while it shows.
+            if self.palette_open() {
+                return;
+            }
             let point = self.point(event);
             let modifiers = modifiers(event.modifierFlags());
             let mut shell = self.ivars().shell.borrow_mut();
@@ -445,6 +457,68 @@ define_class!(
     }
 );
 
+/// The palette's instance state.
+pub struct PaletteIvars {
+    /// The shell whose rows and selection the card draws.
+    pub(crate) shell: Rc<RefCell<Shell>>,
+}
+
+define_class!(
+    // SAFETY: NSView has no subclassing requirements this view does not meet,
+    // and the class is main-thread only, like the terminal view.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "WinterPaletteView"]
+    #[ivars = PaletteIvars]
+    pub struct PaletteView;
+
+    impl PaletteView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, _dirty: NSRect) {
+            let Ok(shell) = self.ivars().shell.try_borrow() else {
+                return;
+            };
+            let Some(mtm) = MainThreadMarker::new() else {
+                return;
+            };
+            let rows = shell.palette_rows();
+            let selected = shell.palette_selected();
+            let state = chrome::PalettePaint {
+                rows: &rows,
+                selected,
+                first: chrome::palette_first_visible(rows.len(), selected),
+                colors: shell.strip_colors(),
+            };
+            chrome::paint_palette(self.bounds(), &state, mtm);
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            let point = self.convertPoint_fromView(event.locationInWindow(), None);
+            self.ivars()
+                .shell
+                .borrow_mut()
+                .palette_clicked((point.x, point.y));
+            self.setNeedsDisplay(true);
+        }
+    }
+);
+
+impl PaletteView {
+    /// Creates the card the controller shows over the pane.
+    pub(crate) fn new(shell: Rc<RefCell<Shell>>, mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(PaletteIvars { shell });
+        // SAFETY: NSView's designated initializer, on the main thread with an
+        // allocated instance of this subclass; the controller sets the frame.
+        unsafe { msg_send![super(this), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0))] }
+    }
+}
+
 impl TerminalView {
     /// Creates the view the window shows.
     pub(crate) fn new(frame: NSRect, shell: Rc<RefCell<Shell>>, mtm: MainThreadMarker) -> Retained<Self> {
@@ -474,6 +548,24 @@ impl TerminalView {
         self.setNeedsDisplay(true);
     }
 
+    /// Whether the palette owns the keyboard and pointer.
+    fn palette_open(&self) -> bool {
+        self.ivars().shell.borrow().palette_open()
+    }
+
+    /// Closes the palette and gives the keyboard back, if it was open.
+    fn dismiss_palette(&self) -> bool {
+        let mut shell = self.ivars().shell.borrow_mut();
+        if !shell.palette_open() {
+            return false;
+        }
+        shell.close_palette();
+        drop(shell);
+        self.window().map(|window| window.makeFirstResponder(Some(self)));
+        self.setNeedsDisplay(true);
+        true
+    }
+
     /// The point an event names, in this view's flipped coordinates.
     fn point(&self, event: &NSEvent) -> (f64, f64) {
         let window_point = event.locationInWindow();
@@ -482,6 +574,11 @@ impl TerminalView {
     }
 
     fn press(&self, event: &NSEvent, button: isize) {
+        // A press outside the card dismisses the palette and starts nothing, as
+        // the GTK shell does; a press on the card is the card view's.
+        if self.dismiss_palette() {
+            return;
+        }
         self.window().map(|window| window.makeFirstResponder(Some(self)));
         let point = self.point(event);
         let modifiers = modifiers(event.modifierFlags());
@@ -503,6 +600,9 @@ impl TerminalView {
     }
 
     fn drag(&self, event: &NSEvent, _button: isize) {
+        if self.palette_open() {
+            return;
+        }
         let point = self.point(event);
         let modifiers = modifiers(event.modifierFlags());
         let buttons = event_buttons();
@@ -513,6 +613,9 @@ impl TerminalView {
     }
 
     fn move_pointer(&self, event: &NSEvent) {
+        if self.palette_open() {
+            return;
+        }
         let point = self.point(event);
         let modifiers = modifiers(event.modifierFlags());
         let buttons = event_buttons();
@@ -523,6 +626,9 @@ impl TerminalView {
     }
 
     fn release(&self, event: &NSEvent, button: isize) {
+        if self.palette_open() {
+            return;
+        }
         let point = self.point(event);
         let modifiers = modifiers(event.modifierFlags());
         // The button that raised this event is no longer held.

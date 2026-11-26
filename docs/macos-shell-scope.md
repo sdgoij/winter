@@ -3,8 +3,7 @@
 Status: shipping first cut (ADR 072). The shell runs a real pty, paints the
 terminal through `renderer` — on Metal by default (ADR 073) — and owns a native
 window, menu bar, find field, settings window, input-method client and an
-accessibility element. Panes and the command palette are named follow-ups
-below, not hidden gaps.
+accessibility element. Panes are the named follow-up below, not a hidden gap.
 Related: ADRs 072 and 073 (the decisions), ADR 062 (macOS is the next native
 shell), ADR 040 (the WinUI shell this mirrors), ADR 061 (the host/chrome split),
 ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
@@ -26,8 +25,16 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
   forces before it captures the view; it is also the fallback. The software
   backend paints when no device is available or `WINTER_SOFTWARE=1` is set.
 - A real menu bar: About, Settings… (⌘,), Quit (⌘Q), New Tab (⌘T), Close Tab
-  (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), and the standard Edit menu
-  whose `copy:`/`paste:` go to the terminal or the focused text field.
+  (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), Command Palette… (⌘⇧P),
+  and the standard Edit menu whose `copy:`/`paste:` go to the terminal or the
+  focused text field.
+- A command palette: a card centred below the strip with a search field, a new
+  tab per profile and a row per action the shell performs, each carrying the
+  chord the file binds to it. Typing narrows the rows, the arrows move the
+  selection and scroll it into view, Enter runs it, Escape closes it and a
+  click runs the row under the pointer. The rows, filter and selection are
+  `crate::palette`'s, shared with the GTK shell; only the card's paint and the
+  field live here.
 - Settings from the TOML file at startup, one profile per row, a saved file
   noticed by the same one-second stamp poll as the other shells (ADR 025).
 - Pointer selection with click/drag, double-click word, triple-click line, the
@@ -60,9 +67,10 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
   `/`, and the shell moves to `$HOME` before the first pty.
 - `WINTER_SCREENSHOT=<path>` writes the content view as a PNG and quits;
   when the settings window is open it also writes `<stem>-settings.png`.
-  `WINTER_OPEN_SETTINGS=1` opens the settings window at startup and
-  `WINTER_OPEN_FIND=1` opens the find bar, for a live check on a machine whose
-  display cannot be photographed.
+  `WINTER_OPEN_SETTINGS=1` opens the settings window at startup,
+  `WINTER_OPEN_FIND=1` opens the find bar and `WINTER_OPEN_PALETTE=1` opens the
+  command palette, for a live check on a machine whose display cannot be
+  photographed.
 
 ## What does not ship yet
 
@@ -70,7 +78,7 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
   as one value; character- and line-level navigation through the
   `NSAccessibility` text protocol is the next step for VoiceOver, and the same
   gap the WinUI shell has with UIA.
-- Panes and the command palette.
+- Panes.
 - A signed, notarized release: the bundle is ad-hoc signed, so a downloaded copy
   still needs a Developer ID and notarization to pass Gatekeeper. ADR 074 records
   the boundary.
@@ -80,9 +88,9 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
 | File | Owns |
 |---|---|
 | `mod.rs` | `run()`, the `Controller` object (timer, menus, find field, window delegate), and the application menu |
-| `view.rs` | `TerminalView`, the flipped content view: key, mouse, wheel, tracking area, `drawRect:` and the `NSTextInputClient` methods |
-| `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the IME composition. No AppKit except the `Frame` it owns |
-| `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the pane's grid geometry |
+| `view.rs` | `TerminalView`, the flipped content view: key, mouse, wheel, tracking area, `drawRect:` and the `NSTextInputClient` methods, and `PaletteView`, the card's paint and click |
+| `shell.rs` | Tabs, the renderer, chords, pointer rules, the settings load/reload, the find state, the palette state, the IME composition. No AppKit except the `Frame` it owns |
+| `chrome.rs` | Strip layout and hit-testing, the strip/scrollbar/bell paint, the palette card's layout and paint, the pane's grid geometry |
 | `frame.rs` | The software backend's pixels as an `NSBitmapImageRep`, and the byte order |
 | `metal.rs` | The Metal content backend: pipelines, glyph atlas, image textures, drawable presentation and the offscreen readback (ADR 073) |
 | `icon.rs` | A tab's program icon from Launch Services, the drawn application mark (ADR 058) and the bundle's iconset (ADR 074), all cached |
@@ -190,7 +198,9 @@ hdiutil verify dist/winter-<version>-<target>.dmg
 
 A first frame shows the active tab in the pane's colour, the strip, the prompt
 and the cursor. `WINTER_OPEN_SETTINGS=1` exercises the settings window's
-construction on the same run; a crash there happens before the capture.
+construction on the same run, `WINTER_OPEN_PALETTE=1` puts the card over the
+pane with its rows and chords, and a crash in either happens before the
+capture.
 
 A machine with a display should also check: a click focuses the pane, typing
 reaches `zsh`, ⌘T opens a tab, ⌘W closes it, ⌘F opens the find field and Escape

@@ -10,17 +10,18 @@ description: Build, run and live-check the AppKit shell in crates/cocoa/src. Use
 dialogs and pasteboard; the tab strip, scrollbar and grid are our pixels, the
 split ADR 072 takes from ADR 061. `winter-winui`, `winter-gtk4` and this crate
 share the `winter` crate's
-`input`, `view`, `tabs`, `term_control`, `session`, `find`, `scrollbar`, `grid`
-and `terminal_render`; a rule that is not AppKit-specific belongs there.
+`input`, `view`, `tabs`, `term_control`, `session`, `find`, `palette`,
+`scrollbar`, `grid` and `terminal_render`; a rule that is not AppKit-specific
+belongs there.
 
 ## Shape
 
 | File | Owns |
 |---|---|
-| `lib.rs` | `run()`, `Controller` (timer, menus, find field, window delegate), the application menu, the app icon, the screenshot path |
-| `view.rs` | `TerminalView`: flipped content view, key/mouse/wheel events, tracking area, `copy:`/`paste:` for the responder chain, `drawRect:` |
-| `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state; no AppKit except the `Frame` |
-| `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, pane grid geometry |
+| `lib.rs` | `run()`, `Controller` (timer, menus, find and palette fields, window delegate), the application menu, the app icon, the screenshot path |
+| `view.rs` | `TerminalView`: flipped content view, key/mouse/wheel events, tracking area, `copy:`/`paste:` for the responder chain, `drawRect:`; `PaletteView`: the command card's paint and click |
+| `shell.rs` | Tabs, renderer, chords, pointer rules, settings reload, find state, palette state; no AppKit except the `Frame` |
+| `chrome.rs` | Strip layout and hit testing, strip/scrollbar/bell painting, the palette card's layout and paint, pane grid geometry |
 | `frame.rs` | Software backend pixels to `NSBitmapImageRep` |
 | `metal.rs` | The Metal content backend: drawable presentation, its glyph atlas and the offscreen readback |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
@@ -113,12 +114,13 @@ WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter
 Read `winter-shot.png`; a correct first frame shows the active tab in the pane's
 fill, the strip's `+` and `▾`, the prompt and a cursor. `WINTER_OPEN_SETTINGS=1`
 opens the settings window on the same run (written as
-`winter-shot-settings.png`), and `WINTER_OPEN_FIND=1` opens the find bar over the
-pane. A crash before the capture is the construction failure. Do not leave the
-PNGs in the tree.
+`winter-shot-settings.png`), `WINTER_OPEN_FIND=1` opens the find bar over the
+pane and `WINTER_OPEN_PALETTE=1` opens the command palette. A crash before the
+capture is the construction failure. Do not leave the PNGs in the tree.
 
 On a machine with a display, check: click focuses the pane and typing reaches the
-shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; Escape closes the find field; ⇧wheel scrolls history
+shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; Escape closes the find field; ⌘⇧P opens the palette,
+typing narrows it, the arrows move and Enter runs; ⇧wheel scrolls history
 while a tracking program still gets the wheel; ⌘C copies a selection and plain
 ⌃C interrupts; a saved `settings.toml` reaches the scheme and font within a
 second.
@@ -162,6 +164,12 @@ second.
   strip sit outside its frame, so AppKit still paints them and they stay
   visible above the layer's left/right edges; the find backdrop and the bell
   cross the grid, which is why they are layers too.
+- **The palette's field filters on `controlTextDidChange:`, not its action.** A
+  search field can send its action while typing or after a pause; either would
+  run a row on the first key. Set `sendsWholeSearchString(true)` and
+  `sendsSearchStringImmediately(false)`, filter in `controlTextDidChange:`, and
+  route `insertNewline:`, `moveUp:` and `moveDown:` through
+  `control:textView:doCommandBySelector:`.
 - **`WINTER_SOFTWARE=1` selects the software backend.** Use it to A/B a frame;
   the two renderers match for opaque glyphs, and antialiased text differs by at
   most one 8-bit step from the GPU's rounding.
