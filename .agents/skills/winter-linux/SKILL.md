@@ -22,6 +22,7 @@ One module owns:
 | entry | `run()`, the window, the `GtkWindowHandle` title bar |
 | chrome | the desktop's window palette (`kdeglobals`), the title-bar CSS and the strip's UI font |
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
+| icons | each tab's program icon from the desktop icon theme, rendered through GSK once and cached as a Cairo surface |
 | pane | the base `DrawingArea`: pane fill, scrollbar, marks, and the input controllers over the GL area |
 | gl | the OpenGL content path (ADR 076): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
@@ -237,6 +238,7 @@ a neighbour's midpoint.
   of the window, a stretched frame or clicks in the wrong cell. `sync_scale`
   rebuilds the face when the widget's factor changes (a window moved between
   monitors), so never cache the scale without comparing it on each frame.
+- **A tab icon is a GSK render, not a Cairo drawing.** The desktop theme resolves `utilities-terminal` (or an icon named after the program) as SVG, which Cairo cannot read. `icons::render` snapshots the paintable, calls `GtkNative`'s `GskRenderer::render_texture`, and copies the pixels into an `ARgb32` surface; the pixel copy swizzles GDK's memory order to Cairo's and premultiplies a straight format. Cache per program *and* pixel size, because the strip asks on every frame and the size changes with the scale.
 - **The strip follows the desktop's window palette.** On KDE the row, the tab
   shades and the accent come from `kdeglobals` (`Colors:Header`,
   `Colors:Window`, `Colors:Selection`, with `WM` as the fallback), so a change

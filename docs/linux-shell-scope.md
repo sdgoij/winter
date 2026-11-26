@@ -247,7 +247,10 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    a `GtkPopoverMenu`. The find bar is a `GtkSearchBar` whose previous/next
    buttons and match count read like the other shells', the settings editor is
    one `GtkTextView` over the TOML document (a second request raises the open
-   one), and a tab reorders when it is dragged past a neighbour.
+   one), and a tab reorders when it is dragged past a neighbour. A tab wears
+   its program's icon from the desktop icon theme (`utilities-terminal` when
+   the theme names none), rendered through GSK once and cached as a Cairo
+   surface.
 6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
    caret, the screen as the pane's accessible description, the bell flash and
    OSC 777 notifications. ⏳ Primary selection.
@@ -266,8 +269,7 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
 - **A cell-addressable accessibility tree.** The visible screen is the pane's
   description, which Orca can read, but there is no `GtkAccessibleText` tree.
   That needs a custom widget class; macOS has the same shape of gap (ADR 072).
-- **Program icons on tabs.** The macOS shell gets one from Launch Services and
-  WinUI from the executable; the GTK strip draws titles only.
+
 - **Sound.** ADR 033 stands: the bell flashes and DECPS is silent on Linux.
 - **HiDPI scale.** The face, the cell and the GL viewport are physical pixels
   while GTK allocates logical ones; both content paths assume scale 1. A

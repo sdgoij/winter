@@ -57,9 +57,11 @@ use winter::view::View;
 
 mod chrome;
 mod gl;
+mod icons;
 
 use chrome::Chrome;
 use gl::Gl;
+use icons::Icons;
 
 /// The window opens at this many cells, like the WinUI shell.
 const CELLS: (i32, i32) = (100, 28);
@@ -377,6 +379,7 @@ fn activate(app: &Application) {
         palette,
         bindings,
         menu,
+        icons: Icons::new(),
         chrome: fonts.chrome,
         cell: fonts.cell,
         grid: CELLS,
@@ -863,6 +866,8 @@ struct Tab {
     title: String,
     /// The tab's own find bar, so switching tabs keeps its query.
     find: FindBar,
+    /// The program the tab runs, which its icon is resolved from.
+    program: String,
 }
 
 impl Tab {
@@ -877,6 +882,7 @@ impl Tab {
             sides: ModifierSides::default(),
             title: template.title.clone(),
             find: FindBar::default(),
+            program: template.command.program().to_string_lossy().into_owned(),
         })
     }
 }
@@ -963,6 +969,8 @@ struct Shell {
     bindings: Rc<[settings::Keybinding]>,
     /// The profile menu the strip's button pops up.
     menu: gtk::PopoverMenu,
+    /// The icons the strip's tabs wear, resolved once per program and size.
+    icons: Icons,
     /// The face the strip's titles are drawn with.
     chrome: FontDueRasterizer,
     /// The cell size in physical pixels.
@@ -2145,6 +2153,8 @@ impl Shell {
         let (layout, menu) = strip_and_menu(width, self.tabs.len());
         let active = self.tabs.index();
         let baseline = self.title_baseline(height);
+        // The icon is rasterised at the display's scale, like the title's face.
+        let icon_pixels = (icons::SIZE * scale).round().max(1.0) as i32;
 
         for (index, slots) in layout.tabs.iter().enumerate() {
             let Some(tab) = self.tabs.get(index) else {
@@ -2196,13 +2206,30 @@ impl Shell {
                 context.fill().ok();
             }
 
-            let title_width = slots.width() - tabs::CLOSE - TITLE_INSET;
+            // A program icon takes the title's room, so a themed icon shifts
+            // the title right; a tab whose theme offers none keeps the title
+            // where it was.
+            let icon = self.icons.for_program(&self.strip, &tab.program, icon_pixels);
+            // The box is in DIP like the strip, while `icon_pixels` is the
+            // physical size the theme was asked to draw at.
+            let icon_side = icons::SIZE.round() as i32;
+            let (title_left, title_width) = match &icon {
+                Some(_) => (
+                    slots.left + TITLE_INSET + icon_side + icons::GAP,
+                    slots.width() - TITLE_INSET - icon_side - icons::GAP - tabs::CLOSE,
+                ),
+                None => (slots.left + TITLE_INSET, slots.width() - TITLE_INSET - tabs::CLOSE),
+            };
+            if let Some(surface) = &icon {
+                let top = (f64::from(height) - f64::from(icon_side)) / 2.0;
+                draw_icon(context, surface, f64::from(slots.left + TITLE_INSET), top, scale);
+            }
             if title_width > 0 {
                 draw_text(
                     context,
                     &mut self.chrome,
                     &tab.title,
-                    (f64::from(slots.left + TITLE_INSET), baseline),
+                    (f64::from(title_left), baseline),
                     f64::from(title_width),
                     text,
                     scale,
@@ -2704,6 +2731,19 @@ fn draw_text(
     context
         .mask_surface(&surface, origin.0 * scale, origin.1 * scale - f64::from(ascent_rows))
         .ok();
+    context.restore().ok();
+}
+
+/// Paints a cached icon surface of `icons::SIZE` DIP at `(x, y)`.
+///
+/// The surface holds physical pixels while the strip draws in logical ones, so
+/// the context is scaled the same way the title's mask is.
+fn draw_icon(context: &cairo::Context, surface: &cairo::ImageSurface, x: f64, y: f64, scale: f64) {
+    context.save().ok();
+    context.translate(x, y);
+    context.scale(1.0 / scale, 1.0 / scale);
+    context.set_source_surface(surface, 0.0, 0.0).ok();
+    context.paint().ok();
     context.restore().ok();
 }
 
