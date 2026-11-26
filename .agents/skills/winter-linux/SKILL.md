@@ -7,11 +7,11 @@ description: Build, run, live-check and package the GTK 4 shell in crates/gtk4/s
 
 `crates/gtk4/src/lib.rs` is the Linux shell; `main.rs` chooses it when
 the `gtk` feature is on, which it is by default (ADR 075). GTK owns the window,
-the profile menu, the find bar and the settings editor; the tab strip, scrollbar
-and grid are our pixels, the split ADR 061 takes. `winui`, `macos` and this
-module share `input`, `view`, `tabs`, `term_control`, `session`, `find`,
-`scrollbar`, `grid` and `terminal_render`; a rule that is not GTK-specific
-belongs there.
+the profile menu, the find bar, the command palette and the settings editor;
+the tab strip, scrollbar and grid are our pixels, the split ADR 061 takes.
+`winui`, `macos` and this module share `input`, `view`, `tabs`, `term_control`,
+`session`, `find`, `palette`, `scrollbar`, `grid` and `terminal_render`; a rule
+that is not GTK-specific belongs there.
 
 ## Shape
 
@@ -27,6 +27,7 @@ One module owns:
 | gl | the OpenGL content path (ADR 076): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
+| palette | a card over the pane: a filter field and clickable rows over `palette::Palette` |
 | settings | a `GtkTextView` over the TOML document; Save/Revert/Close |
 | clipboard | `gdk::Clipboard`; the read is asynchronous |
 | a11y | the visible screen as the pane's accessible description |
@@ -112,8 +113,8 @@ XDG_RUNTIME_DIR=/tmp/xdg-w WAYLAND_DISPLAY=winter-test \
 ```
 
 `WINTER_OPEN_SETTINGS=1` also writes `/tmp/shot-settings.png` (the sibling of
-the requested path with `-settings`), and `WINTER_OPEN_FIND=1` opens the find
-bar. A correct first frame shows the strip with one tab, `+` and `▾`, the
+the requested path with `-settings`), `WINTER_OPEN_FIND=1` opens the find bar and
+`WINTER_OPEN_PALETTE=1` opens the command palette. A correct first frame shows the strip with one tab, `+` and `▾`, the
 prompt and the cursor on a dark pane inset 8 px from the left, and the
 scrollbar's 10 px gutter on the right. A white pane means the drawing area got
 no height — see the traps. Do not leave the PNGs in the tree.
@@ -130,7 +131,8 @@ process; `dbus-run-session -- <binary>` does the same for one run.
 
 On a machine with a display: typing reaches the shell; Ctrl+Shift+T/W; the
 settings editor's Save writes and reloads; Ctrl+Shift+F opens the find bar and
-Escape closes it; Shift+wheel scrolls history while a tracking program still
+Escape closes it; Ctrl+Shift+P opens the command palette, where typing filters
+the rows and the arrows move the selection; Shift+wheel scrolls history while a tracking program still
 gets the wheel; a saved `settings.toml` reaches the scheme and font within a
 second.
 
@@ -221,11 +223,18 @@ a neighbour's midpoint.
   synchronously from inside it. Marked text goes through the shared
   `terminal_render::composition`, and the candidate window follows
   `Shell::caret_rect`.
-- **The find entry owns its keys while focused.** The window's key controller
-  returns `Proceed` when `entry.has_focus()`, or typing goes to the terminal.
+- **A search entry delegates focus to its inner text.** `entry.has_focus()` is
+  false while someone types into a `GtkSearchEntry`, so the window's key
+  controller asks the window for its focus widget and walks up to the entry
+  (`focus_is_within`); `has_focus` sends the text to the terminal and lets the
+  find tick overwrite the field.
 - **The search bar's close button turns search mode off without
   `stop-search`.** Follow `notify::search-mode-enabled` or the next tick reopens
   it.
+- **Opening the command palette clears its field while the shell is borrowed.**
+  `changed` runs synchronously and its `try_borrow_mut` fails, which is fine:
+  the open path rebuilds the rows itself. Typing later runs the same handler
+  with no borrow held.
 - **GTK measures widgets in logical pixels; the face is physical.**
   `Widget::scale_factor()` is the bridge. On a fractional desktop (KDE at 1.7x)
   it is `ceil(1.7) = 2`, which is also what `GtkGLArea` multiplies its

@@ -18,7 +18,8 @@
 //! - [`sound`] plays the bell and DECPS tones on a thread of its own, and is
 //!   the only module allowed `unsafe` (ADR 033).
 //! - [`config`] holds the settings draft every editor edits, and [`fonts`] the
-//!   directories a face is composed from.
+//!   directories a face is composed from. [`palette`] is the command palette's
+//!   entries, filter and selection; each shell draws it.
 //! - [`embed`] composes the terminal and its frame for a host that is not a
 //!   shell — an editor panel, a wasm canvas, an agent's tool — and is the one
 //!   door such a host needs (ADR 082).
@@ -46,6 +47,8 @@ pub mod icon;
 pub mod input;
 #[cfg(feature = "notifications")]
 pub mod notifications;
+#[cfg(feature = "settings")]
+pub mod palette;
 pub mod scrollbar;
 #[cfg(feature = "pty")]
 pub mod session;

@@ -29,7 +29,7 @@ primary selection and IME.
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
 | 3. Skeleton | ✅ `crates/gtk4/src/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
-| 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
+| 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the command palette (±`WINTER_OPEN_PALETTE`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
 | 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
 | 7. Cut-over | ✅ The GTK 4 shell is the Linux build and CI installs `libgtk-4-dev` (ADRs 075, 079) |
 
@@ -250,7 +250,9 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    one), and a tab reorders when it is dragged past a neighbour. A tab wears
    its program's icon from the desktop icon theme (`utilities-terminal` when
    the theme names none), rendered through GSK once and cached as a Cairo
-   surface.
+   surface. Ctrl+Shift+P opens the command palette: a card over the pane whose
+   field filters the profiles and the actions the shell performs, with the
+   arrows moving the selection and the bound chord shown beside each row.
 6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
    caret, the screen as the pane's accessible description, the bell flash and
    OSC 777 notifications. ⏳ Primary selection.

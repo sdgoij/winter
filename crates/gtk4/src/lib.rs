@@ -21,7 +21,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use gtk4 as gtk;
@@ -46,6 +46,7 @@ use utils::{InclusiveRect, Size};
 use winter::find::FindBar;
 use winter::input::{self, Event as InputEvent, ModifierSides, Modifiers};
 use winter::notifications;
+use winter::palette::{self, Palette};
 use winter::scrollbar::{self, Press, Scrollbar};
 use winter::session::Session;
 use winter::tabs::{self, StripHit, TabBox, Tabs};
@@ -132,6 +133,17 @@ const CHROME_CSS: &str = r#"
     background-color: #da4453;
     color: #ffffff;
 }
+.winter-palette {
+    padding: 8px;
+    border-radius: 8px;
+}
+.winter-palette .palette-row {
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.winter-palette .palette-row.selected {
+    background-color: alpha(currentColor, 0.18);
+}
 "#;
 
 /// The title bar's stylesheet, with the desktop's palette appended.
@@ -150,6 +162,17 @@ fn chrome_css(palette: Option<Chrome>) -> String {
             hex(chrome.titlebar_inactive),
             hex(chrome.foreground_inactive),
         ));
+        // The palette is a card over the pane, so it takes the desktop's window
+        // colour and its selection colour for the chosen row.
+        css.push_str(&format!(
+            ".winter-palette {{ background-image: none; background-color: {}; color: {}; border: 1px solid {}; }}\n\
+             .winter-palette .palette-row.selected {{ background-image: none; background-color: {}; color: {}; }}\n",
+            hex(chrome.window),
+            hex(chrome.foreground),
+            hex_channels(blend(channels(chrome.window), channels(chrome.foreground), 0.15)),
+            hex(chrome.accent),
+            hex_channels(contrasting(channels(chrome.accent))),
+        ));
     }
     css
 }
@@ -157,6 +180,12 @@ fn chrome_css(palette: Option<Chrome>) -> String {
 /// A colour as a CSS hex literal.
 fn hex(color: u32) -> String {
     format!("#{:06x}", color & 0x00FF_FFFF)
+}
+
+/// One of the shell's `(red, green, blue)` colours as a CSS hex literal.
+fn hex_channels(color: (f64, f64, f64)) -> String {
+    let channel = |value: f64| (value * 255.0).round().clamp(0.0, 255.0) as u32;
+    hex((channel(color.0) << 16) | (channel(color.1) << 8) | channel(color.2))
 }
 
 /// Starts the GTK shell and runs it until its window closes.
@@ -350,6 +379,8 @@ fn activate(app: &Application) {
     overlay.set_vexpand(true);
     overlay.set_child(Some(&area));
     overlay.add_overlay(&gl_area);
+    let commands_view = palette_view(&overlay);
+    let command_entry = commands_view.entry.clone();
     column.append(&overlay);
     window.set_child(Some(&column));
 
@@ -380,6 +411,8 @@ fn activate(app: &Application) {
         bindings,
         menu,
         icons: Icons::new(),
+        commands: Palette::default(),
+        palette_view: commands_view,
         chrome: fonts.chrome,
         cell: fonts.cell,
         grid: CELLS,
@@ -403,6 +436,8 @@ fn activate(app: &Application) {
         screenshot,
         settings_window: None,
     }));
+
+    shell.borrow_mut().palette_view.owner = Rc::downgrade(&shell);
 
     {
         let action = gtk::gio::SimpleAction::new("open", Some(glib::VariantTy::STRING));
@@ -516,14 +551,15 @@ fn activate(app: &Application) {
 
     {
         let entry = search_entry.clone();
+        let palette = command_entry.clone();
         let owner = window.clone();
         let context = im.clone();
         let keys = EventControllerKey::new();
         let pressed = Rc::clone(&shell);
         keys.connect_key_pressed(move |controller, key, _code, state| {
-            // The find field owns its keys: text, Enter, Escape and the match
-            // shortcuts are the widget's, not the terminal's.
-            if focus_is_within(&owner, &entry) {
+            // A text field owns its keys: the find field's text, Enter, Escape
+            // and match shortcuts are the widget's, as are the palette's.
+            if focus_is_within(&owner, &entry) || focus_is_within(&owner, &palette) {
                 return glib::Propagation::Proceed;
             }
             if let Some(event) = controller.current_event()
@@ -534,10 +570,11 @@ fn activate(app: &Application) {
             pressed.borrow_mut().key(key, state, true)
         });
         let entry = search_entry.clone();
+        let palette = command_entry.clone();
         let owner = window.clone();
         let released = Rc::clone(&shell);
         keys.connect_key_released(move |_controller, key, _code, state| {
-            if focus_is_within(&owner, &entry) {
+            if focus_is_within(&owner, &entry) || focus_is_within(&owner, &palette) {
                 return;
             }
             released.borrow_mut().key(key, state, false);
@@ -601,6 +638,53 @@ fn activate(app: &Application) {
     }
 
     {
+        // The palette's field narrows the list as it is typed; the rows and
+        // their selection are the shell's, so the signal rebuilds them.
+        let changed = Rc::clone(&shell);
+        command_entry.connect_changed(move |entry| {
+            if let Ok(mut shell) = changed.try_borrow_mut() {
+                shell.command_filter(entry.text().to_string());
+            }
+        });
+
+        // Enter is the entry's own activation: the inner text consumes the key
+        // before a controller on the entry sees it, so this is the signal that
+        // says the field was activated.
+        let activated = Rc::clone(&shell);
+        command_entry.connect_activate(move |_entry| {
+            if let Ok(mut shell) = activated.try_borrow_mut() {
+                shell.run_selected_command();
+            }
+        });
+
+        let keys = EventControllerKey::new();
+        let pressed = Rc::clone(&shell);
+        keys.connect_key_pressed(move |_controller, key, _code, _state| {
+            let Ok(mut shell) = pressed.try_borrow_mut() else {
+                return glib::Propagation::Proceed;
+            };
+            match key {
+                gdk::Key::Escape => {
+                    shell.close_commands();
+                    glib::Propagation::Stop
+                }
+                // The arrows move the selection; the field must not move its
+                // cursor instead.
+                gdk::Key::Up | gdk::Key::KP_Up => {
+                    shell.command_step(false);
+                    glib::Propagation::Stop
+                }
+                gdk::Key::Down | gdk::Key::KP_Down => {
+                    shell.command_step(true);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            }
+        });
+        command_entry.add_controller(keys);
+    }
+
+    {
         let shell = Rc::clone(&shell);
         let motion = EventControllerMotion::new();
         motion.connect_motion(move |controller, x, y| {
@@ -627,7 +711,6 @@ fn activate(app: &Application) {
     {
         // A press on the pane takes the keyboard back from a tab, a menu or a
         // dialog that had it, and starts a selection or a program's press.
-        let pane = area.clone();
         let click = GestureClick::new();
         // Every button: a tracking program sees all three, and without one a
         // non-primary press pastes.
@@ -645,7 +728,6 @@ fn activate(app: &Application) {
 
         let pressed = Rc::clone(&shell);
         click.connect_pressed(move |gesture, _presses, x, y| {
-            pane.grab_focus();
             let button = mouse_button(gesture.current_button());
             let modifiers = gesture
                 .current_event()
@@ -830,6 +912,9 @@ fn activate(app: &Application) {
     if std::env::var_os("WINTER_OPEN_FIND").is_some() {
         shell.borrow_mut().toggle_find();
     }
+    if std::env::var_os("WINTER_OPEN_PALETTE").is_some() {
+        shell.borrow_mut().toggle_commands();
+    }
 
     // `GtkWidgetPaintable` pictures the last frame GTK painted, and a queued
     // redraw has already dropped that frame's node, so the shot is taken at the
@@ -894,6 +979,126 @@ struct FindSeed {
     /// Whether the field should also take the keyboard, as it does when the bar
     /// opens rather than when a tab switch merely follows the new tab's query.
     focus: bool,
+}
+
+/// The command palette's widgets: a card over the pane.
+struct PaletteView {
+    /// The card that holds the field, the rows and the empty notice.
+    card: gtk::Box,
+    /// The field the filter is typed into.
+    entry: gtk::SearchEntry,
+    /// The scroller the rows live in.
+    list: gtk::ScrolledWindow,
+    /// The rows, in the order the filter leaves them.
+    rows: gtk::Box,
+    /// The notice shown when the filter matches nothing.
+    empty: gtk::Label,
+    /// The overlay the card is anchored to, for its bounds.
+    overlay: gtk::Overlay,
+    /// The shell a row calls back into; weak, so the view does not keep it
+    /// alive.
+    owner: Weak<RefCell<Shell>>,
+}
+
+/// Builds the command palette's card, hidden until the action opens it.
+fn palette_view(overlay: &gtk::Overlay) -> PaletteView {
+    let entry = gtk::SearchEntry::new();
+    entry.set_placeholder_text(Some("Type a command"));
+    entry.set_hexpand(true);
+
+    let rows = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let list = gtk::ScrolledWindow::builder()
+        .child(&rows)
+        .propagate_natural_height(true)
+        .max_content_height(320)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+
+    let empty = gtk::Label::new(Some("No matching command"));
+    empty.add_css_class("dim-label");
+    empty.set_visible(false);
+
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    card.add_css_class("card");
+    card.add_css_class("winter-palette");
+    card.set_halign(gtk::Align::Center);
+    card.set_valign(gtk::Align::Start);
+    card.set_margin_top(48);
+    card.set_width_request(480);
+    card.append(&entry);
+    card.append(&list);
+    card.append(&empty);
+    card.set_visible(false);
+    overlay.add_overlay(&card);
+
+    PaletteView {
+        card,
+        entry,
+        list,
+        rows,
+        empty,
+        overlay: overlay.clone(),
+        owner: Weak::new(),
+    }
+}
+
+/// The actions the palette may offer: the ones `command` runs.
+fn palette_supports(action: settings::Action) -> bool {
+    use settings::Action;
+
+    matches!(
+        action,
+        Action::NewTab
+            | Action::CloseTab
+            | Action::NextTab
+            | Action::PrevTab
+            | Action::Copy
+            | Action::Paste
+            | Action::ScrollUp
+            | Action::ScrollDown
+            | Action::ScrollUpPage
+            | Action::ScrollDownPage
+            | Action::ScrollToTop
+            | Action::ScrollToBottom
+            | Action::Find
+            | Action::OpenSettings
+    )
+}
+
+/// One clickable palette row: the label, the bound chord, and what it runs.
+fn command_row(entry: &palette::Entry, selected: bool, owner: &Weak<RefCell<Shell>>) -> gtk::Button {
+    let row = gtk::Button::new();
+    row.add_css_class("flat");
+    row.add_css_class("palette-row");
+    if selected {
+        row.add_css_class("selected");
+    }
+    row.set_focus_on_click(false);
+
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let label = gtk::Label::new(Some(&entry.label));
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    content.append(&label);
+    if let Some(chord) = &entry.chord {
+        let chord = gtk::Label::new(Some(chord));
+        chord.add_css_class("dim-label");
+        content.append(&chord);
+    }
+    row.set_child(Some(&content));
+
+    let command = entry.command.clone();
+    let owner = owner.clone();
+    row.connect_clicked(move |_| {
+        if let Some(shell) = owner.upgrade()
+            && let Ok(mut shell) = shell.try_borrow_mut()
+        {
+            shell.close_commands();
+            shell.run_palette_command(command.clone());
+        }
+    });
+
+    row
 }
 
 /// The text a frame writes into the find field, if any.
@@ -971,6 +1176,10 @@ struct Shell {
     menu: gtk::PopoverMenu,
     /// The icons the strip's tabs wear, resolved once per program and size.
     icons: Icons,
+    /// The command palette's entries, filter and selection.
+    commands: Palette,
+    /// The palette's widget, a card over the pane.
+    palette_view: PaletteView,
     /// The face the strip's titles are drawn with.
     chrome: FontDueRasterizer,
     /// The cell size in physical pixels.
@@ -1310,9 +1519,142 @@ impl Shell {
             settings::Action::ScrollToBottom => self.scroll_to(true),
             settings::Action::Find => self.toggle_find(),
             settings::Action::OpenSettings => self.request_settings(),
+            settings::Action::CommandPalette => self.toggle_commands(),
             _ => return false,
         }
         true
+    }
+
+    /// Shows or hides the command palette.
+    fn toggle_commands(&mut self) {
+        if self.commands.open {
+            self.close_commands();
+        } else {
+            self.open_commands();
+        }
+    }
+
+    /// Opens the palette with an empty filter and the first row selected.
+    fn open_commands(&mut self) {
+        self.commands.show();
+        // The field takes the keyboard, so a half-composed terminal preview is
+        // no longer where the user is typing.
+        self.composition = Composition::default();
+        // Setting the field emits `changed`; the rebuild below is the one that
+        // counts, because this borrow is still held when the signal runs.
+        self.palette_view.entry.set_text("");
+        self.commands.filter.clear();
+        self.rebuild_commands();
+        self.palette_view.card.set_visible(true);
+        self.palette_view.entry.grab_focus();
+    }
+
+    /// Closes the palette and gives the keyboard back to the pane.
+    fn close_commands(&mut self) {
+        self.commands.hide();
+        self.palette_view.card.set_visible(false);
+        self.palette_view.entry.set_text("");
+        self.area.grab_focus();
+    }
+
+    /// Narrows the rows to `filter` and selects the first one.
+    fn command_filter(&mut self, filter: String) {
+        self.commands.filter = filter;
+        self.commands.selected = 0;
+        self.rebuild_commands();
+    }
+
+    /// The rows the current filter leaves.
+    fn command_rows(&self) -> Vec<palette::Entry> {
+        let entries = palette::entries(&self.document, palette_supports);
+        self.commands.rows(&entries).into_iter().cloned().collect()
+    }
+
+    /// Rebuilds the row widgets for the current filter and selection.
+    fn rebuild_commands(&mut self) {
+        while let Some(child) = self.palette_view.rows.first_child() {
+            self.palette_view.rows.remove(&child);
+        }
+
+        let rows = self.command_rows();
+        self.commands.clamp(rows.len());
+        self.palette_view.empty.set_visible(rows.is_empty());
+
+        let owner = self.palette_view.owner.clone();
+        for (index, entry) in rows.iter().enumerate() {
+            let selected = index == self.commands.selected;
+            self.palette_view.rows.append(&command_row(entry, selected, &owner));
+        }
+    }
+
+    /// Moves the palette's selection one row, wrapping at both ends.
+    fn command_step(&mut self, forward: bool) {
+        let len = self.command_rows().len();
+        self.commands.step(len, forward);
+        self.restyle_commands();
+        self.scroll_commands();
+    }
+
+    /// Paints the selected row and clears the mark on the others.
+    fn restyle_commands(&self) {
+        let mut child = self.palette_view.rows.first_child();
+        let mut index = 0;
+        while let Some(row) = child {
+            if index == self.commands.selected {
+                row.add_css_class("selected");
+            } else {
+                row.remove_css_class("selected");
+            }
+            index += 1;
+            child = row.next_sibling();
+        }
+    }
+
+    /// Brings the selected row into the list's viewport.
+    fn scroll_commands(&self) {
+        let mut child = self.palette_view.rows.first_child();
+        for _ in 0..self.commands.selected {
+            child = child.and_then(|row| row.next_sibling());
+        }
+        let Some(row) = child else {
+            return;
+        };
+        let Some(bounds) = row.compute_bounds(&self.palette_view.rows) else {
+            return;
+        };
+
+        let adjustment = self.palette_view.list.vadjustment();
+        let top = f64::from(bounds.y());
+        let bottom = top + f64::from(bounds.height());
+        if top < adjustment.value() {
+            adjustment.set_value(top);
+        } else if bottom > adjustment.value() + adjustment.page_size() {
+            adjustment.set_value(bottom - adjustment.page_size());
+        }
+    }
+
+    /// Runs the row Enter chose, if any.
+    fn run_selected_command(&mut self) {
+        if !self.commands.open {
+            return;
+        }
+        let rows = self.command_rows();
+        let Some(entry) = rows.get(self.commands.selected) else {
+            return;
+        };
+        let command = entry.command.clone();
+        self.close_commands();
+        self.run_palette_command(command);
+    }
+
+    /// Runs one palette row after the palette has closed.
+    fn run_palette_command(&mut self, command: palette::Command) {
+        match command {
+            palette::Command::Action(action) => {
+                self.command(action);
+            }
+            palette::Command::Profile(name) => self.open_profile(Some(&name)),
+        }
     }
 
     fn scroll_active(&mut self, rows: i32) {
@@ -1388,6 +1730,12 @@ impl Shell {
     /// title bar, which drags the window with it and offers the window menu on
     /// the right button.
     fn press_strip(&mut self, x: f64, button: u32) -> (bool, Option<TabBox>) {
+        // A press on the strip dismisses the palette and goes no further.
+        if self.commands.open {
+            self.close_commands();
+            return (true, None);
+        }
+
         let (layout, menu) = strip_and_menu(self.strip.width(), self.tabs.len());
         if menu.contains(x as i32) {
             return (button == 1, (button == 1).then_some(menu));
@@ -1489,6 +1837,10 @@ impl Shell {
 
     /// Handles a pointer move, extending the selection a press started.
     fn pointer_moved(&mut self, point: (f64, f64), modifiers: Modifiers) {
+        // The palette's list is the only thing the pointer moves while it shows.
+        if self.commands.open {
+            return;
+        }
         if self.scrollbar_press {
             self.scrollbar_dragged(point.1);
             return;
@@ -1509,6 +1861,33 @@ impl Shell {
 
     /// Handles a press in the pane, returning whether it was consumed.
     fn pointer_pressed(&mut self, point: (f64, f64), button: MouseButton, modifiers: Modifiers) -> bool {
+        // The palette owns the pointer while it shows: a press outside it
+        // dismisses it, and one on it belongs to its rows.
+        if self.commands.open {
+            let inside = self
+                .palette_view
+                .card
+                .compute_bounds(&self.palette_view.overlay)
+                .is_some_and(|bounds| {
+                    let (x, y) = (point.0 as f32, point.1 as f32);
+                    x >= bounds.x()
+                        && x <= bounds.x() + bounds.width()
+                        && y >= bounds.y()
+                        && y <= bounds.y() + bounds.height()
+                });
+            if !inside {
+                self.close_commands();
+                return true;
+            }
+            // Inside the card the press belongs to the row's own button, so the
+            // pane keeps neither the gesture nor the keyboard.
+            return false;
+        }
+
+        // A press on the pane takes the keyboard back from a tab, a menu or a
+        // dialog that had it.
+        self.area.grab_focus();
+
         // A press in the pane dismisses the find bar, the way it does upstream.
         if self.find_open() {
             self.close_find();
@@ -1890,6 +2269,12 @@ impl Shell {
 
     /// Scrolls the viewport, or hands the wheel to a tracking program.
     fn wheel(&mut self, delta: f64, unit: gdk::ScrollUnit, shift: bool) -> glib::Propagation {
+        // The palette's list owns the wheel while it shows; the pane behind it
+        // must not move.
+        if self.commands.open {
+            return glib::Propagation::Stop;
+        }
+
         let rows = wheel_rows(delta, unit, self.dip_cell().1, &mut self.wheel_pixels);
         if rows == 0 {
             return glib::Propagation::Proceed;
