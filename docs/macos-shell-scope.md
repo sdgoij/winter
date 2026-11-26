@@ -28,6 +28,9 @@ ADRs 064, 068, 069 (the strip), `crates/cocoa/src/`.
   (⌘W), Next/Previous Tab (⌘⇧] / ⌘⇧[), Find… (⌘F), Command Palette… (⌘⇧P),
   and the standard Edit menu whose `copy:`/`paste:` go to the terminal or the
   focused text field.
+- An About alert with the version this build was compiled as, the two-line
+  description and the repository as a link that opens the browser. Its text is
+  `winter::about`'s, the same copy the GTK window and the WinUI dialog show.
 - A command palette: a card centred below the strip with a search field, a new
   tab per profile and a row per action the shell performs, each carrying the
   chord the file binds to it. Typing narrows the rows, the arrows move the

@@ -26,6 +26,7 @@ use types::text_color::ColorType;
 use utils::{InclusiveRect, Size};
 use windows_reactor::*;
 
+use winter::about;
 use winter::find::FindBar;
 use winter::input;
 use winter::scrollbar;
@@ -115,8 +116,6 @@ const CLOSE_GLYPH: &str = "\u{e711}";
 /// `About`, `U+E713` and `U+E897` in the same two faces.
 const SETTINGS_GLYPH: &str = "\u{e713}";
 const ABOUT_GLYPH: &str = "\u{e897}";
-/// Where the shell's source lives, shown in the About dialog.
-const REPOSITORY: &str = "https://github.com/sdgoij/winterm";
 /// The tab row's fill: behind an inactive tab, and between the last tab and
 /// the caption buttons.
 const TITLEBAR: Color = Color::rgb(32, 32, 36);
@@ -2455,22 +2454,15 @@ fn menu_button(label: String, leading: Option<View>) -> Button {
 
 /// The About dialog: the version this build was compiled as.
 fn about_dialog(sender: &LocalSender<Message>) -> ContentDialog {
-    let mut details: Vec<View> = vec![
-        TextBlock::new()
-            .text(format!("Winter {}", env!("CARGO_PKG_VERSION")))
-            .into(),
-        TextBlock::new()
-            .text("A cross-platform terminal emulator in Rust.")
-            .into(),
-        TextBlock::new()
-            .text("Ported from Microsoft's Windows Terminal.")
-            .into(),
-    ];
+    let mut details: Vec<View> = vec![TextBlock::new().text(about::title(env!("CARGO_PKG_VERSION"))).into()];
+    for line in about::DESCRIPTION {
+        details.push(TextBlock::new().text(line).into());
+    }
     // The repository, where the issues are. A `HyperlinkButton` opens the
     // default browser itself, so the shell does not need `ShellExecute`.
     if let Ok(link) = HyperlinkButton::new()
-        .navigate_uri(REPOSITORY)
-        .map(|link| link.content(REPOSITORY))
+        .navigate_uri(about::REPOSITORY)
+        .map(|link| link.content(about::REPOSITORY))
     {
         details.push(link.into());
     }

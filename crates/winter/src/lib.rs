@@ -19,7 +19,8 @@
 //!   the only module allowed `unsafe` (ADR 033).
 //! - [`config`] holds the settings draft every editor edits, and [`fonts`] the
 //!   directories a face is composed from. [`palette`] is the command palette's
-//!   entries, filter and selection; each shell draws it.
+//!   entries, filter and selection; each shell draws it. [`about`] is the name,
+//!   description, version line and repository every About dialog shows.
 //! - [`embed`] composes the terminal and its frame for a host that is not a
 //!   shell — an editor panel, a wasm canvas, an agent's tool — and is the one
 //!   door such a host needs (ADR 082).
@@ -37,6 +38,7 @@
 //! The emulation and console crates are portable and are tested without a
 //! window.
 
+pub mod about;
 #[cfg(feature = "settings")]
 pub mod config;
 pub mod embed;

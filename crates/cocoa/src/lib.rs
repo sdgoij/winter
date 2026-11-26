@@ -30,13 +30,13 @@ use objc2_app_kit::{
     NSAlert, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
     NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType, NSBeep, NSBezelStyle,
     NSBitmapImageFileType, NSBitmapImageRepPropertyKey, NSButton, NSColor, NSControlTextEditingDelegate,
-    NSEventModifierFlags, NSFont, NSMenu, NSMenuItem, NSScreen, NSSearchField, NSSearchFieldDelegate, NSTextField,
-    NSTextFieldDelegate, NSTextView, NSTitlebarSeparatorStyle, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSEventModifierFlags, NSFont, NSMenu, NSMenuItem, NSScreen, NSSearchField, NSSearchFieldDelegate, NSTextAlignment,
+    NSTextField, NSTextFieldDelegate, NSTextView, NSTitlebarSeparatorStyle, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask, NSWindowTitleVisibility, NSWorkspace,
 };
 use objc2_foundation::{
     NSDictionary, NSNotification, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSString,
-    NSTimer,
+    NSTimer, NSURL,
 };
 use objc2_quartz_core::{CALayer, CAMetalLayer, CATransaction};
 
@@ -571,6 +571,13 @@ define_class!(
             self.show_about_window();
         }
 
+        #[unsafe(method(openRepository:))]
+        fn open_repository(&self, _sender: Option<&AnyObject>) {
+            if let Some(url) = NSURL::URLWithString(&NSString::from_str(winter::about::REPOSITORY)) {
+                let _ = NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+        }
+
         #[unsafe(method(selectProfile:))]
         fn select_profile(&self, sender: Option<&NSMenuItem>) {
             let Some(sender) = sender else {
@@ -968,15 +975,40 @@ impl Controller {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
         };
+        let (title, details) = about_lines();
         let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str("Winter"));
-        alert.setInformativeText(&NSString::from_str(&format!(
-            "A cross-platform terminal emulator.\n\nVersion {}\nhttps://github.com/sdgoij/winterm",
-            env!("CARGO_PKG_VERSION")
-        )));
-        alert.addButtonWithTitle(&NSString::from_str("OK"));
+        alert.setMessageText(&NSString::from_str(&title));
+        alert.setInformativeText(&NSString::from_str(&details));
+        alert.addButtonWithTitle(&NSString::from_str("Close"));
+
+        // The source link, as the other shells' hyperlinks: borderless and in
+        // the link colour, so it reads as a link rather than a button.
+        let link = NSButton::initWithFrame(
+            NSButton::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 20.0)),
+        );
+        link.setBordered(false);
+        link.setTitle(&NSString::from_str(winter::about::REPOSITORY));
+        link.setAlignment(NSTextAlignment::Center);
+        link.setContentTintColor(Some(&NSColor::linkColor()));
+        // SAFETY: the controller outlives the alert and implements the selector
+        // a press sends; AppKit holds the target unretained.
+        unsafe {
+            link.setTarget(Some(self.as_ref()));
+            link.setAction(Some(sel!(openRepository:)));
+        }
+        alert.setAccessoryView(Some(&link));
+
         alert.runModal();
     }
+}
+
+/// The About dialog's title and description, the ones the other shells show.
+fn about_lines() -> (String, String) {
+    (
+        winter::about::title(env!("CARGO_PKG_VERSION")),
+        winter::about::DESCRIPTION.join("\n"),
+    )
 }
 
 /// Builds the application menu and the window's commands.
@@ -1267,5 +1299,16 @@ mod tests {
     fn a_bundle_binary_is_recognised_by_its_path() {
         assert!(bundled_app(Path::new("/Applications/Winter.app/Contents/MacOS/winter")));
         assert!(!bundled_app(Path::new("/Users/t/winter/target/debug/winter")));
+    }
+
+    #[test]
+    fn the_about_dialog_matches_the_other_shells() {
+        let (title, details) = about_lines();
+
+        assert_eq!(title, format!("Winter {}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            details,
+            "A cross-platform terminal emulator in Rust.\nPorted from Microsoft's Windows Terminal."
+        );
     }
 }

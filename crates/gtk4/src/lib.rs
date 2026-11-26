@@ -43,6 +43,7 @@ use server::pty::PtySize;
 use term::input::{Key, MouseButton, MouseButtons, MouseEvent, MouseEventKind, WHEEL_DELTA, WheelAxis};
 use utils::{InclusiveRect, Size};
 
+use winter::about;
 use winter::find::FindBar;
 use winter::input::{self, Event as InputEvent, ModifierSides, Modifiers};
 use winter::notifications;
@@ -66,8 +67,6 @@ use icons::Icons;
 
 /// The window opens at this many cells, like the WinUI shell.
 const CELLS: (i32, i32) = (100, 28);
-/// Where the shell's source lives, shown in the About window.
-const REPOSITORY: &str = "https://github.com/sdgoij/winterm";
 /// The terminal text's left inset, matching the WinUI and macOS panes (ADR 068).
 const PANE_LEFT: f64 = 8.0;
 /// How often the pty is polled, matching the WinUI shell's timer (ADR 006).
@@ -3317,13 +3316,12 @@ fn show_about(parent: &ApplicationWindow) {
     root.set_margin_end(20);
 
     let title = gtk::Label::new(None);
-    title.set_markup(&format!("<b>Winter</b> {}", env!("CARGO_PKG_VERSION")));
+    title.set_markup(&format!("<b>{}</b> {}", about::NAME, env!("CARGO_PKG_VERSION")));
     title.set_halign(gtk::Align::Center);
-    let details = gtk::Label::new(Some(
-        "A cross-platform terminal emulator in Rust.\nPorted from Microsoft's Windows Terminal.",
-    ));
+    let details_text = about::DESCRIPTION.join("\n");
+    let details = gtk::Label::new(Some(details_text.as_str()));
     details.set_justify(gtk::Justification::Center);
-    let source = gtk::LinkButton::with_label(REPOSITORY, REPOSITORY);
+    let source = gtk::LinkButton::with_label(about::REPOSITORY, about::REPOSITORY);
     source.set_halign(gtk::Align::Center);
     let close = gtk::Button::with_label("Close");
     close.add_css_class("suggested-action");
