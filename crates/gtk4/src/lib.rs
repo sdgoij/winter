@@ -63,6 +63,8 @@ use gl::Gl;
 
 /// The window opens at this many cells, like the WinUI shell.
 const CELLS: (i32, i32) = (100, 28);
+/// Where the shell's source lives, shown in the About window.
+const REPOSITORY: &str = "https://github.com/sdgoij/winterm";
 /// The terminal text's left inset, matching the WinUI and macOS panes (ADR 068).
 const PANE_LEFT: f64 = 8.0;
 /// How often the pty is polled, matching the WinUI shell's timer (ADR 006).
@@ -310,8 +312,18 @@ fn activate(app: &Application) {
     search_entry.set_hexpand(true);
     let search_count = gtk::Label::new(None);
     search_count.add_css_class("dim-label");
+    // The other shells give the bar a previous/next pair beside the field, so a
+    // pointer can step the matches without knowing the keyboard shortcuts.
+    let search_previous = gtk::Button::with_label("↑");
+    search_previous.set_tooltip_text(Some("Previous match"));
+    search_previous.set_focus_on_click(false);
+    let search_next = gtk::Button::with_label("↓");
+    search_next.set_tooltip_text(Some("Next match"));
+    search_next.set_focus_on_click(false);
     let search_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     search_row.append(&search_entry);
+    search_row.append(&search_previous);
+    search_row.append(&search_next);
     search_row.append(&search_count);
     let search_bar = gtk::SearchBar::new();
     search_bar.set_child(Some(&search_row));
@@ -401,9 +413,13 @@ fn activate(app: &Application) {
         settings.connect_activate(move |_action, _parameter| {
             editor.borrow_mut().request_settings();
         });
+        let about = gtk::gio::SimpleAction::new("about", None);
+        let parent = window.clone();
+        about.connect_activate(move |_action, _parameter| show_about(&parent));
         let group = gtk::gio::SimpleActionGroup::new();
         group.add_action(&action);
         group.add_action(&settings);
+        group.add_action(&about);
         strip.insert_action_group("profiles", Some(&group));
 
         // The popover lives as long as the strip it hangs under.
@@ -549,6 +565,18 @@ fn activate(app: &Application) {
         search_entry.connect_previous_match(move |_entry| {
             if let Ok(mut shell) = previous.try_borrow_mut() {
                 shell.find_step(false);
+            }
+        });
+        let previous = Rc::clone(&shell);
+        search_previous.connect_clicked(move |_button| {
+            if let Ok(mut shell) = previous.try_borrow_mut() {
+                shell.find_step(false);
+            }
+        });
+        let next = Rc::clone(&shell);
+        search_next.connect_clicked(move |_button| {
+            if let Ok(mut shell) = next.try_borrow_mut() {
+                shell.find_step(true);
             }
         });
         let stopped = Rc::clone(&shell);
@@ -752,7 +780,7 @@ fn activate(app: &Application) {
             let paste = borrowed.take_paste_request();
             let seed = borrowed.take_find_seed();
             let settings = borrowed.take_settings_request();
-            let (open, _query, current, total) = borrowed.find_state();
+            let (open, query, current, total) = borrowed.find_state();
             drop(borrowed);
 
             bar.set_search_mode(open);
@@ -771,12 +799,10 @@ fn activate(app: &Application) {
                 pane.grab_focus();
             }
 
-            let text = if !open {
-                String::new()
-            } else if total == 0 {
-                "0/0".to_string()
+            let text = if open {
+                winter::find::status(current, total, &query)
             } else {
-                format!("{current}/{total}")
+                String::new()
             };
             if count.text().as_str() != text {
                 count.set_text(&text);
@@ -786,8 +812,7 @@ fn activate(app: &Application) {
                 paste_from_clipboard(&shell);
             }
             if settings {
-                let opened = open_settings_window(&shell, &parent);
-                shell.borrow_mut().settings_window = Some(opened);
+                show_settings(&shell, &parent);
             }
             glib::ControlFlow::Continue
         });
@@ -797,8 +822,7 @@ fn activate(app: &Application) {
     area.grab_focus();
 
     if std::env::var_os("WINTER_OPEN_SETTINGS").is_some() {
-        let opened = open_settings_window(&shell, &window);
-        shell.borrow_mut().settings_window = Some(opened);
+        show_settings(&shell, &window);
     }
     if std::env::var_os("WINTER_OPEN_FIND").is_some() {
         shell.borrow_mut().toggle_find();
@@ -2580,6 +2604,7 @@ fn profile_menu(document: &settings::Settings) -> gtk::gio::Menu {
 
     let trailing = gtk::gio::Menu::new();
     trailing.append(Some("Settings…"), Some("profiles.settings"));
+    trailing.append(Some("About Winter"), Some("profiles.about"));
     menu.append_section(None, &trailing);
     menu
 }
@@ -2834,6 +2859,80 @@ fn paste_from_clipboard(shell: &Rc<RefCell<Shell>>) {
 
 /// Opens the native settings editor over the shell's whole document.
 ///
+/// Shows the settings editor, focusing the one already open rather than
+/// stacking a second copy.
+fn show_settings(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) {
+    let existing = shell.borrow().settings_window.clone();
+    if let Some(window) = existing {
+        window.present();
+        return;
+    }
+    let opened = open_settings_window(shell, parent);
+    shell.borrow_mut().settings_window = Some(opened);
+}
+
+/// Shows the About window: the version this build was compiled as, what the
+/// program is, and where its source lives.
+fn show_about(parent: &ApplicationWindow) {
+    let mut builder = gtk::Window::builder()
+        .title("About Winter")
+        .transient_for(parent)
+        .modal(true)
+        .resizable(false)
+        .default_width(360);
+    if let Some(application) = parent.application() {
+        builder = builder.application(&application);
+    }
+    let window = builder.build();
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    root.set_margin_top(20);
+    root.set_margin_bottom(16);
+    root.set_margin_start(20);
+    root.set_margin_end(20);
+
+    let title = gtk::Label::new(None);
+    title.set_markup(&format!("<b>Winter</b> {}", env!("CARGO_PKG_VERSION")));
+    title.set_halign(gtk::Align::Center);
+    let details = gtk::Label::new(Some(
+        "A cross-platform terminal emulator in Rust.\nPorted from Microsoft's Windows Terminal.",
+    ));
+    details.set_justify(gtk::Justification::Center);
+    let source = gtk::LinkButton::with_label(REPOSITORY, REPOSITORY);
+    source.set_halign(gtk::Align::Center);
+    let close = gtk::Button::with_label("Close");
+    close.add_css_class("suggested-action");
+    close.set_halign(gtk::Align::Center);
+
+    root.append(&title);
+    root.append(&details);
+    root.append(&source);
+    root.append(&close);
+    window.set_child(Some(&root));
+
+    {
+        let closer = window.clone();
+        let keys = EventControllerKey::new();
+        keys.connect_key_pressed(move |_controller, key, _code, _state| {
+            if key == gdk::Key::Escape {
+                closer.close();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        window.add_controller(keys);
+    }
+    {
+        let closer = window.clone();
+        close.connect_clicked(move |_| closer.close());
+    }
+
+    window.present();
+}
+
+/// Builds the settings editor.
+///
 /// Saving parses the text with the same reader startup uses and writes it
 /// through `settings::save`, so what is in force is always the normalized file
 /// (ADR 030's rule; ADR 075 records why the document is the editor).
@@ -2962,6 +3061,18 @@ fn open_settings_window(shell: &Rc<RefCell<Shell>>, parent: &ApplicationWindow) 
             }
         });
         window.add_controller(keys);
+    }
+
+    {
+        // Closing leaves no editor behind, so the next request reads the file
+        // again instead of presenting a disposed window.
+        let cleared = Rc::clone(shell);
+        window.connect_close_request(move |_window| {
+            if let Ok(mut shell) = cleared.try_borrow_mut() {
+                shell.settings_window = None;
+            }
+            glib::Propagation::Proceed
+        });
     }
 
     sync();
@@ -3467,13 +3578,19 @@ mod tests {
             Some("two")
         );
 
-        // The settings editor sits after the profiles, inside a section so the
-        // popover draws a separator.
+        // The settings editor and About sit after the profiles, inside a section
+        // so the popover draws a separator.
         let section = menu.item_link(2, "section").expect("a trailing section");
+        assert_eq!(section.n_items(), 2);
         let settings = section.item_attribute_value(0, "label", None);
         assert_eq!(
             settings.and_then(|value| value.str().map(str::to_string)).as_deref(),
             Some("Settings…")
+        );
+        let about = section.item_attribute_value(1, "label", None);
+        assert_eq!(
+            about.and_then(|value| value.str().map(str::to_string)).as_deref(),
+            Some("About Winter")
         );
     }
 

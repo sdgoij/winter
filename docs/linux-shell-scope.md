@@ -243,9 +243,11 @@ To build at all, the guest needs: `sudo dnf install gtk4-devel libadwaita-devel`
    bar was `cargo run` on a real prompt in the guest, photographed by the shot.
 5. **Host chrome.** ✅ The tab strip (tabs, close boxes, the new-tab button
    and the profile menu's button) is painted by this shell inside a
-   `GtkWindowHandle`, with the profile list as a `GtkPopoverMenu`. The find bar
-   is a `GtkSearchBar`, the settings editor is a `GtkTextView` over the TOML
-   document, and a tab reorders when it is dragged past a neighbour.
+   `GtkWindowHandle`, with the profile list, the settings command and About in
+   a `GtkPopoverMenu`. The find bar is a `GtkSearchBar` whose previous/next
+   buttons and match count read like the other shells', the settings editor is
+   one `GtkTextView` over the TOML document (a second request raises the open
+   one), and a tab reorders when it is dragged past a neighbour.
 6. **Linux extras.** ✅ IME preedit and commits with the candidate window at the
    caret, the screen as the pane's accessible description, the bell flash and
    OSC 777 notifications. ⏳ Primary selection.

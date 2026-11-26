@@ -70,6 +70,18 @@ impl FindBar {
     }
 }
 
+/// The text the find bar shows beside its field.
+///
+/// A query that finds nothing is reported as such; otherwise the bar names the
+/// current match and the total, one-based, as the other shells do.
+pub fn status(current: usize, total: usize, query: &str) -> String {
+    if total == 0 && !query.is_empty() {
+        "No matches".to_string()
+    } else {
+        format!("{current} of {total}")
+    }
+}
+
 /// The match Enter moves to, wrapping at both ends.
 pub fn next_match(current: Option<usize>, len: usize, forward: bool) -> Option<usize> {
     if len == 0 {
@@ -132,6 +144,14 @@ mod tests {
             end_row,
             end_column,
         }
+    }
+
+    #[test]
+    fn a_fruitless_query_says_it_found_nothing() {
+        assert_eq!(status(0, 0, "needle"), "No matches");
+        // An empty field is not a failed search.
+        assert_eq!(status(0, 0, ""), "0 of 0");
+        assert_eq!(status(2, 5, "needle"), "2 of 5");
     }
 
     #[test]
