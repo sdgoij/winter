@@ -593,12 +593,29 @@ fn join(dir: &str, specifier: &str) -> Option<String> {
     if parts.is_empty() { None } else { Some(parts.join("/")) }
 }
 
+/// The most scrollback the host gathers for one dispatch. An extension may ask
+/// for less; asking for more returns what the host has, because the snapshot is
+/// taken before the handler runs and cannot grow underneath it.
+pub const HISTORY_LINES: usize = 200;
+
 /// The one picture of the shell a handler sees.
-fn snapshot(host: &dyn Host) -> String {
+///
+/// Taken before the handler runs, so every read in it agrees: the tabs, the
+/// focused pane, the visible screen, and a bounded walk of the scrollback above
+/// that screen. The walk is the only part that needs the pane mutably, which is
+/// why the whole snapshot takes the host mutably.
+fn snapshot(host: &mut dyn Host) -> String {
     let tabs = host.tabs();
     let focused = host.focused();
     let text = host.visible_text();
-    serde_json::json!({ "tabs": tabs, "focused": focused, "text": text }).to_string()
+    let history = host.history(HISTORY_LINES);
+    serde_json::json!({
+        "tabs": tabs,
+        "focused": focused,
+        "text": text,
+        "history": history,
+    })
+    .to_string()
 }
 
 /// Console output and unhandled rejections, prefixed with the extension's id.
@@ -897,6 +914,16 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
       text() {
         return current ? current.text : "";
       },
+      // The last `lines` rows of the scrollback the host gathered before this
+      // handler ran. A larger request returns what was gathered, not an error:
+      // the snapshot cannot grow underneath the handler.
+      history(lines) {
+        if (!Number.isInteger(lines) || lines < 1) return "";
+        const all = current && typeof current.history === "string" ? current.history : "";
+        if (all === "") return "";
+        const rows = all.split("\n");
+        return rows.slice(Math.max(0, rows.length - lines)).join("\n");
+      },
       send(text) {
         if (typeof text !== "string") fail("panes.send", "the text must be a string");
         sendText(text);
@@ -941,6 +968,18 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
           fail("assets.get", "`" + name + "` is not declared in the manifest");
         }
         return name;
+      },
+      // A copy: an extension that overwrites a buffer must not change what the
+      // next reader of the same asset sees.
+      bytes(name) {
+        if (typeof name !== "string") {
+          fail("assets.bytes", "the name must be a string");
+        }
+        const buffer = assets.get(name);
+        if (buffer === undefined) {
+          fail("assets.bytes", "`" + name + "` is not declared in the manifest");
+        }
+        return copyBytes(buffer);
       },
     },
   };
@@ -1107,6 +1146,15 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     return bytes.length;
   }
 
+  // A fresh typed array over the same bytes, so a caller cannot write through
+  // to the host's copy of an asset.
+  function copyBytes(buffer) {
+    const source = new Uint8Array(buffer);
+    const copy = new Uint8Array(source.length);
+    for (let i = 0; i < source.length; i++) copy[i] = source[i];
+    return copy;
+  }
+
   function callWasmCommand(id) {
     if (!wasmExports || typeof wasmExports.winter_command !== "function") return;
     try {
@@ -1271,6 +1319,7 @@ mod tests {
         tabs: Vec<TabInfo>,
         focused: Option<PaneInfo>,
         text: String,
+        history: String,
         sent: Vec<String>,
         copied: Vec<String>,
         notified: Vec<(String, String)>,
@@ -1287,6 +1336,14 @@ mod tests {
         }
         fn visible_text(&self) -> String {
             self.text.clone()
+        }
+        fn history(&mut self, lines: usize) -> String {
+            let rows: Vec<&str> = if self.history.is_empty() {
+                Vec::new()
+            } else {
+                self.history.split('\n').collect()
+            };
+            rows[rows.len().saturating_sub(lines)..].join("\n")
         }
         fn send_text(&mut self, text: &str) {
             self.sent.push(text.to_string());
@@ -1856,6 +1913,60 @@ mod tests {
                 "winter.failed-command:where-am-i".to_string(),
                 "winter.wasm-fixture:hello-wasm".to_string()
             ]
+        );
+        // The script fixture logs its asset's bytes at load, so the shipped
+        // example proves that path too.
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter()
+                .any(|line| line == "winter.failed-command: asset: hello from a script asset"),
+            "{logs:?}"
+        );
+    }
+
+    #[test]
+    fn a_handler_reads_the_scrollback_it_asks_for() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => {
+              winter.app.log("history: " + winter.panes.history(2).split("\n").join("|"));
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder {
+            history: "one\ntwo\nthree\nfour".to_string(),
+            ..Recorder::default()
+        };
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line == "test.fixture: history: three|four"),
+            "{logs:?}"
+        );
+    }
+
+    #[test]
+    fn a_handler_that_asks_for_more_history_than_the_snapshot_holds_gets_what_it_has() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => {
+              winter.app.log("history: [" + winter.panes.history(500) + "]");
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder {
+            history: "only".to_string(),
+            ..Recorder::default()
+        };
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line == "test.fixture: history: [only]"),
+            "{logs:?}"
         );
     }
 

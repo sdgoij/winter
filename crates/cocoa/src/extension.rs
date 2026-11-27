@@ -294,6 +294,17 @@ impl extensions::Host for Shell {
         self.accessible_text()
     }
 
+    fn history(&mut self, lines: usize) -> String {
+        let Some(pane) = self.tabs.active_mut().and_then(|tab| tab.focused_pane_mut()) else {
+            return String::new();
+        };
+        let (document, _) = pane.control.scroll_facts();
+        let visible = pane.control.size().1.max(1);
+        // The view may be scrolled back, and the walk stops where it starts.
+        let end = (document - visible - pane.view.scroll()).max(0);
+        pane.control.history_text(end, lines)
+    }
+
     fn select_tab(&mut self, index: usize) {
         Shell::select_tab(self, index);
     }

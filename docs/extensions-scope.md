@@ -62,6 +62,7 @@ winter.commands.add("git.status", "Git status", () => { ... });
 
 winter.panes.focused()        // { id, title, program, columns, rows }
 winter.panes.text()           // the focused pane's visible screen
+winter.panes.history(200)     // rows above it, as far back as the host gathered
 winter.panes.send("ls\n")     // into the focused pty
 winter.tabs.list()            // [{ index, title, active, panes }]
 winter.tabs.select(2)
@@ -70,6 +71,8 @@ winter.app.notify("Winter", "done");   // a desktop notification
 winter.app.clipboard.write(text);
 winter.app.openUrl("https://...");
 winter.app.log("...");                 // prefixed with the extension id
+winter.assets.get("icon")              // the opaque name of a declared asset
+winter.assets.bytes("icon")            // its bytes, as a fresh Uint8Array
 ```
 
 | Module | Surface |
@@ -348,20 +351,26 @@ second file. The palette is the extension's command surface.
    master switch that turns the engine on, and the reason a row is not running.
    Saving writes the `[extensions]` table; loading changes on the next start.
 
-The GTK and WinUI `Host`s, a `winter.panes.history` walk, and bytes for a
-*script* extension's assets (it gets the opaque name; a compiled module gets the
-bytes) are what is not here. ADR 086 records the surface;
+What is not here: `winter.commands` cannot be run from a chord, a compiled module
+has no typed accessors beside `snapshot`, and `panes.history` reads the rows the
+host gathered before the handler ran rather than walking the buffer live. The GTK
+and WinUI `Host`s are the per-shell work. ADR 086 records the surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 
 ## Open questions
 
-- **Slag pin.** Use the revision Goat pins
-  (`9fee0baf9897ae5d5ae16bf119b8fd3b8fe806d8`), or a newer one? Slag's `unicode`
-  build script reads its `test262` submodule, and a git dependency is not
-  recursive, so the pin only builds if that checkout carries the submodule or the
-  script can be made to skip it. Confirm with a throwaway `cargo check` against
-  the revision before the manifest is agreed.
+- **A live history walk.** `panes.history(lines)` answers from the snapshot the
+  host takes before a handler runs, which means the host gathers a bounded walk
+  (`HISTORY_LINES`, 200 rows) on every dispatch. A handler that wants the whole
+  buffer needs the shell entered from inside a callback — the one re-entrancy the
+  write queue exists to avoid — or a request/response turn in the engine.
+- **A chord for an extension command.** The settings file's action vocabulary is
+  strict, so a chord would need a schema change or a second file; the palette is
+  the command's surface until then.
+- **Typed accessors for a compiled module.** `snapshot` is JSON, so a module that
+  wants fields pays for a parser. Importing `tabsCount`, `paneColumns` and the
+  like would be additive, and would duplicate the shape the JSON already has.
 - **Root-relative specifiers.** The engine resolves static imports through one
   map with no referrer, so an extension says `./lib/util.js` from anywhere and
   the loader refuses an import whose sibling reading would differ. File-relative
@@ -370,12 +379,6 @@ the suites.
   `Module::requested_modules` already reports each specifier's offset, so the
   rewrite is possible, but it puts a source transformation in the loader's trust
   path.
-- **WASM shape.** Instantiate through the engine's JS `WebAssembly` surface with a
-  JS-import object (one host implementation for both languages), or a raw
-  memory/record ABI like Noctis's (`noctis_update(ptr, count, dt)`)? The former is
-  simpler and keeps one vocabulary; the latter avoids JS glue per event.
 - **Namespace names.** `winter.panes` / `winter.tabs` / `winter.app` are the
-  proposal; `winter.terminal` or `winter.ui` may read better for the first.
-- **Visible text only, or scrollback too?** `winter.panes.text()` starts with the
-  visible screen (the accessibility value); `winter.panes.history(lines)` is a
-  buffer walk and can come later.
+  names; `winter.terminal` or `winter.ui` would have read better for the first,
+  and renaming one is a new `api` major rather than an edit.

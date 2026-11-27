@@ -67,6 +67,9 @@ pub trait Host {
     fn focused(&self) -> Option<PaneInfo>;
     /// The focused pane's visible screen, row by row.
     fn visible_text(&self) -> String;
+    /// Up to `lines` document rows directly above the visible screen, joined by
+    /// newlines — the scrollback the extension can read.
+    fn history(&mut self, lines: usize) -> String;
     /// Select the tab at `index`, if it exists.
     fn select_tab(&mut self, index: usize);
     /// Write `text` into the focused pane's pty.

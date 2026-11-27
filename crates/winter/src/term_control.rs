@@ -328,6 +328,31 @@ impl Control {
         }
     }
 
+    /// The text of up to `lines` document rows ending just before `end`.
+    ///
+    /// `end` is the document row at the top of the on-screen area, so the walk
+    /// stops where the user's view starts; one lock covers the whole walk
+    /// rather than one per row. Rows are joined with a newline and trailing
+    /// blanks are dropped, as [`row_text`](Self::row_text) drops them.
+    pub fn history_text(&mut self, end: i32, lines: usize) -> String {
+        if lines == 0 || end <= 0 {
+            return String::new();
+        }
+        let buffer = self.terminal.page_manager_mut().active_page().buffer();
+        let buffer = buffer.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let start = end.saturating_sub(lines as i32).max(0);
+        let mut rows = Vec::with_capacity((end - start) as usize);
+        for row in start..end {
+            rows.push(
+                buffer
+                    .get_row_by_document_line(row)
+                    .map(buffer::Row::get_text)
+                    .unwrap_or_default(),
+            );
+        }
+        rows.join("\n")
+    }
+
     /// How wide the buffer is, in cells.
     pub fn screen_width(&mut self) -> i32 {
         let buffer = self.terminal.page_manager_mut().active_page().buffer();
@@ -378,6 +403,30 @@ mod tests {
 
         control.pump();
         assert!(screen_text(&mut control).contains("hello"));
+    }
+
+    #[test]
+    fn history_walks_the_rows_above_the_screen() {
+        let output: Vec<u8> = (0..30)
+            .flat_map(|line| format!("line {line}\r\n").into_bytes())
+            .collect();
+        let (mut control, _) = control_with(&output);
+        control.pump();
+
+        let (document, _) = control.scroll_facts();
+        let end = document - control.size().1;
+        assert!(end > 2, "the output should have scrolled: {end}");
+
+        let expected = format!("{}\n{}", control.row_text(end - 2), control.row_text(end - 1));
+        assert_eq!(control.history_text(end, 2), expected);
+        assert!(expected.starts_with("line "), "{expected:?}");
+
+        // More than there is returns every row above the screen, and a walk at
+        // the top of the document returns nothing rather than failing.
+        let everything = control.history_text(end, 1_000);
+        assert_eq!(everything.split('\n').count(), end as usize);
+        assert_eq!(control.history_text(0, 10), "");
+        assert_eq!(control.history_text(end, 0), "");
     }
 
     #[test]
