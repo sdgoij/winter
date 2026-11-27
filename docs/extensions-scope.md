@@ -401,4 +401,6 @@ surface; `cargo test -p extensions --features host` and
   loader that rewrites each specifier before compiling —
   `Module::requested_modules` already reports each specifier's offset, so the
   rewrite is possible, but it puts a source transformation in the loader's trust
-  path.
+  path. The hook is specified for the engine in
+  `docs/slag-static-import-resolution.md`; the loader above is what changes when
+  it lands.

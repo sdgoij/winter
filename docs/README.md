@@ -11,6 +11,8 @@ directory keeps the record — the *why* and the *when*.
 | [adr/](adr/README.md) | Architecture decision records. A decision that constrains future code gets one; a decision that a test already enforces does not. |
 | [linux-shell-scope.md](linux-shell-scope.md) | The scope the GTK host was built against, now the shipping Linux shell (ADR 075), with the Wayland traps and the named gaps (primary selection, an accessible text tree, tab icons, sound). |
 | [macos-shell-scope.md](macos-shell-scope.md) | The macOS shell's scope, its module map, the AppKit traps that cost time, and the named follow-ups (ADR 072). |
+| [extensions-scope.md](extensions-scope.md) | The extension surface: what exists, how a script and a compiled module reach the shell, and what is still open (ADR 086). |
+| [slag-static-import-resolution.md](slag-static-import-resolution.md) | A proposal to the engine: a host resolver for static import specifiers, so an extension's imports can be relative to the importing file. |
 | [../.agents/skills/](../.agents/skills/) | Not part of this record: procedures that have been walked — porting a module, testing, the WinUI, macOS and Linux shells, commit messages. |
 
 The C++ source being ported is Microsoft's Windows Terminal. It is not vendored;
