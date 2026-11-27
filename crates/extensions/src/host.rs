@@ -752,7 +752,7 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
   const handlers = new Map();
   const commands = new Map();
   const assets = new Set(assetNames);
-  let snapshot = null;
+  let current = null;
   let frozen = false;
 
   function fail(where, message) {
@@ -850,10 +850,10 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
 
     panes: {
       focused() {
-        return snapshot ? snapshot.focused : null;
+        return current ? current.focused : null;
       },
       text() {
-        return snapshot ? snapshot.text : "";
+        return current ? current.text : "";
       },
       send(text) {
         if (typeof text !== "string") fail("panes.send", "the text must be a string");
@@ -863,7 +863,7 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
 
     tabs: {
       list() {
-        return snapshot ? snapshot.tabs : [];
+        return current ? current.tabs : [];
       },
       select(index) {
         if (!Number.isInteger(index) || index < 0) {
@@ -913,7 +913,7 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
   }
 
   hidden(winter, "__snapshot", function (json) {
-    snapshot = json ? JSON.parse(json) : null;
+    current = json ? JSON.parse(json) : null;
   });
 
   hidden(winter, "__dispatch", function (name, payload) {
@@ -1046,6 +1046,25 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     return { ptr: ptr, len: bytes.length };
   }
 
+  // Writes `bytes` at `ptr` into the module's memory, at most `cap` of them,
+  // and answers how many the value needs — the `snprintf` convention, so a
+  // module can ask with an empty buffer first and allocate what it is told.
+  function writeBytes(ptr, cap, bytes) {
+    if (!memory) {
+      throw new Error("winter: the module's memory is not in hand yet; read from winter_init onwards, not from a start function");
+    }
+    if (ptr < 0 || cap < 0) {
+      throw new RangeError("winter: the module pointed outside its own memory");
+    }
+    const written = Math.min(bytes.length, cap);
+    if (ptr + written > memory.buffer.byteLength) {
+      throw new RangeError("winter: the module's buffer runs past its own memory");
+    }
+    const view = new Uint8Array(memory.buffer, ptr, written);
+    for (let i = 0; i < written; i++) view[i] = bytes[i];
+    return bytes.length;
+  }
+
   function callWasmCommand(id) {
     if (!wasmExports || typeof wasmExports.winter_command !== "function") return;
     try {
@@ -1068,6 +1087,12 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
   }
 
   const granted = {
+    // The same one picture a script handler sees, as JSON. It is `null` before
+    // the first dispatch, so a module can tell that `winter_init` has no shell
+    // to read yet.
+    snapshot(ptr, cap) {
+      return writeBytes(ptr, cap, encodeUtf8(JSON.stringify(current)));
+    },
     log(ptr, len) {
       log(readText(ptr, len));
     },
@@ -1637,6 +1662,9 @@ mod tests {
         assert!(logs.iter().any(|line| line == "test.wasm: hello from wasm"), "{logs:?}");
         // The module wrote UTF-8; the host decoded it.
         assert!(logs.iter().any(|line| line == "test.wasm: café ✓"), "{logs:?}");
+        // Nothing has been dispatched yet, so the snapshot the module read is
+        // `null`, which is how it tells `winter_init` apart from a callback.
+        assert!(logs.iter().any(|line| line == "test.wasm: null"), "{logs:?}");
 
         let commands = engine.commands();
         assert_eq!(commands.len(), 1);
@@ -1653,11 +1681,20 @@ mod tests {
     }
 
     #[test]
-    fn the_event_payload_crosses_into_the_module() {
+    fn the_event_payload_and_the_snapshot_cross_the_boundary() {
         let wasm = wat::parse_str(WASM_FIXTURE).expect("the fixture assembles");
         let (mut engine, _logs) = load_wasm(&wasm).expect("the module loads");
 
-        let mut host = Recorder::default();
+        let mut host = Recorder {
+            focused: Some(PaneInfo {
+                id: "7".to_string(),
+                title: "shell".to_string(),
+                program: "zsh".to_string(),
+                columns: 80,
+                rows: 24,
+            }),
+            ..Recorder::default()
+        };
         engine.emit(&mut host, &Event::CommandFinished { row: 1, error: true });
         // The module logged the bytes the host wrote into its memory. The key
         // order is serde_json's, so match the fields rather than the text.
@@ -1666,6 +1703,13 @@ mod tests {
             logs.iter().any(|line| line.starts_with("test.wasm: {")
                 && line.contains("\"row\":1")
                 && line.contains("\"error\":true")),
+            "{logs:?}"
+        );
+        // And it read the same picture a script handler is handed: the head of
+        // the snapshot, with the pane the host put in it.
+        assert!(
+            logs.iter()
+                .any(|line| line.starts_with("test.wasm: {\"focused\":{") && line.contains("\"columns\":80")),
             "{logs:?}"
         );
         assert_eq!(

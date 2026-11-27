@@ -44,8 +44,9 @@ path that would tie an extension to this build.
    namespace, and refuses anything else by name before any code runs. Strings
    cross as UTF-8 at `(pointer, length)` pairs into the module's own exported
    memory; registration happens in `winter_init`, because a start function runs
-   before the host owns the memory. The module is an actor and not an observer:
-   it can act and register, and it does not read the shell yet.
+   before the host owns the memory. `snapshot(ptr, cap)` writes the same JSON a
+   script handler is handed and answers the length it needs, so the read surface
+   is one import and no record layout; typed accessors would be additive.
 5. **The loader owns the filesystem, the engine never touches it.** `manifest`
    and `discover` parse `extension.json` strictly, validate the identifier and
    paths, cap the manifest, each module and their total, canonicalise every path

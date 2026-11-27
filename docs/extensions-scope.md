@@ -247,6 +247,7 @@ policed at call time.
 | `select_tab` | `(index)` | the tab strip |
 | `register_command` | `(idptr, idlen, lptr, llen) -> i32` | a palette row; `0` accepted, `1` refused and logged |
 | `register_event` | `(nameptr, namelen) -> i32` | a subscription; the same answer |
+| `snapshot` | `(ptr, cap) -> i32` | the shell's one picture, as JSON; answers how many bytes it needs |
 
 | Export | Signature | Meaning |
 |---|---|---|
@@ -263,11 +264,15 @@ strings through `winter_alloc`. The host refuses a pointer outside the memory an
 refuses invalid UTF-8, so a module cannot make it read out of bounds, and a
 module that answers a non-zero status is reported like a throwing handler.
 
-The compiled half is **an actor, not an observer**: it can act and register, and
-it does not yet read the shell. `winter.panes`, `winter.tabs.list` and
-`winter.assets` remain the script's surface, because handing a snapshot back
-needs a return-buffer convention that is not worth inventing before something
-needs it.
+**A compiled module reads the same picture a script handler is handed.**
+`snapshot` writes the JSON of `{ tabs, focused, text }` — the exact payload
+`winter.panes`, `winter.tabs.list` and the event handlers see — and answers the
+length it needs rather than the length it wrote, so a module asks with an empty
+buffer, calls `winter_alloc(len)`, and asks again: the `snprintf` convention, and
+no second record layout in the ABI. Before the first dispatch the snapshot is
+`null`, which is how a module tells `winter_init` (no shell to read yet) from a
+callback. A module that wants typed access instead of JSON pays for its own
+parser; typed accessors would be an additive import beside this one.
 
 Failure isolation: `HostCallbacks` reports `console` output and unhandled
 rejections against the extension's id; a throw inside a handler is caught by the
@@ -332,8 +337,9 @@ second file. The palette is the extension's command surface.
    master switch that turns the engine on, and the reason a row is not running.
    Saving writes the `[extensions]` table; loading changes on the next start.
 
-A read surface for a compiled module, the GTK and WinUI `Host`s and a
-`winter.panes.history` walk are not here. ADR 086 records the surface;
+A read surface for a compiled module's *assets* — the opaque names a script gets
+from `winter.assets` — the GTK and WinUI `Host`s and a `winter.panes.history`
+walk are not here. ADR 086 records the surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 
