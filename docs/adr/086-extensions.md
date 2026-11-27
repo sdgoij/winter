@@ -29,32 +29,41 @@ path that would tie an extension to this build.
    `winter.panes`, `winter.tabs`, `winter.app`, `winter.assets`, plus
    `winter.extension` and `winter.api`. A module is added or a method is added
    within an `api` major; a name that changes meaning is a new major.
-3. **The entry is an ES module.** Module scope is the scope, so there is no
-   wrapper to write and no globals to leak. The other `.js` and `.json` files
-   under the extension directory are registered with the agent under
-   `./<root path>`. The engine resolves a static specifier through one flat map
-   with no referrer, so a specifier is root-relative, not file-relative; the
-   loader compiles every module once before evaluating, reports a miss against
-   the file that wrote it, and refuses a spelling whose sibling reading would be
-   a different file instead of picking one.
-4. **The loader owns the filesystem, the engine never touches it.** `manifest`
+3. **The entry is an ES module, and a compiled module may stand beside it.**
+   Module scope is the scope, so there is no wrapper to write and no globals to
+   leak. The other `.js` and `.json` files under the extension directory are
+   registered with the agent under `./<root path>`. The engine resolves a static
+   specifier through one flat map with no referrer, so a specifier is
+   root-relative, not file-relative; the loader compiles every module once
+   before evaluating, reports a miss against the file that wrote it, and refuses
+   a spelling whose sibling reading would be a different file instead of picking
+   one.
+4. **A compiled extension's import list is its API.** A manifest may name a
+   `module` instead of or beside an `entry`; the host instantiates it in the same
+   realm with `WebAssembly`, grants only the function imports in the `winter`
+   namespace, and refuses anything else by name before any code runs. Strings
+   cross as UTF-8 at `(pointer, length)` pairs into the module's own exported
+   memory; registration happens in `winter_init`, because a start function runs
+   before the host owns the memory. The module is an actor and not an observer:
+   it can act and register, and it does not read the shell yet.
+5. **The loader owns the filesystem, the engine never touches it.** `manifest`
    and `discover` parse `extension.json` strictly, validate the identifier and
    paths, cap the manifest, each module and their total, canonicalise every path
    and refuse one that escapes the directory, and read the text. Slag's `fs`
    feature stays off.
-5. **Events are observations.** A handler runs after the shell has acted, and
+6. **Events are observations.** A handler runs after the shell has acted, and
    the shell hands it one snapshot taken before the handler (`tabs`, `focused`,
    `visible_text`). A handler's writes — `panes.send`, `tabs.select`,
    `app.notify`, `app.clipboard.write`, `app.openUrl` — are queued and applied
    after it returns, so an extension cannot re-enter the shell mid-frame. The
    parked "bugs" layer is the opposite shape and stays a separate surface.
-6. **The shell implements `Host`.** `crates/extensions` names no window, no
+7. **The shell implements `Host`.** `crates/extensions` names no window, no
    pty and no workspace crate; the trait is the internal half of the contract,
    and its reads are the snapshot and its writes are applied by the engine.
-7. **A command is a palette row.** `palette::Command::Extension("<id>:<cmd>")`
+8. **A command is a palette row.** `palette::Command::Extension("<id>:<cmd>")`
    is dispatched by the shell; commands carry no chord, because the settings
    file's action vocabulary is strict and the palette is the command's surface.
-8. **Opt-in, and switchable per identifier.** The macOS shell loads extensions
+9. **Opt-in, and switchable per identifier.** The macOS shell loads extensions
    only with `WINTER_EXT=1`, from `$WINTER_EXTENSIONS`, the config directory's
    `extensions/`, and `extensions/` beside the executable or the working
    directory. The settings file's `[extensions] disabled` list names the
@@ -77,10 +86,11 @@ path that would tie an extension to this build.
 - A failed handler is logged with its extension's identifier and the other
   handlers still run; a duplicate command id fails the later extension rather
   than shadowing.
-- WASM-only extensions (no `entry`) are not wired yet; the loader reads the
-  module's bytes and the host declines to instantiate them. The `[extensions]`
-  table has no screen: it is edited in the settings document, and a change to it
-  applies on the next start because unloading a live realm is not a reload.
+- WASM is a sandbox for the compiled half by construction: the import list is
+the capability list, and a module that asks for more does not link. A module's
+trap is reported like a throwing handler. The `[extensions]` table has no screen:
+it is edited in the settings document, and a change to it applies on the next
+start because unloading a live realm is not a reload.
 - GTK and WinUI compile against the new palette variant and do not host
   extensions; each needs its own `Host`, which is a per-shell change.
 
@@ -95,3 +105,5 @@ path that would tie an extension to this build.
 | File-relative import specifiers | The engine has no per-referrer resolution hook, so it would need a source rewrite in the loader's trust path; root-relative plus a load-time check is smaller and cannot corrupt code |
 | A second crate for the host behind a feature on the loader | Two crates, one contract; a feature on one crate keeps the loader engine-free and the shells' build single |
 | Applying writes inside a handler | A handler would re-enter the shell mid-frame, and the window's own rules assume one actor per frame |
+| Noctis's raw record ABI for the compiled half (`noctis_update(ptr, count, dt)`) | It is a second protocol to specify, and it puts a per-frame crossing in the way of a surface whose work is registration and one-off actions. The import list and the four exports carry the same capabilities with no record layout in the ABI |
+| Granting a prelude of JS bindings to a wasm module instead of imports | The import list would stop being the capability list; a module that wants something the host refuses could no longer fail to link |

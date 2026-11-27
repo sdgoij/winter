@@ -20,6 +20,9 @@ host = ["dep:slag"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# The wasm fixture's source is WAT; the tests compile it, so the ABI is checked
+# against its source rather than against a binary nobody can read.
+wat = "1"
 
 [lints]
 workspace = true

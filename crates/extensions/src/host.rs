@@ -144,12 +144,12 @@ impl Engine {
     /// to the next extension.
     pub fn load(&mut self, loaded: &Loaded) -> Result<(), Error> {
         let id = loaded.manifest.id.clone();
-        let Some(entry) = &loaded.entry else {
+        if loaded.entry.is_none() && loaded.module.is_none() {
             return Err(Error::new(
                 &id,
-                "a wasm-only extension is not loaded yet; give it an `entry` module",
+                "the manifest declares neither an `entry` nor a `module`",
             ));
-        };
+        }
 
         let mut context = Context::new().map_err(|error| Error::new(&id, error.to_string()))?;
         let logs = Rc::new(RefCell::new(Vec::new()));
@@ -185,51 +185,55 @@ impl Engine {
         // surfacing as `Cannot find module` mid-link.
         let mut problems = Vec::new();
         for source in &loaded.sources {
-            let module = context
+            let source_module = context
                 .compile_module(&format!("./{}", source.name), Some(&source.name), &source.text)
                 .map_err(|error| Error::new(&id, format!("{}: {error}", source.name)))?;
-            problems.extend(validate_specifiers(&module, &source.name, &keys));
+            problems.extend(validate_specifiers(&source_module, &source.name, &keys));
         }
-        let module = context
-            .compile_module(&entry.name, Some(&entry.name), &entry.text)
-            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
-        problems.extend(validate_specifiers(&module, &entry.name, &keys));
-        if !problems.is_empty() {
-            return Err(Error::new(&id, problems.join("; ")));
-        }
+        if let Some(entry) = &loaded.entry {
+            let entry_module = context
+                .compile_module(&entry.name, Some(&entry.name), &entry.text)
+                .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+            problems.extend(validate_specifiers(&entry_module, &entry.name, &keys));
+            if !problems.is_empty() {
+                return Err(Error::new(&id, problems.join("; ")));
+            }
 
-        for source in &loaded.sources {
+            for source in &loaded.sources {
+                context
+                    .agent_mut()
+                    .add_module(&format!("./{}", source.name), &source.text);
+            }
             context
-                .agent_mut()
-                .add_module(&format!("./{}", source.name), &source.text);
-        }
-        context
-            .instantiate_module(&module)
-            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+                .instantiate_module(&entry_module)
+                .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
 
-        // The evaluation promise is the only reliable answer: the engine marks
-        // a module with a pending top-level await `Evaluated`, as V8 does. No
-        // timer and no I/O exists in this realm, so a promise still pending
-        // after the drain can never settle.
-        let promise = context
-            .evaluate_module(&module)
-            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
-        match context.promise_state(promise.clone()) {
-            Ok(PromiseState::Fulfilled) => {}
-            Ok(PromiseState::Rejected) => {
-                let detail = context
-                    .promise_result(promise)
-                    .map(|reason| context.describe_thrown(&reason))
-                    .unwrap_or_else(|error| error.to_string());
-                return Err(Error::new(&id, detail));
+            // The evaluation promise is the only reliable answer: the engine
+            // marks a module with a pending top-level await `Evaluated`, as V8
+            // does. No timer and no I/O exists in this realm, so a promise
+            // still pending after the drain can never settle.
+            let promise = context
+                .evaluate_module(&entry_module)
+                .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+            match context.promise_state(promise.clone()) {
+                Ok(PromiseState::Fulfilled) => {}
+                Ok(PromiseState::Rejected) => {
+                    let detail = context
+                        .promise_result(promise)
+                        .map(|reason| context.describe_thrown(&reason))
+                        .unwrap_or_else(|error| error.to_string());
+                    return Err(Error::new(&id, detail));
+                }
+                Ok(PromiseState::Pending) => {
+                    return Err(Error::new(
+                        &id,
+                        "the entry module awaits something that will never settle; no timer or I/O exists in this realm",
+                    ));
+                }
+                Err(error) => return Err(Error::new(&id, error.to_string())),
             }
-            Ok(PromiseState::Pending) => {
-                return Err(Error::new(
-                    &id,
-                    "the entry module awaits something that will never settle; no timer or I/O exists in this realm",
-                ));
-            }
-            Err(error) => return Err(Error::new(&id, error.to_string())),
+        } else if !problems.is_empty() {
+            return Err(Error::new(&id, problems.join("; ")));
         }
 
         let winter = context
@@ -237,6 +241,28 @@ impl Engine {
             .and_then(|global| global.get("winter"))
             .and_then(|winter| context.to_object(&winter))
             .map_err(|error| Error::new(&id, format!("the bootstrap left no `winter` global: {error}")))?;
+
+        // The compiled half runs after the entry, in the same realm and against
+        // the same registries, so an extension may be either or both. Its
+        // `winter_init` is where registration happens; a wasm start function
+        // runs before the host owns the module's memory, so it cannot.
+        if let Some(bytes) = &loaded.module {
+            let buffer = context
+                .array_buffer_from_bytes(bytes)
+                .map_err(|error| Error::new(&id, format!("the module was not handed over: {error}")))?;
+            let instantiate = winter
+                .get("__wasm")
+                .map_err(|error| Error::new(&id, error.to_string()))?;
+            let outcome = context
+                .call(&instantiate, &JsValue::undefined(), &[buffer])
+                .map_err(|error| Error::new(&id, format!("the module failed: {error}")))?;
+            // `__wasm` answers the sentence that failed it, or the empty string.
+            let failed = context.to_string(&outcome).unwrap_or_default();
+            if !failed.is_empty() {
+                return Err(Error::new(&id, failed));
+            }
+        }
+
         let snapshot = winter
             .get("__snapshot")
             .map_err(|error| Error::new(&id, error.to_string()))?;
@@ -914,6 +940,241 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     return JSON.stringify(list);
   });
 
+  // ── The compiled half ────────────────────────────────────────────────────
+  // A module declares the capabilities it wants as imports from `winter`, so
+  // its import list *is* its API: anything else fails to link. It registers
+  // through those imports during `winter_init` and is driven through four
+  // optional exports; every string crosses as UTF-8 at a pointer into the
+  // module's own exported memory.
+  let memory = null;
+  let wasmExports = null;
+
+  function encodeUtf8(text) {
+    const bytes = [];
+    for (let i = 0; i < text.length; i++) {
+      let code = text.charCodeAt(i);
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        const low = text.charCodeAt(i + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          i++;
+        }
+      }
+      if (code < 0x80) {
+        bytes.push(code);
+      } else if (code < 0x800) {
+        bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      } else if (code < 0x10000) {
+        bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      } else {
+        bytes.push(
+          0xf0 | (code >> 18),
+          0x80 | ((code >> 12) & 0x3f),
+          0x80 | ((code >> 6) & 0x3f),
+          0x80 | (code & 0x3f),
+        );
+      }
+    }
+    return bytes;
+  }
+
+  function readText(ptr, len) {
+    if (!memory) {
+      throw new Error("winter: the module's memory is not in hand yet; register from winter_init, not a start function");
+    }
+    if (ptr < 0 || len < 0 || ptr + len > memory.buffer.byteLength) {
+      throw new RangeError("winter: the module pointed outside its own memory");
+    }
+    const bytes = new Uint8Array(memory.buffer, ptr, len);
+    let out = "";
+    for (let i = 0; i < bytes.length; ) {
+      const first = bytes[i++];
+      if (first < 0x80) {
+        out += String.fromCharCode(first);
+        continue;
+      }
+      let need = 0;
+      let code = 0;
+      if ((first & 0xe0) === 0xc0) {
+        need = 1;
+        code = first & 0x1f;
+      } else if ((first & 0xf0) === 0xe0) {
+        need = 2;
+        code = first & 0x0f;
+      } else if ((first & 0xf8) === 0xf0) {
+        need = 3;
+        code = first & 0x07;
+      } else {
+        throw new Error("winter: the module wrote an invalid UTF-8 lead byte");
+      }
+      if (i + need > bytes.length) {
+        throw new Error("winter: the module wrote a truncated UTF-8 sequence");
+      }
+      for (let k = 0; k < need; k++) {
+        const next = bytes[i++];
+        if ((next & 0xc0) !== 0x80) {
+          throw new Error("winter: the module wrote an invalid UTF-8 continuation");
+        }
+        code = (code << 6) | (next & 0x3f);
+      }
+      if (code > 0x10ffff) {
+        throw new Error("winter: the module wrote a code point past U+10FFFF");
+      }
+      if (code > 0xffff) {
+        const rest = code - 0x10000;
+        out += String.fromCharCode(0xd800 + (rest >> 10), 0xdc00 + (rest & 0x3ff));
+      } else {
+        out += String.fromCharCode(code);
+      }
+    }
+    return out;
+  }
+
+  // Writes a host string into the module's memory through its own allocator,
+  // so the module decides where its arena is.
+  function writeText(text) {
+    if (!wasmExports || typeof wasmExports.winter_alloc !== "function") {
+      throw new Error("winter: the module exports no winter_alloc, so no string can reach it");
+    }
+    const bytes = encodeUtf8(text);
+    const ptr = wasmExports.winter_alloc(bytes.length);
+    if (!memory || ptr < 0 || ptr + bytes.length > memory.buffer.byteLength) {
+      throw new RangeError("winter: the module allocated outside its own memory");
+    }
+    const view = new Uint8Array(memory.buffer, ptr, bytes.length);
+    for (let i = 0; i < bytes.length; i++) view[i] = bytes[i];
+    return { ptr: ptr, len: bytes.length };
+  }
+
+  function callWasmCommand(id) {
+    if (!wasmExports || typeof wasmExports.winter_command !== "function") return;
+    try {
+      const written = writeText(id);
+      wasmExports.winter_command(written.ptr, written.len);
+    } catch (error) {
+      report("command " + identity.id + ":" + id, error);
+    }
+  }
+
+  function callWasmEvent(name, event) {
+    if (!wasmExports || typeof wasmExports.winter_event !== "function") return;
+    try {
+      const written = writeText(name);
+      const payload = writeText(JSON.stringify(event));
+      wasmExports.winter_event(written.ptr, written.len, payload.ptr, payload.len);
+    } catch (error) {
+      report("event " + name, error);
+    }
+  }
+
+  const granted = {
+    log(ptr, len) {
+      log(readText(ptr, len));
+    },
+    send(ptr, len) {
+      sendText(readText(ptr, len));
+    },
+    notify(titlePtr, titleLen, bodyPtr, bodyLen) {
+      notify(readText(titlePtr, titleLen), readText(bodyPtr, bodyLen));
+    },
+    clipboard_write(ptr, len) {
+      copyText(readText(ptr, len));
+    },
+    open_url(ptr, len) {
+      openUrl(readText(ptr, len));
+    },
+    select_tab(index) {
+      try {
+        if (!Number.isInteger(index) || index < 0) {
+          fail("wasm.select_tab", "the index must be a non-negative integer");
+        }
+        selectTab(index);
+      } catch (error) {
+        report("wasm.select_tab", error);
+      }
+    },
+    register_command(idPtr, idLen, labelPtr, labelLen) {
+      try {
+        open("wasm.register_command");
+        const id = readText(idPtr, idLen);
+        const label = readText(labelPtr, labelLen);
+        if (id === "" || id.indexOf(":") >= 0) {
+          fail("wasm.register_command", "the id must be a non-empty string without `:`");
+        }
+        if (commands.has(id)) {
+          fail("wasm.register_command", "`" + id + "` is already registered");
+        }
+        commands.set(id, {
+          label: label,
+          handler: function () {
+            callWasmCommand(id);
+          },
+        });
+        return 0;
+      } catch (error) {
+        report("wasm.register_command", error);
+        return 1;
+      }
+    },
+    register_event(namePtr, nameLen) {
+      try {
+        open("wasm.register_event");
+        const name = readText(namePtr, nameLen);
+        if (name === "") {
+          fail("wasm.register_event", "the event name must be a non-empty string");
+        }
+        const list = handlers.get(name) || [];
+        list.push(function (event) {
+          callWasmEvent(name, event);
+        });
+        handlers.set(name, list);
+        return 0;
+      } catch (error) {
+        report("wasm.register_event", error);
+        return 1;
+      }
+    },
+  };
+
+  hidden(winter, "__wasm", function (bytes) {
+    // Instantiation errors are answered as text: a thrown value reaches the
+    // host as a generic `Uncaught exception`, and every failure here is the
+    // host's own sentence about the module.
+    try {
+      const module = new WebAssembly.Module(bytes);
+      for (const want of WebAssembly.Module.imports(module)) {
+        if (want.module !== "winter" || want.kind !== "function" || !(want.name in granted)) {
+          throw new Error(
+            "winter: the module imports `" + want.module + "." + want.name + "`, which this host does not grant",
+          );
+        }
+      }
+      const instance = new WebAssembly.Instance(module, { winter: granted });
+      const exports = instance.exports;
+      if (!exports.memory) {
+        throw new Error("winter: the module exports no memory, so the host cannot read its strings");
+      }
+      memory = exports.memory;
+      wasmExports = exports;
+      if (typeof exports.winter_abi !== "function") {
+        throw new Error("winter: the module exports no winter_abi");
+      }
+      const abi = exports.winter_abi();
+      if (abi !== 1) {
+        throw new Error("winter: the module targets ABI " + abi + ", and this host implements 1");
+      }
+      if (typeof exports.winter_init === "function") {
+        const status = exports.winter_init();
+        if (status !== 0) {
+          throw new Error("winter: winter_init answered " + status);
+        }
+      }
+      return "";
+    } catch (error) {
+      return error && error.message ? String(error.message) : String(error);
+    }
+  });
+
   globalThis.winter = winter;
 })(__IDENTITY__, __ASSETS__);
 "##;
@@ -1338,20 +1599,138 @@ mod tests {
         );
     }
 
+    /// The wasm fixture's source, compiled by the tests that need its bytes.
+    const WASM_FIXTURE: &str = include_str!("../fixtures/failed-command-wasm/extension.wat");
+
+    /// An extension whose only half is the module in `wasm`.
+    fn wasm_extension(wasm: &[u8]) -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("wasm");
+        std::fs::create_dir_all(&dir).expect("dir");
+        write(
+            &dir,
+            "extension.json",
+            r#"{"id": "test.wasm", "name": "Wasm", "version": "1", "api": 1, "module": "extension.wasm"}"#,
+        );
+        std::fs::write(dir.join("extension.wasm"), wasm).expect("wasm");
+        (temp, dir)
+    }
+
+    fn load_wasm(wasm: &[u8]) -> Result<(Engine, Vec<String>), Error> {
+        let (_temp, dir) = wasm_extension(wasm);
+        let report = discover(&Options {
+            roots: vec![dir.clone()],
+            disabled: Vec::new(),
+        });
+        assert_eq!(report.loaded.len(), 1, "{:?}", report.skipped);
+        let mut engine = Engine::default();
+        engine.load(&report.loaded[0])?;
+        engine.freeze();
+        let logs = engine.take_logs();
+        Ok((engine, logs))
+    }
+
     #[test]
-    fn the_shipped_fixture_loads_and_registers_its_command() {
+    fn a_wasm_only_extension_logs_and_registers_its_command() {
+        let wasm = wat::parse_str(WASM_FIXTURE).expect("the fixture assembles");
+        let (mut engine, logs) = load_wasm(&wasm).expect("the module loads");
+        assert!(logs.iter().any(|line| line == "test.wasm: hello from wasm"), "{logs:?}");
+        // The module wrote UTF-8; the host decoded it.
+        assert!(logs.iter().any(|line| line == "test.wasm: café ✓"), "{logs:?}");
+
+        let commands = engine.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].key, "test.wasm:hello-wasm");
+        assert_eq!(commands[0].label, "Hello from wasm");
+
+        let mut host = Recorder::default();
+        assert!(engine.run(&mut host, "test.wasm:hello-wasm"));
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line == "test.wasm: A wasm command ran"),
+            "{logs:?}"
+        );
+    }
+
+    #[test]
+    fn the_event_payload_crosses_into_the_module() {
+        let wasm = wat::parse_str(WASM_FIXTURE).expect("the fixture assembles");
+        let (mut engine, _logs) = load_wasm(&wasm).expect("the module loads");
+
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::CommandFinished { row: 1, error: true });
+        // The module logged the bytes the host wrote into its memory. The key
+        // order is serde_json's, so match the fields rather than the text.
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line.starts_with("test.wasm: {")
+                && line.contains("\"row\":1")
+                && line.contains("\"error\":true")),
+            "{logs:?}"
+        );
+        assert_eq!(
+            host.notified,
+            [("Wasm fixture".to_string(), "a command failed".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_module_that_imports_what_the_host_does_not_grant_is_refused() {
+        let wasm = wat::parse_str(
+            r#"(module
+                 (import "winter" "now" (func $now (result f64)))
+                 (memory (export "memory") 1)
+                 (func (export "winter_abi") (result i32) (i32.const 1)))"#,
+        )
+        .expect("assembles");
+        let error = load_wasm(&wasm).err().expect("an ungranted import must be refused");
+        assert!(error.message.contains("winter.now"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_module_with_another_abi_is_refused() {
+        let wasm = wat::parse_str(
+            r#"(module
+                 (memory (export "memory") 1)
+                 (func (export "winter_abi") (result i32) (i32.const 2)))"#,
+        )
+        .expect("assembles");
+        let error = load_wasm(&wasm).err().expect("another ABI must be refused");
+        assert!(error.message.contains("ABI 2"), "{}", error.message);
+    }
+
+    /// Writes `extension.wasm` beside the fixture's source after an edit to the
+    /// WAT. Ignored: it writes into the tree, so it is a deliberate step.
+    #[test]
+    #[ignore = "writes the fixture's compiled module"]
+    fn regenerate_the_wasm_fixture() {
+        let bytes = wat::parse_str(WASM_FIXTURE).expect("the fixture assembles");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/failed-command-wasm/extension.wasm");
+        std::fs::write(&path, bytes).expect("write");
+    }
+
+    #[test]
+    fn the_shipped_fixtures_load() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
         let report = discover(&Options {
             roots: vec![fixtures],
             disabled: Vec::new(),
         });
-        assert_eq!(report.loaded.len(), 1, "{:?}", report.skipped);
+        assert_eq!(report.loaded.len(), 2, "{:?}", report.skipped);
         let mut engine = Engine::default();
-        engine.load(&report.loaded[0]).expect("the fixture loads");
+        for loaded in &report.loaded {
+            engine.load(loaded).expect("a fixture loads");
+        }
         engine.freeze();
-        let commands = engine.commands();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].key, "winter.failed-command:where-am-i");
+        let mut keys: Vec<String> = engine.commands().into_iter().map(|command| command.key).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "winter.failed-command:where-am-i".to_string(),
+                "winter.wasm-fixture:hello-wasm".to_string()
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "id": "winter.wasm-fixture",
+  "name": "Wasm fixture",
+  "version": "0.1.0",
+  "api": 1,
+  "description": "A compiled extension: logs on load, registers a palette row and an event, and echoes the payload it is handed.",
+  "author": "Winter",
+  "module": "extension.wasm"
+}

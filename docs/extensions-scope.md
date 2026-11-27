@@ -223,11 +223,50 @@ installs no timers, so a module can only await promises that are already
 settled; an evaluation still stalled after the drain is reported and that
 extension is dropped. A stuck extension cannot block a shell task.
 
-A wasm-only extension ships no JavaScript: the host instantiates its module
-through the engine's `WebAssembly` surface with an import object built from the
-same `winter` functions. The ABI is the JS-API object rather than a second
-protocol to design, so the Rust half is one implementation, tested once, for
-both languages.
+### The compiled half
+
+A manifest may name a `module` beside or instead of an `entry`. The host reads the
+bytes, hands them to the bootstrap as an `ArrayBuffer`, and the bootstrap builds
+`WebAssembly.Module` and `WebAssembly.Instance` — so a compiled extension is
+instantiated by the same realm, against the same registries, and frozen by the
+same `freeze` as a script one. An extension may ship both halves.
+
+**The import list is the API.** Every import must be a function from the `winter`
+namespace in the table below; anything else is refused by name before
+instantiation, so a module that wants a clock fails to load rather than being
+policed at call time.
+
+| Import | Signature | Meaning |
+|---|---|---|
+| `log` | `(ptr, len)` | a log line under the extension's id |
+| `send` | `(ptr, len)` | text into the focused pty |
+| `notify` | `(tptr, tlen, bptr, blen)` | a desktop notification |
+| `clipboard_write` | `(ptr, len)` | the clipboard |
+| `open_url` | `(ptr, len)` | the user's browser |
+| `select_tab` | `(index)` | the tab strip |
+| `register_command` | `(idptr, idlen, lptr, llen) -> i32` | a palette row; `0` accepted, `1` refused and logged |
+| `register_event` | `(nameptr, namelen) -> i32` | a subscription; the same answer |
+
+| Export | Signature | Meaning |
+|---|---|---|
+| `memory` | — | required: the host reads and writes it |
+| `winter_abi` | `() -> i32` | required; must be `1`, the ABI this build implements |
+| `winter_alloc` | `(len) -> i32` | required to receive a string; the module's own arena |
+| `winter_init` | `() -> i32` | optional, called once; `0` is success. Registration goes here — a start function runs before the host owns the memory |
+| `winter_command` | `(idptr, idlen) -> i32` | optional, called for each command the module registered |
+| `winter_event` | `(nptr, nlen, pptr, plen) -> i32` | optional; the payload is the event's JSON |
+
+Every string crosses as UTF-8 at a `(pointer, length)` pair into the module's own
+memory: the module's strings arrive through the imports, and the host writes its
+strings through `winter_alloc`. The host refuses a pointer outside the memory and
+refuses invalid UTF-8, so a module cannot make it read out of bounds, and a
+module that answers a non-zero status is reported like a throwing handler.
+
+The compiled half is **an actor, not an observer**: it can act and register, and
+it does not yet read the shell. `winter.panes`, `winter.tabs.list` and
+`winter.assets` remain the script's surface, because handing a snapshot back
+needs a return-buffer convention that is not worth inventing before something
+needs it.
 
 Failure isolation: `HostCallbacks` reports `console` output and unhandled
 rejections against the extension's id; a throw inside a handler is caught by the
@@ -285,12 +324,12 @@ second file. The palette is the extension's command surface.
    driving multi-file fixture extensions through Slag.
 3. macOS — `Host for Shell`, the palette arm, `commandFinished`,
    `titleChanged`, `paneFocused`, `tabOpened`, `tabClosed` and
-   `settingsReloaded`, all behind `WINTER_EXT=1`, with the fixture in
-   `crates/extensions/fixtures/failed-command`.
+   `settingsReloaded`, all behind `WINTER_EXT=1`, with the fixtures in
+   `crates/extensions/fixtures`: a script notifier and a compiled one.
 
-WASM-only extensions (a manifest with a `module` and no `entry`), an extensions
-screen, the GTK and WinUI `Host`s, and a `winter.panes.history` walk are not
-here. ADR 086 records the surface;
+An extensions screen, the GTK and WinUI `Host`s, a read surface for a compiled
+module and a `winter.panes.history` walk are not here. ADR 086 records the
+surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 
