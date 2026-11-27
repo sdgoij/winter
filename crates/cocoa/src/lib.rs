@@ -46,6 +46,7 @@ use self::view::{PaletteView, TerminalView};
 
 pub(crate) mod chrome;
 pub(crate) mod extension;
+pub(crate) mod extension_window;
 pub(crate) mod frame;
 pub(crate) mod icon;
 pub(crate) mod keys;
@@ -227,6 +228,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     app.activate();
     if std::env::var_os("WINTER_OPEN_SETTINGS").is_some() {
         controller.open_settings_window();
+    }
+    if std::env::var_os("WINTER_OPEN_EXTENSIONS").is_some() {
+        controller.open_extensions_window();
     }
     if std::env::var_os("WINTER_OPEN_FIND").is_some() {
         shell.borrow_mut().toggle_find();
@@ -460,6 +464,7 @@ struct ControllerIvars {
     palette_field: Retained<NSSearchField>,
     palette_shown: Cell<bool>,
     settings_window: RefCell<Option<Retained<settings::SettingsWindow>>>,
+    extensions_window: RefCell<Option<Retained<extension_window::ExtensionsWindow>>>,
     timer: RefCell<Option<Retained<NSTimer>>>,
     find_shown: Cell<bool>,
     /// The Metal content and its overlays, when the GPU path paints.
@@ -640,6 +645,11 @@ define_class!(
         #[unsafe(method(openSettings:))]
         fn open_settings(&self, _sender: Option<&AnyObject>) {
             self.open_settings_window();
+        }
+
+        #[unsafe(method(openExtensions:))]
+        fn open_extensions(&self, _sender: Option<&AnyObject>) {
+            self.open_extensions_window();
         }
 
         #[unsafe(method(showAbout:))]
@@ -823,6 +833,7 @@ impl Controller {
             palette_field,
             palette_shown: Cell::new(false),
             settings_window: RefCell::new(None),
+            extensions_window: RefCell::new(None),
             timer: RefCell::new(None),
             find_shown: Cell::new(false),
             layers,
@@ -1001,6 +1012,15 @@ impl Controller {
             settings.setTarget(Some(self.as_ref()));
             menu.addItem(&settings);
 
+            let extensions = NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str("Extensions…"),
+                Some(sel!(openExtensions:)),
+                &NSString::from_str(""),
+            );
+            extensions.setTarget(Some(self.as_ref()));
+            menu.addItem(&extensions);
+
             let about = NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),
                 &NSString::from_str("About Winter"),
@@ -1055,6 +1075,17 @@ impl Controller {
                 println!("winter: wrote {}", settings_path.display());
             }
         }
+
+        if let Some(extensions) = &*self.ivars().extensions_window.borrow() {
+            let extensions_path = path.with_file_name(format!(
+                "{}-extensions.png",
+                path.file_stem()
+                    .map_or_else(|| "winter".into(), |stem| stem.to_string_lossy())
+            ));
+            if extensions.capture(&extensions_path) {
+                println!("winter: wrote {}", extensions_path.display());
+            }
+        }
     }
 
     fn open_settings_window(&self) {
@@ -1064,6 +1095,23 @@ impl Controller {
         let mut slot = self.ivars().settings_window.borrow_mut();
         if slot.is_none() {
             *slot = Some(settings::SettingsWindow::new(Rc::clone(&self.ivars().shell), mtm));
+        }
+        if let Some(window) = slot.as_ref() {
+            window.open(mtm);
+        }
+    }
+
+    /// Shows the extensions window, building it on the first call.
+    fn open_extensions_window(&self) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let mut slot = self.ivars().extensions_window.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(extension_window::ExtensionsWindow::new(
+                Rc::clone(&self.ivars().shell),
+                mtm,
+            ));
         }
         if let Some(window) = slot.as_ref() {
             window.open(mtm);
@@ -1141,6 +1189,14 @@ fn install_menu(app: &NSApplication, controller: &Controller, mtm: MainThreadMar
             Some(sel!(openSettings:)),
             ",",
             NSEventModifierFlags::Command,
+            target,
+        ));
+        app_menu.addItem(&item(
+            mtm,
+            "Extensions…",
+            Some(sel!(openExtensions:)),
+            "e",
+            NSEventModifierFlags::Command | NSEventModifierFlags::Shift,
             target,
         ));
         app_menu.addItem(&NSMenuItem::separatorItem(mtm));

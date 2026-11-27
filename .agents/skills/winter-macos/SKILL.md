@@ -26,6 +26,8 @@ belongs there.
 | `metal.rs` | The Metal content backend: drawable presentation, its glyph atlas and the offscreen readback |
 | `icon.rs` | A tab's program icon from `NSWorkspace`, and the drawn app mark, both cached |
 | `settings.rs` | Native settings window over the whole TOML document |
+| `extension.rs` | The `Host` the extension engine calls, the event pump, the discovery list the extensions window shows, and the load gate |
+| `extension_window.rs` | The extensions window: a switch per extension, the master switch, and why a row is not running |
 | `keys.rs` | Virtual-key codes and layout-character selection |
 
 The module declares the workspace's `unsafe` exemption for the AppKit and Metal
@@ -114,8 +116,9 @@ WINTER_SCREENSHOT=winter-shot.png dist/Winter.app/Contents/MacOS/winter
 Read `winter-shot.png`; a correct first frame shows the active tab in the pane's
 fill, the strip's `+` and `▾`, the prompt and a cursor. `WINTER_OPEN_SETTINGS=1`
 opens the settings window on the same run (written as
-`winter-shot-settings.png`), `WINTER_OPEN_FIND=1` opens the find bar over the
-pane and `WINTER_OPEN_PALETTE=1` opens the command palette. `WINTER_SPLIT=1`
+`winter-shot-settings.png`), `WINTER_OPEN_EXTENSIONS=1` opens the extensions
+window (`winter-shot-extensions.png`), `WINTER_OPEN_FIND=1` opens the find bar
+over the pane and `WINTER_OPEN_PALETTE=1` opens the command palette. `WINTER_SPLIT=1`
 splits the first tab, so a frame shows two panes, their prompts, the divider and
 the focused pane's border. A crash before the capture is the construction
 failure. Do not leave the PNGs in the tree.

@@ -9,12 +9,15 @@ use serde::{Deserialize, Serialize};
 /// may have been uninstalled — so nothing here is checked against what is on
 /// disk; discovery reports an identifier that matched nothing it found.
 ///
-/// The table is read when the window opens, so a change to it takes effect on
-/// the next start, not the next settings reload: unloading code that holds
+/// Both keys are read when the window opens, so a change takes effect on the
+/// next start, not the next settings reload: unloading code that holds
 /// registrations is a different operation from re-reading a document.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Extensions {
+    /// Whether the shell loads extensions at all. Off by default: the feature
+    /// is new, and `WINTER_EXT` overrides this for one run either way.
+    pub enabled: bool,
     /// Identifiers the shell skips.
     pub disabled: Vec<String>,
 }
@@ -33,19 +36,22 @@ mod tests {
     #[test]
     fn an_absent_table_disables_nothing() {
         let extensions = Extensions::default();
+        assert!(!extensions.enabled);
         assert!(extensions.disabled.is_empty());
         assert!(!extensions.is_disabled("com.example.x"));
     }
 
     #[test]
-    fn the_table_reads_the_identifiers_the_file_names() {
+    fn the_switch_and_the_list_are_read_from_the_file() {
         let parsed: crate::Settings = toml::from_str(
             r#"
             [extensions]
+            enabled = true
             disabled = ["com.example.noisy", "org.example.chatty"]
             "#,
         )
         .expect("settings");
+        assert!(parsed.extensions.enabled);
         assert_eq!(parsed.extensions.disabled, ["com.example.noisy", "org.example.chatty"]);
         assert!(parsed.extensions.is_disabled("org.example.chatty"));
         assert!(!parsed.extensions.is_disabled("com.example.quiet"));
@@ -67,6 +73,8 @@ mod tests {
     fn the_written_defaults_carry_the_table() {
         let text = crate::to_toml(&crate::Settings::default());
         assert!(text.contains("[extensions]"), "{text}");
-        assert!(crate::parse(&text).expect("reads back").extensions.disabled.is_empty());
+        let written = crate::parse(&text).expect("reads back");
+        assert!(!written.extensions.enabled);
+        assert!(written.extensions.disabled.is_empty());
     }
 }

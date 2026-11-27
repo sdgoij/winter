@@ -902,6 +902,26 @@ impl Shell {
         }
     }
 
+    /// Writes the `[extensions]` table, then re-reads the file.
+    ///
+    /// Loading itself does not change: an extension is switched by the next
+    /// start, because dropping a live realm is not a reload.
+    pub(crate) fn save_extensions(&mut self, enabled: bool, disabled: Vec<String>) -> Result<(), String> {
+        self.settings.extensions.enabled = enabled;
+        self.settings.extensions.disabled = disabled;
+        match settings::save(&self.settings) {
+            Ok(()) => {
+                self.reload_settings();
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.settings_error = Some(message.clone());
+                Err(message)
+            }
+        }
+    }
+
     /// Opens a tab on the default profile and activates it.
     pub(crate) fn open_tab(&mut self) {
         self.add_tab(self.template.clone());

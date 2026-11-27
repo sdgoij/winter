@@ -63,12 +63,15 @@ path that would tie an extension to this build.
 8. **A command is a palette row.** `palette::Command::Extension("<id>:<cmd>")`
    is dispatched by the shell; commands carry no chord, because the settings
    file's action vocabulary is strict and the palette is the command's surface.
-9. **Opt-in, and switchable per identifier.** The macOS shell loads extensions
-   only with `WINTER_EXT=1`, from `$WINTER_EXTENSIONS`, the config directory's
-   `extensions/`, and `extensions/` beside the executable or the working
-   directory. The settings file's `[extensions] disabled` list names the
-   identifiers this installation skips; it is read when the window opens, so a
-   change takes effect on the next start.
+9. **Off by default, switched on from the extensions window.** Loading needs
+   `[extensions] enabled = true` in the settings file or `WINTER_EXT` set to
+   anything but `0`; `WINTER_EXT=0` overrides an enabled file for one run, and
+   `WINTER_EXTENSIONS` adds a discovery root beside the config directory's
+   `extensions/` and the ones beside the executable and the working directory.
+   The window (`⌘⇧E`) lists what discovery finds — including an extension that
+   is switched off or failed, with the reason — and writes `enabled` and
+   `disabled`. It reads discovery rather than the engine, so it works with the
+   engine off, and a change takes effect on the next start.
 
 ## Consequences
 
@@ -88,9 +91,7 @@ path that would tie an extension to this build.
   than shadowing.
 - WASM is a sandbox for the compiled half by construction: the import list is
 the capability list, and a module that asks for more does not link. A module's
-trap is reported like a throwing handler. The `[extensions]` table has no screen:
-it is edited in the settings document, and a change to it applies on the next
-start because unloading a live realm is not a reload.
+trap is reported like a throwing handler.
 - GTK and WinUI compile against the new palette variant and do not host
   extensions; each needs its own `Host`, which is a per-shell change.
 

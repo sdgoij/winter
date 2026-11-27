@@ -172,9 +172,10 @@ and every other `.js` or `.json` file under the directory is importable beside
 it, at any depth. Discovery, in order, is the union of: an explicit
 directory (CLI or `$WINTER_EXTENSIONS`), the user's config directory, and
 `extensions/` beside the executable or in the working directory. Enablement is
-the settings file's `[extensions] disabled` list of identifiers; it is read when
-the window opens, so a change applies on the next start. The loader validates
-ids and paths, caps the manifest,
+the settings file's `[extensions]` table: `enabled` turns the engine on at all,
+and `disabled` lists the identifiers to skip. The table is read when the window
+opens, so a change applies on the next start, and the extensions window writes
+it. The loader validates ids and paths, caps the manifest,
 each JavaScript file and their total, the wasm module and the assets, and
 refuses a path that escapes the extension's directory; a broken extension is
 reported and skipped, never fatal.
@@ -312,8 +313,9 @@ second file. The palette is the extension's command surface.
   list is default-deny by construction.
 - **Additive versioning.** `winter.api` is one integer. Within a major, new events
   and modules are additive; a name that changes meaning is a new major.
-- **Enablement is remembered**, in the settings file's `[extensions] disabled`
-  list rather than in a session, and applied when the window opens.
+- **Enablement is remembered**, in the settings file's `[extensions]` table
+  rather than in a session: `enabled` and `disabled` are read when the window
+  opens, and the extensions window edits them.
 
 ## What is here
 
@@ -324,12 +326,14 @@ second file. The palette is the extension's command surface.
    driving multi-file fixture extensions through Slag.
 3. macOS — `Host for Shell`, the palette arm, `commandFinished`,
    `titleChanged`, `paneFocused`, `tabOpened`, `tabClosed` and
-   `settingsReloaded`, all behind `WINTER_EXT=1`, with the fixtures in
-   `crates/extensions/fixtures`: a script notifier and a compiled one.
+   `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
+   script notifier and a compiled one.
+4. The extensions window (`⌘⇧E`): every extension on disk with a switch, the
+   master switch that turns the engine on, and the reason a row is not running.
+   Saving writes the `[extensions]` table; loading changes on the next start.
 
-An extensions screen, the GTK and WinUI `Host`s, a read surface for a compiled
-module and a `winter.panes.history` walk are not here. ADR 086 records the
-surface;
+A read surface for a compiled module, the GTK and WinUI `Host`s and a
+`winter.panes.history` walk are not here. ADR 086 records the surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 

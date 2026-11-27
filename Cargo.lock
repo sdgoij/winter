@@ -3068,6 +3068,7 @@ dependencies = [
  "renderer",
  "server",
  "settings",
+ "tempfile",
  "term",
  "types",
  "utils",
