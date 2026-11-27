@@ -152,22 +152,25 @@ normal failure rather than a crash.
 
 ## The manifest and the loader
 
-`extension.json`, parsed strictly, in a directory or a zip with the manifest at
-its root:
+`extension.toml`, parsed strictly, in a directory with the manifest at its root.
+TOML because the file is meant to be edited: it takes comments, and the settings
+file beside it is TOML already. Unknown keys are errors, so a typo is reported
+with its line rather than ignored.
 
-```json
-{
-  "id": "com.example.failed-command",
-  "name": "Failed command",
-  "version": "0.1.0",
-  "api": 1,
-  "description": "Says when a command above the prompt exited non-zero.",
-  "author": "example",
-  "loadAfter": ["com.example.gridkit"],
-  "entry": "extension.js",
-  "module": "extension.wasm",
-  "assets": { "icon": "assets/icon.png" }
-}
+```toml
+# The fixture the live check runs.
+id = "com.example.failed-command"
+name = "Failed command"
+version = "0.1.0"
+api = 1
+description = "Says when a command above the prompt exited non-zero."
+author = "example"
+loadAfter = ["com.example.gridkit"]
+entry = "extension.js"
+module = "extension.wasm"
+
+[assets]
+icon = "assets/icon.png"
 ```
 
 An extension may have `entry`, `module`, both, or neither (a data-only extension

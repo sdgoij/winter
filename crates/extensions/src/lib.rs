@@ -2,7 +2,7 @@
 //! JavaScript host that runs them.
 //!
 //! `docs/extensions-scope.md` is the working record of the surface. In short:
-//! an extension is a directory with an `extension.json` and an ES module entry,
+//! an extension is a directory with an `extension.toml` and an ES module entry,
 //! evaluated in its own `slag::Context` with a `winter` global built from host
 //! functions. This crate is the loader half (`manifest`, `discover`) and it sees
 //! no workspace crate and no window, so it can be unit-tested with neither.

@@ -1531,8 +1531,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         write(
             &dir,
-            "extension.json",
-            r#"{"id": "test.fixture", "name": "Fixture", "version": "1", "api": 1, "entry": "main.js"}"#,
+            "extension.toml",
+            "id = \"test.fixture\"\nname = \"Fixture\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n",
         );
         write(&dir, "main.js", entry);
         for (name, text) in files {
@@ -1714,8 +1714,8 @@ mod tests {
             std::fs::create_dir_all(&path).expect("dir");
             write(
                 &path,
-                "extension.json",
-                &format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1, "entry": "main.js"}}"#),
+                "extension.toml",
+                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n"),
             );
             write(&path, "main.js", body);
         }
@@ -1835,8 +1835,8 @@ mod tests {
             std::fs::create_dir_all(&path).expect("dir");
             write(
                 &path,
-                "extension.json",
-                &format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1, "entry": "main.js"}}"#),
+                "extension.toml",
+                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n"),
             );
             write(&path, "main.js", body);
         }
@@ -1896,8 +1896,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         write(
             &dir,
-            "extension.json",
-            r#"{"id": "test.wasm", "name": "Wasm", "version": "1", "api": 1, "module": "extension.wasm"}"#,
+            "extension.toml",
+            "id = \"test.wasm\"\nname = \"Wasm\"\nversion = \"1\"\napi = 1\nmodule = \"extension.wasm\"\n",
         );
         std::fs::write(dir.join("extension.wasm"), wasm).expect("wasm");
         (temp, dir)
@@ -1999,8 +1999,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         write(
             &dir,
-            "extension.json",
-            r#"{"id": "test.asset", "name": "Asset", "version": "1", "api": 1, "module": "extension.wasm", "assets": {"greeting": "greeting.txt"}}"#,
+            "extension.toml",
+            "id = \"test.asset\"\nname = \"Asset\"\nversion = \"1\"\napi = 1\nmodule = \"extension.wasm\"\n\n[assets]\ngreeting = \"greeting.txt\"\n",
         );
         std::fs::write(dir.join("extension.wasm"), &wasm).expect("wasm");
         std::fs::write(dir.join("greeting.txt"), "hello from an asset\n").expect("asset");

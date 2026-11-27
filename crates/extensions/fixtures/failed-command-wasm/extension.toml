@@ -1,0 +1,11 @@
+# A compiled extension: `module` instead of `entry`, and one asset it reads.
+id = "winter.wasm-fixture"
+name = "Wasm fixture"
+version = "0.1.0"
+api = 1
+description = "A compiled extension: logs on load, reads its asset, registers a palette row and an event, and reports on the shell."
+author = "Winter"
+module = "extension.wasm"
+
+[assets]
+greeting = "greeting.txt"

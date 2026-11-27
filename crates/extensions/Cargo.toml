@@ -9,14 +9,16 @@ description = "Extensions: the manifest and discovery, and behind a feature the 
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 slag = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [features]
 # The half that runs code: one `slag::Context` per extension. Without this
-# feature the crate is a loader and nothing links a JavaScript engine.
-host = ["dep:slag"]
+# feature the crate is a loader and nothing links a JavaScript engine — or a
+# JSON parser, since the manifest it reads is TOML.
+host = ["dep:slag", "dep:serde_json"]
 
 [dev-dependencies]
 tempfile.workspace = true

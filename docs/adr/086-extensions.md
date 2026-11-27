@@ -52,10 +52,11 @@ path that would tie an extension to this build.
    `asset(ptr, len, …)` copies a declared asset's bytes in the same way, and the
    host reads those bytes once at load rather than inside a callback.
 5. **The loader owns the filesystem, the engine never touches it.** `manifest`
-   and `discover` parse `extension.json` strictly, validate the identifier and
-   paths, cap the manifest, each module and their total, canonicalise every path
-   and refuse one that escapes the directory, and read the text. Slag's `fs`
-   feature stays off.
+   and `discover` parse `extension.toml` strictly (TOML, because the file is
+   edited by hand and the settings file beside it is TOML), validate the
+   identifier and paths, cap the manifest, each module and their total,
+   canonicalise every path and refuse one that escapes the directory, and read
+   the text. Slag's `fs` feature stays off.
 6. **Events are observations.** A handler runs after the shell has acted, and
    the shell hands it one snapshot taken before the handler (`tabs`, `focused`,
    `visible_text`). A handler's writes — `panes.send`, `tabs.select`,

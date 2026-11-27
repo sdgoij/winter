@@ -382,17 +382,16 @@ mod tests {
     fn extension(root: &Path, id: &str, entry: Option<&str>, module: Option<&str>) {
         let dir = root.join(id);
         std::fs::create_dir_all(&dir).expect("dir");
-        let mut manifest = format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1"#);
+        let mut manifest = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\n");
         if let Some(entry) = entry {
-            manifest.push_str(&format!(r#", "entry": "{entry}""#));
+            manifest.push_str(&format!("entry = \"{entry}\"\n"));
             write(&dir, entry, "export {};\n");
         }
         if let Some(module) = module {
-            manifest.push_str(&format!(r#", "module": "{module}""#));
+            manifest.push_str(&format!("module = \"{module}\"\n"));
             write(&dir, module, "\0asm");
         }
-        manifest.push('}');
-        write(&dir, "extension.json", &manifest);
+        write(&dir, "extension.toml", &manifest);
     }
 
     #[test]
@@ -439,7 +438,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let dir = temp.path().join("broken");
         std::fs::create_dir_all(&dir).expect("dir");
-        write(&dir, "extension.json", "{ not json }");
+        write(&dir, "extension.toml", "id = [unterminated");
 
         let rows = installed(vec![temp.path().to_path_buf()], &[], &[]);
         assert_eq!(rows.len(), 1);

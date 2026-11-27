@@ -1,0 +1,11 @@
+# The fixture the live check runs. A manifest is TOML so a key can carry a note.
+id = "winter.failed-command"
+name = "Failed command"
+version = "0.1.0"
+api = 1
+description = "Notifies when a command above the prompt exits non-zero, and adds a palette row that reads the focused pane."
+author = "Winter"
+entry = "extension.js"
+
+[assets]
+greeting = "greeting.txt"

@@ -1,10 +1,13 @@
-//! The extension manifest: `extension.json` and the caps that bound it.
+//! The extension manifest: `extension.toml` and the caps that bound it.
 //!
 //! Parsing is strict — an unknown key is an error — so a typo is reported
 //! instead of silently ignored. The identifier is the extension's identity
 //! everywhere (in `loadAfter`, in the `winter.<module>` call it registers, in
 //! the log line a failure is reported on), so it is validated here rather than
 //! at each use.
+//!
+//! TOML rather than JSON because the file is meant to be edited by hand: it
+//! takes comments, and the settings file beside it is TOML already.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -14,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 /// The file that makes a directory an extension.
-pub const FILE: &str = "extension.json";
+pub const FILE: &str = "extension.toml";
 
 /// The API major this build hosts.
 pub const API: u32 = 1;
@@ -53,7 +56,7 @@ pub const ID_MAX: usize = 64;
 /// The longest asset name, in bytes.
 pub const ASSET_NAME_MAX: usize = 64;
 
-/// An extension's `extension.json`.
+/// An extension's `extension.toml`.
 ///
 /// Every field is required unless marked optional. `api` is the extension's
 /// major and is one integer, additive within a major, so a new event or module
@@ -90,7 +93,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Read and validate `<dir>/extension.json`.
+    /// Read and validate `<dir>/extension.toml`.
     pub fn load(dir: &Path) -> Result<Self, Error> {
         let path = dir.join(FILE);
         let bytes = read_capped(&path, MANIFEST_MAX)?;
@@ -100,7 +103,7 @@ impl Manifest {
 
     /// Validate a manifest from text.
     pub fn parse(text: &str) -> Result<Self, Error> {
-        let manifest: Self = serde_json::from_str(text)?;
+        let manifest: Self = toml::from_str(text)?;
         manifest.validate()?;
         Ok(manifest)
     }
@@ -262,9 +265,9 @@ pub enum Error {
         /// The file that failed.
         path: PathBuf,
     },
-    /// The file is not the JSON it claims to be.
+    /// The file is not the TOML it claims to be.
     #[error("the manifest is not valid: {0}")]
-    Json(#[from] serde_json::Error),
+    Parse(#[from] toml::de::Error),
     /// The identifier is not a lowercase dotted name.
     #[error("{id:?} is not a lowercase dotted identifier")]
     Id {
@@ -317,18 +320,21 @@ pub enum Error {
 mod tests {
     use super::*;
 
-    const FULL: &str = r#"{
-        "id": "com.example.failed-command",
-        "name": "Failed command",
-        "version": "0.1.0",
-        "api": 1,
-        "description": "Says when a command exited non-zero.",
-        "author": "example",
-        "loadAfter": ["com.example.gridkit"],
-        "entry": "extension.js",
-        "module": "extension.wasm",
-        "assets": { "icon": "assets/icon.png" }
-    }"#;
+    const FULL: &str = r#"
+        # A complete manifest, and the shape a file should have.
+        id = "com.example.failed-command"
+        name = "Failed command"
+        version = "0.1.0"
+        api = 1
+        description = "Says when a command exited non-zero."
+        author = "example"
+        loadAfter = ["com.example.gridkit"]
+        entry = "extension.js"
+        module = "extension.wasm"
+
+        [assets]
+        icon = "assets/icon.png"
+    "#;
 
     #[test]
     fn every_field_of_a_complete_manifest_is_read() {
@@ -350,32 +356,45 @@ mod tests {
 
     #[test]
     fn an_unknown_key_is_an_error_rather_than_forward_compatibility() {
-        let text = FULL.replace("\"api\": 1,", "\"api\": 1, \"loadAfterX\": [],");
+        let text = FULL.replace("api = 1", "api = 1\nloadAfterX = []");
         let error = Manifest::parse(&text).expect_err("a typo must be refused");
-        assert!(matches!(error, Error::Json(_)), "{error}");
+        assert!(matches!(error, Error::Parse(_)), "{error}");
     }
 
     #[test]
     fn the_snake_case_spelling_of_a_camel_case_key_is_refused() {
-        let text = FULL.replace("\"loadAfter\"", "\"load_after\"");
+        let text = FULL.replace("loadAfter", "load_after");
         assert!(Manifest::parse(&text).is_err());
     }
 
     #[test]
     fn a_data_only_extension_needs_an_asset() {
-        let no_assets = r#"{"id": "a.b", "name": "B", "version": "1", "api": 1}"#;
+        let no_assets = r#"
+            id = "a.b"
+            name = "B"
+            version = "1"
+            api = 1
+        "#;
         assert!(matches!(Manifest::parse(no_assets), Err(Error::Empty)));
 
-        let data = r#"{"id": "a.b", "name": "B", "version": "1", "api": 1, "assets": {"icon": "icon.png"}}"#;
+        let data = r#"
+            id = "a.b"
+            name = "B"
+            version = "1"
+            api = 1
+
+            [assets]
+            icon = "icon.png"
+        "#;
         assert!(Manifest::parse(data).is_ok());
     }
 
     #[test]
     fn the_api_major_bounds_what_loads() {
-        let zero = FULL.replace("\"api\": 1", "\"api\": 0");
+        let zero = FULL.replace("api = 1", "api = 0");
         assert!(matches!(Manifest::parse(&zero), Err(Error::ApiZero)));
 
-        let newer = FULL.replace("\"api\": 1", "\"api\": 2");
+        let newer = FULL.replace("api = 1", "api = 2");
         assert!(matches!(
             Manifest::parse(&newer),
             Err(Error::ApiNewer { api: 2, supported: 1 })
@@ -443,7 +462,7 @@ mod tests {
 
     #[test]
     fn a_manifest_with_an_escaping_entry_is_refused_by_the_field_name() {
-        let text = FULL.replace("\"entry\": \"extension.js\"", "\"entry\": \"../extension.js\"");
+        let text = FULL.replace("entry = \"extension.js\"", "entry = \"../extension.js\"");
         match Manifest::parse(&text) {
             Err(Error::Path { field, path }) => {
                 assert_eq!(field, "entry");
@@ -455,7 +474,7 @@ mod tests {
 
     #[test]
     fn the_id_is_validated_as_an_id_not_only_as_a_path() {
-        let text = FULL.replace("\"id\": \"com.example.failed-command\"", "\"id\": \"Com.Example\"");
+        let text = FULL.replace("id = \"com.example.failed-command\"", "id = \"Com.Example\"");
         assert!(matches!(Manifest::parse(&text), Err(Error::Id { .. })));
     }
 
@@ -463,5 +482,15 @@ mod tests {
     fn a_load_after_entry_must_itself_be_an_identifier() {
         let text = FULL.replace("[\"com.example.gridkit\"]", "[\"Not An Id\"]");
         assert!(matches!(Manifest::parse(&text), Err(Error::LoadAfter { .. })));
+    }
+
+    #[test]
+    fn a_comment_is_part_of_the_format() {
+        // The reason the file is TOML: an extension author can explain a key.
+        let text = FULL.replace(
+            "api = 1",
+            "# 1 is the only major this build implements.\n        api = 1",
+        );
+        assert!(Manifest::parse(&text).is_ok());
     }
 }

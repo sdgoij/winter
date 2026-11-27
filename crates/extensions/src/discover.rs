@@ -117,7 +117,7 @@ impl Loaded {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Options {
     /// Directories, in priority order. Each is either one extension (it holds
-    /// `extension.json`) or a directory of extensions. A root that does not
+    /// `extension.toml`) or a directory of extensions. A root that does not
     /// exist is ignored, since the standard roots often do not.
     pub roots: Vec<PathBuf>,
     /// Identifiers the user disabled. Comparison is exact: identifiers are
@@ -505,7 +505,7 @@ mod tests {
     }
 
     fn manifest(id: &str, extra: &str) -> String {
-        format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1, "entry": "main.js"{extra}}}"#)
+        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n{extra}")
     }
 
     /// An extension directory named after its id, with a one-line entry.
@@ -584,7 +584,7 @@ mod tests {
         let dir = extension(
             temp.path(),
             "a.one",
-            r#", "module": "code.wasm", "assets": {"icon": "assets/icon.png"}"#,
+            "module = \"code.wasm\"\n[assets]\nicon = \"assets/icon.png\"\n",
         );
         write(&dir, "code.wasm", "\0asm");
         write(&dir, "assets/icon.png", "png");
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn load_after_moves_a_dependency_ahead_without_disturbing_the_rest() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.needs-b", r#", "loadAfter": ["b.base"]"#);
+        extension(temp.path(), "a.needs-b", "loadAfter = [\"b.base\"]\n");
         extension(temp.path(), "b.base", "");
         extension(temp.path(), "c.free", "");
         let report = discover_one(temp.path());
@@ -682,8 +682,8 @@ mod tests {
     #[test]
     fn a_load_after_cycle_drops_its_members_and_keeps_the_others() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", r#", "loadAfter": ["b.two"]"#);
-        extension(temp.path(), "b.two", r#", "loadAfter": ["a.one"]"#);
+        extension(temp.path(), "a.one", "loadAfter = [\"b.two\"]\n");
+        extension(temp.path(), "b.two", "loadAfter = [\"a.one\"]\n");
         extension(temp.path(), "c.three", "");
         let report = discover_one(temp.path());
         assert_eq!(ids(&report), ["c.three"]);
@@ -698,7 +698,7 @@ mod tests {
     #[test]
     fn a_missing_load_after_target_is_ignored() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", r#", "loadAfter": ["z.absent"]"#);
+        extension(temp.path(), "a.one", "loadAfter = [\"z.absent\"]\n");
         let report = discover_one(temp.path());
         assert_eq!(ids(&report), ["a.one"]);
     }
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn a_self_dependency_is_a_cycle() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", r#", "loadAfter": ["a.one"]"#);
+        extension(temp.path(), "a.one", "loadAfter = [\"a.one\"]\n");
         let report = discover_one(temp.path());
         assert!(report.loaded.is_empty());
         assert!(report.skipped[0].reason.contains("cycle"));
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn an_asset_that_is_missing_skips_the_extension() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", r#", "assets": {"icon": "nope.png"}"#);
+        extension(temp.path(), "a.one", "[assets]\nicon = \"nope.png\"\n");
         let report = discover_one(temp.path());
         assert!(report.loaded.is_empty());
         assert!(report.skipped[0].reason.contains("nope.png"));
