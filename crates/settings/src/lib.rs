@@ -10,6 +10,7 @@
 
 mod actions;
 mod defaults;
+mod extensions;
 mod fonts;
 mod keybindings;
 mod migration;
@@ -23,6 +24,7 @@ mod watch;
 
 pub use actions::Action;
 pub use defaults::ensure_file;
+pub use extensions::Extensions;
 pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};
@@ -64,6 +66,8 @@ pub struct Settings {
     pub theme: Option<String>,
     /// The themes this installation knows.
     pub themes: Vec<Theme>,
+    /// The `[extensions]` table: what this installation does not load.
+    pub extensions: Extensions,
     /// The grid's type.
     pub font: Font,
 }
@@ -83,6 +87,7 @@ fn empty() -> Settings {
         schemes: Vec::new(),
         theme: None,
         themes: Vec::new(),
+        extensions: Extensions::default(),
         font: Font::default(),
     }
 }

@@ -54,11 +54,12 @@ path that would tie an extension to this build.
 7. **A command is a palette row.** `palette::Command::Extension("<id>:<cmd>")`
    is dispatched by the shell; commands carry no chord, because the settings
    file's action vocabulary is strict and the palette is the command's surface.
-8. **Opt-in for now.** The macOS shell loads extensions only with
-   `WINTER_EXT=1`, from `$WINTER_EXTENSIONS`, the config directory's
+8. **Opt-in, and switchable per identifier.** The macOS shell loads extensions
+   only with `WINTER_EXT=1`, from `$WINTER_EXTENSIONS`, the config directory's
    `extensions/`, and `extensions/` beside the executable or the working
-   directory. Enablement is not yet a settings section, so the disabled list is
-   empty until the extensions screen exists.
+   directory. The settings file's `[extensions] disabled` list names the
+   identifiers this installation skips; it is read when the window opens, so a
+   change takes effect on the next start.
 
 ## Consequences
 
@@ -76,8 +77,10 @@ path that would tie an extension to this build.
 - A failed handler is logged with its extension's identifier and the other
   handlers still run; a duplicate command id fails the later extension rather
   than shadowing.
-- WASM-only extensions (no `entry`) and the `disabled` list are not wired yet;
-  the loader reads the module's bytes and the host declines to instantiate them.
+- WASM-only extensions (no `entry`) are not wired yet; the loader reads the
+  module's bytes and the host declines to instantiate them. The `[extensions]`
+  table has no screen: it is edited in the settings document, and a change to it
+  applies on the next start because unloading a live realm is not a reload.
 - GTK and WinUI compile against the new palette variant and do not host
   extensions; each needs its own `Host`, which is a per-shell change.
 

@@ -22,6 +22,7 @@ pub fn settings() -> Settings {
         schemes: Vec::new(),
         theme: None,
         themes: Vec::new(),
+        extensions: crate::Extensions::default(),
         font: Font::default(),
     }
 }

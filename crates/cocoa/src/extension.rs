@@ -38,13 +38,13 @@ impl Extensions {
     ///
     /// A broken extension is logged and skipped: the window opens either way,
     /// because an extension must never be able to stop the terminal.
-    fn start() -> Option<Self> {
+    fn start(disabled: &[String]) -> Option<Self> {
         if !enabled() {
             return None;
         }
         let report = extensions::discover(&extensions::Options {
             roots: roots(),
-            disabled: Vec::new(),
+            disabled: disabled.to_vec(),
         });
         let mut engine = extensions::Engine::default();
         for loaded in &report.loaded {
@@ -110,7 +110,8 @@ impl Shell {
     /// `Shell::new`.
     pub(crate) fn start_extensions(&mut self) {
         if self.extensions.is_none() {
-            self.extensions = Extensions::start();
+            let disabled = self.settings().extensions.disabled.clone();
+            self.extensions = Extensions::start(&disabled);
         }
     }
 

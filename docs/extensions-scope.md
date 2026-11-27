@@ -171,9 +171,10 @@ of assets). There is no script/module switch: `entry` is always an ES module,
 and every other `.js` or `.json` file under the directory is importable beside
 it, at any depth. Discovery, in order, is the union of: an explicit
 directory (CLI or `$WINTER_EXTENSIONS`), the user's config directory, and
-`extensions/` beside the executable or in the working directory. Enablement
-lives in one user config (`disabled = ["com.example.noisy"]`), written by an
-extensions screen later. The loader validates ids and paths, caps the manifest,
+`extensions/` beside the executable or in the working directory. Enablement is
+the settings file's `[extensions] disabled` list of identifiers; it is read when
+the window opens, so a change applies on the next start. The loader validates
+ids and paths, caps the manifest,
 each JavaScript file and their total, the wasm module and the assets, and
 refuses a path that escapes the extension's directory; a broken extension is
 reported and skipped, never fatal.
@@ -272,7 +273,8 @@ second file. The palette is the extension's command surface.
   list is default-deny by construction.
 - **Additive versioning.** `winter.api` is one integer. Within a major, new events
   and modules are additive; a name that changes meaning is a new major.
-- **Enablement is remembered**, and persisted in the user config, not session-only.
+- **Enablement is remembered**, in the settings file's `[extensions] disabled`
+  list rather than in a session, and applied when the window opens.
 
 ## What is here
 
@@ -286,9 +288,9 @@ second file. The palette is the extension's command surface.
    `settingsReloaded`, all behind `WINTER_EXT=1`, with the fixture in
    `crates/extensions/fixtures/failed-command`.
 
-WASM-only extensions (a manifest with a `module` and no `entry`), the persisted
-`disabled` list and an extensions screen, the GTK and WinUI `Host`s, and a
-`winter.panes.history` walk are not here. ADR 086 records the surface;
+WASM-only extensions (a manifest with a `module` and no `entry`), an extensions
+screen, the GTK and WinUI `Host`s, and a `winter.panes.history` walk are not
+here. ADR 086 records the surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 
