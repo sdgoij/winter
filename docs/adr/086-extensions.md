@@ -47,6 +47,8 @@ path that would tie an extension to this build.
    before the host owns the memory. `snapshot(ptr, cap)` writes the same JSON a
    script handler is handed and answers the length it needs, so the read surface
    is one import and no record layout; typed accessors would be additive.
+   `asset(ptr, len, …)` copies a declared asset's bytes in the same way, and the
+   host reads those bytes once at load rather than inside a callback.
 5. **The loader owns the filesystem, the engine never touches it.** `manifest`
    and `discover` parse `extension.json` strictly, validate the identifier and
    paths, cap the manifest, each module and their total, canonicalise every path

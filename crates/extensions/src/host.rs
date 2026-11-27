@@ -21,7 +21,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use slag::{Context, HostCallbacks, JsError, JsValue, PromiseState};
 
-use crate::{Host, Loaded};
+use crate::{Host, Loaded, manifest};
 
 /// How many queued command runs (across extensions) one dispatch may perform.
 const HOPS_MAX: usize = 8;
@@ -170,6 +170,41 @@ impl Engine {
         let bootstrap = BOOTSTRAP
             .replace("__IDENTITY__", &identity)
             .replace("__ASSETS__", &assets);
+
+        // The assets are read once, here: a compiled module copies them through
+        // its own memory during a callback, and a read that could fail
+        // mid-frame would be a trap in a handler rather than a skipped
+        // extension. The order matches the names the bootstrap is handed.
+        let mut asset_buffers = Vec::with_capacity(loaded.manifest.assets.len());
+        let mut asset_total: u64 = 0;
+        for name in loaded.manifest.assets.keys() {
+            let Some(path) = loaded.assets.get(name) else {
+                continue;
+            };
+            let bytes =
+                manifest::read_capped(path, manifest::ASSET_MAX).map_err(|error| Error::new(&id, error.to_string()))?;
+            asset_total = asset_total.saturating_add(bytes.len() as u64);
+            if asset_total > manifest::ASSETS_MAX {
+                return Err(Error::new(
+                    &id,
+                    format!(
+                        "the assets total {asset_total} bytes, over the {}-byte cap",
+                        manifest::ASSETS_MAX
+                    ),
+                ));
+            }
+            let buffer = context
+                .array_buffer_from_bytes(&bytes)
+                .map_err(|error| Error::new(&id, format!("asset `{name}`: {error}")))?;
+            asset_buffers.push(buffer);
+        }
+        let registry = context
+            .create_array(&asset_buffers)
+            .map_err(|error| Error::new(&id, format!("the assets were not handed over: {error}")))?;
+        context
+            .set_global("__winter_asset_bytes", registry)
+            .map_err(|error| Error::new(&id, format!("the assets were not handed over: {error}")))?;
+
         context
             .eval(&bootstrap)
             .map_err(|error| Error::new(&id, format!("the bootstrap failed: {error}")))?;
@@ -751,7 +786,14 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
 
   const handlers = new Map();
   const commands = new Map();
-  const assets = new Set(assetNames);
+  // The declared assets, by the opaque name the extension asks for: the bytes
+  // arrive as `ArrayBuffer`s in the same order as the names.
+  const bytesByAsset = globalThis.__winter_asset_bytes || [];
+  delete globalThis.__winter_asset_bytes;
+  const assets = new Map();
+  for (let i = 0; i < assetNames.length; i++) {
+    assets.set(assetNames[i], bytesByAsset[i]);
+  }
   let current = null;
   let frozen = false;
 
@@ -1092,6 +1134,17 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     // to read yet.
     snapshot(ptr, cap) {
       return writeBytes(ptr, cap, encodeUtf8(JSON.stringify(current)));
+    },
+    // The bytes of a declared asset, copied into the module's own memory. `-1`
+    // is "no such asset", so an empty asset and a missing one are different
+    // answers.
+    asset(namePtr, nameLen, ptr, cap) {
+      const name = readText(namePtr, nameLen);
+      const buffer = assets.get(name);
+      if (buffer === undefined) {
+        return -1;
+      }
+      return writeBytes(ptr, cap, new Uint8Array(buffer));
     },
     log(ptr, len) {
       log(readText(ptr, len));
@@ -1715,6 +1768,35 @@ mod tests {
         assert_eq!(
             host.notified,
             [("Wasm fixture".to_string(), "a command failed".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_compiled_module_reads_its_asset_bytes() {
+        let wasm = wat::parse_str(WASM_FIXTURE).expect("the fixture assembles");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("with-asset");
+        std::fs::create_dir_all(&dir).expect("dir");
+        write(
+            &dir,
+            "extension.json",
+            r#"{"id": "test.asset", "name": "Asset", "version": "1", "api": 1, "module": "extension.wasm", "assets": {"greeting": "greeting.txt"}}"#,
+        );
+        std::fs::write(dir.join("extension.wasm"), &wasm).expect("wasm");
+        std::fs::write(dir.join("greeting.txt"), "hello from an asset\n").expect("asset");
+
+        let report = discover(&Options {
+            roots: vec![dir],
+            disabled: Vec::new(),
+        });
+        assert_eq!(report.loaded.len(), 1, "{:?}", report.skipped);
+        let mut engine = Engine::default();
+        engine.load(&report.loaded[0]).expect("the module loads");
+        engine.freeze();
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line == "test.asset: hello from an asset"),
+            "{logs:?}"
         );
     }
 

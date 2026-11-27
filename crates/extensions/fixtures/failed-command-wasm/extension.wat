@@ -11,12 +11,13 @@
     (func $register_command (param i32 i32 i32 i32) (result i32)))
   (import "winter" "register_event" (func $register_event (param i32 i32) (result i32)))
   (import "winter" "snapshot" (func $snapshot (param i32 i32) (result i32)))
+  (import "winter" "asset" (func $asset (param i32 i32 i32 i32) (result i32)))
 
   (memory (export "memory") 1)
   (global $next (mut i32) (i32.const 1024))
 
-  ;; A bump allocator for the strings the host writes in. The fixture never
-  ;; frees, which is what a fixture is for.
+  ;; A bump allocator for anything the host writes in. The fixture never frees,
+  ;; which is what a fixture is for.
   (func $alloc (export "winter_alloc") (param $len i32) (result i32)
     (local $at i32)
     (local.set $at (global.get $next))
@@ -28,17 +29,28 @@
 
   (func (export "winter_init") (result i32)
     (local $buffer i32)
+    (local $len i32)
     (call $log (i32.const 0) (i32.const 15))
     (call $log (i32.const 16) (i32.const 9))
     (drop (call $register_command
       (i32.const 32) (i32.const 10)
       (i32.const 48) (i32.const 15)))
     (drop (call $register_event (i32.const 64) (i32.const 15)))
+
     ;; There is no shell to read during `winter_init`, so the snapshot is the
     ;; four bytes `null`; logging them is what proves the rule.
     (local.set $buffer (call $alloc (i32.const 128)))
     (drop (call $snapshot (local.get $buffer) (i32.const 128)))
     (call $log (local.get $buffer) (i32.const 4))
+
+    ;; The declared asset, if this copy of the fixture ships one. `-1` means
+    ;; the name is not in the manifest, which is not an error here.
+    (local.set $len
+      (call $asset
+        (i32.const 160) (i32.const 8)
+        (local.get $buffer) (i32.const 128)))
+    (if (i32.gt_s (local.get $len) (i32.const 0))
+      (then (call $log (local.get $buffer) (local.get $len))))
     (i32.const 0))
 
   (func (export "winter_command") (param $id i32) (param $len i32) (result i32)
@@ -68,4 +80,5 @@
   (data (i32.const 64) "commandFinished")
   (data (i32.const 80) "A wasm command ran")
   (data (i32.const 104) "Wasm fixture")
-  (data (i32.const 120) "a command failed"))
+  (data (i32.const 120) "a command failed")
+  (data (i32.const 160) "greeting"))

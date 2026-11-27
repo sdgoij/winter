@@ -248,6 +248,7 @@ policed at call time.
 | `register_command` | `(idptr, idlen, lptr, llen) -> i32` | a palette row; `0` accepted, `1` refused and logged |
 | `register_event` | `(nameptr, namelen) -> i32` | a subscription; the same answer |
 | `snapshot` | `(ptr, cap) -> i32` | the shell's one picture, as JSON; answers how many bytes it needs |
+| `asset` | `(nptr, nlen, ptr, cap) -> i32` | a declared asset's bytes; `-1` when the name is not declared |
 
 | Export | Signature | Meaning |
 |---|---|---|
@@ -273,6 +274,16 @@ no second record layout in the ABI. Before the first dispatch the snapshot is
 `null`, which is how a module tells `winter_init` (no shell to read yet) from a
 callback. A module that wants typed access instead of JSON pays for its own
 parser; typed accessors would be an additive import beside this one.
+
+**A compiled module reads its assets as bytes.** `asset` copies a declared
+asset's bytes into the module's memory by the same convention, and answers `-1`
+for a name the manifest does not declare, so an empty asset and a missing one
+are different answers. The host reads the bytes once at load rather than inside a
+callback, capped per asset and in total, so a file that grows or vanishes later
+is an extension that does not load rather than a trap in a handler. A script
+extension still sees only the opaque name from `winter.assets`: it has no use for
+the bytes yet, and the name is what keeps a path — and so the filesystem — out of
+extension code.
 
 Failure isolation: `HostCallbacks` reports `console` output and unhandled
 rejections against the extension's id; a throw inside a handler is caught by the
@@ -307,7 +318,7 @@ second file. The palette is the extension's command surface.
 
 - **No filesystem and no network.** Slag's `fs` feature stays off; the host reads
   an extension's manifest, sources, wasm module and assets and hands back opaque
-  names.
+  names — and, to a compiled module, the asset bytes it asked for by name.
   A path is never the extension's.
 - **No ambient capabilities beyond `Host`.** The `winter` modules are the whole
   surface; a new capability is a deliberate host method with a test on every
@@ -337,9 +348,9 @@ second file. The palette is the extension's command surface.
    master switch that turns the engine on, and the reason a row is not running.
    Saving writes the `[extensions]` table; loading changes on the next start.
 
-A read surface for a compiled module's *assets* — the opaque names a script gets
-from `winter.assets` — the GTK and WinUI `Host`s and a `winter.panes.history`
-walk are not here. ADR 086 records the surface;
+The GTK and WinUI `Host`s, a `winter.panes.history` walk, and bytes for a
+*script* extension's assets (it gets the opaque name; a compiled module gets the
+bytes) are what is not here. ADR 086 records the surface;
 `cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
 the suites.
 

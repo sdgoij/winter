@@ -37,6 +37,13 @@ pub const MODULE_MAX: u64 = 16 * 1024 * 1024;
 /// The largest asset, in bytes.
 pub const ASSET_MAX: u64 = 64 * 1024 * 1024;
 
+/// The largest total of an extension's assets, in bytes.
+///
+/// The host holds them in memory because a compiled module reads them through
+/// its own memory, and a realm that cannot answer a read mid-frame is worse than
+/// one that refuses an extension at load.
+pub const ASSETS_MAX: u64 = 64 * 1024 * 1024;
+
 /// How many other modules one extension may register.
 pub const SOURCE_COUNT_MAX: usize = 64;
 
