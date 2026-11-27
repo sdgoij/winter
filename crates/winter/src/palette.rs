@@ -14,6 +14,8 @@ pub enum Command {
     Action(Action),
     /// Open a new tab on the named profile.
     Profile(String),
+    /// Run an extension's command, named `<extension id>:<command id>`.
+    Extension(String),
 }
 
 /// One row the palette offers.
@@ -127,6 +129,23 @@ pub fn entries(settings: &Settings, supported: impl Fn(Action) -> bool) -> Vec<E
     entries
 }
 
+/// The rows extensions contribute: one per command, after the window's own.
+///
+/// Each key is `<extension id>:<command id>`, the name the shell dispatches
+/// with. An extension command carries no chord: the settings file's action
+/// vocabulary is strict, so a chord would need a schema change or a second
+/// file, and the palette is the command's surface.
+pub fn extension_entries(commands: impl IntoIterator<Item = (String, String)>) -> Vec<Entry> {
+    commands
+        .into_iter()
+        .map(|(key, label)| Entry {
+            label,
+            command: Command::Extension(key),
+            chord: None,
+        })
+        .collect()
+}
+
 /// The name the palette gives an action.
 fn action_label(action: Action) -> &'static str {
     match action {
@@ -207,6 +226,18 @@ mod tests {
                 .iter()
                 .all(|entry| entry.command != Command::Action(Action::CommandPalette))
         );
+    }
+
+    #[test]
+    fn an_extension_command_is_a_row_without_a_chord() {
+        let entries = extension_entries([("com.example.x:git.status".to_string(), "Git status".to_string())]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, "Git status");
+        assert_eq!(
+            entries[0].command,
+            Command::Extension("com.example.x:git.status".to_string())
+        );
+        assert_eq!(entries[0].chord, None);
     }
 
     #[test]

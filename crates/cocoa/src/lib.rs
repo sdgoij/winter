@@ -45,6 +45,7 @@ use self::shell::Shell;
 use self::view::{PaletteView, TerminalView};
 
 pub(crate) mod chrome;
+pub(crate) mod extension;
 pub(crate) mod frame;
 pub(crate) mod icon;
 pub(crate) mod keys;

@@ -1,8 +1,10 @@
 # Extensions — scope and shape
 
-Status: proposal. Nothing here is implemented yet; this records the exploration of
-the Goat and Noctis systems and the extension surface this repository should
-offer.
+Status: the loader (`crates/extensions`: `manifest`, `discover`) and the macOS
+host (the `host` feature and the AppKit `Host`) are implemented, behind
+`WINTER_EXT=1`; the WASM half, the extensions screen and the GTK and WinUI hosts
+are not. This records the exploration of the Goat and Noctis systems and the
+surface this repository offers; ADR 086 is the decision.
 Related: ADRs 038 and 080 (the shell split), ADR 082 (the embedding surface), ADR
 083 (the frame server) and ADR 084 (the Node addon) for the host boundary;
 `docs/plan.md`'s parked chaos layer for the "bugs", which are a separate surface
@@ -132,6 +134,7 @@ pub trait Host {
     fn tabs(&self) -> Vec<TabInfo>;
     fn focused(&self) -> Option<PaneInfo>;
     fn visible_text(&self) -> String;
+    fn select_tab(&mut self, index: usize);
     fn send_text(&mut self, text: &str);
     fn copy(&mut self, text: &str);
     fn notify(&mut self, title: &str, body: &str);
@@ -188,14 +191,14 @@ no globals to leak; a reload drops the whole realm.
 
 Imports are **local and resolved from the extension's root**. Every `.js` and
 `.json` file anywhere under the extension's directory, other than the entry, is
-registered with the agent under its path from the root — `lib/util.js` and
-`./lib/util.js` — so a tree of any depth is ordinary. The engine resolves a
-static specifier through one flat map and has no referrer to resolve against,
-so a specifier must already be root-relative: `./util.js` written in `lib/a.js`
-is the root's `util.js`, not its sibling.
+registered with the agent under its root path with a `./` prefix — `./lib/util.js`
+— so a tree of any depth is ordinary and that prefix is the only spelling that
+resolves. The engine resolves a static specifier through one flat map and has no
+referrer to resolve against, so `./util.js` written in `lib/a.js` is the root's
+`util.js`, not its sibling.
 
 The loader makes that rule visible rather than silently surprising. Before
-evaluating, it compiles each file once and checks every declared specifier
+evaluating, it compiles every module once and checks each declared specifier
 against the registered set: a miss names the file and the specifier, and a
 specifier whose sibling reading would be a different file from its root reading
 is refused as ambiguous instead of being resolved one way. So `lib/a.js`
@@ -208,10 +211,11 @@ from the same map, so it is root-relative too. `import data from "./data.json"
 with { type: "json" }` is the way to ship structured data — `.json` files
 register as JSON modules — and binary assets stay opaque `winter.assets` names.
 
-`import.meta` carries `{ extension: { id, name, version }, api }`, filled by
-`HostHooks::initialize_import_meta_object`, so a module knows which extension it
-belongs to without a global. It deliberately has no `url`: a path is not the
-extension's.
+The identity is `winter.extension` (`{ id, name, version }`) plus `winter.api`,
+not `import.meta`. Slag's `initialize_import_meta_object` hook hands the host the
+engine's internal value types, which the embedding surface does not export, so a
+host cannot fill `import.meta` from outside; if a typed hook arrives,
+`import.meta.extension` is an additive addition rather than a rename.
 
 Top-level `await` is legal. The host drains the job queue after evaluation and
 installs no timers, so a module can only await promises that are already
@@ -270,23 +274,23 @@ second file. The palette is the extension's command surface.
   and modules are additive; a name that changes meaning is a new major.
 - **Enablement is remembered**, and persisted in the user config, not session-only.
 
-## The first slice
+## What is here
 
-1. `crates/extensions` — `manifest` and `discover`: parsing, caps, enablement and
-   ordering, pure Rust and tested. No engine, no window.
-2. The same crate's `host` feature — the `winter` global, the module loader
-   (registration, specifier validation, `import.meta`), event and command
-   dispatch, and a headless test driving a multi-file fixture extension through
-   Slag.
-3. macOS — `Host for Shell`, the palette arm, and a built-in fixture extension
-   (a failed-command notifier) for the live check.
-4. WASM — the `WebAssembly.instantiate` path in the host and a wasm fixture that
-   that logs, notifies and adds a command.
-5. GTK and WinUI implement `Host` and the palette arm; the platform agents can
-   compile-check what this host cannot.
+1. `crates/extensions` — `manifest` and `discover`: parsing, caps, enablement
+   and ordering, pure Rust and tested. No engine, no window.
+2. Its `host` feature — the `winter` global, the module loader (registration,
+   specifier validation), event and command dispatch, and a headless suite
+   driving multi-file fixture extensions through Slag.
+3. macOS — `Host for Shell`, the palette arm, `commandFinished`,
+   `titleChanged`, `paneFocused`, `tabOpened`, `tabClosed` and
+   `settingsReloaded`, all behind `WINTER_EXT=1`, with the fixture in
+   `crates/extensions/fixtures/failed-command`.
 
-An ADR records the surface once the first host and the manifest are agreed; until
-then this document is the working record.
+WASM-only extensions (a manifest with a `module` and no `entry`), the persisted
+`disabled` list and an extensions screen, the GTK and WinUI `Host`s, and a
+`winter.panes.history` walk are not here. ADR 086 records the surface;
+`cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
+the suites.
 
 ## Open questions
 

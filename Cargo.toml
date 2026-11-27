@@ -13,6 +13,7 @@ members = [
     "crates/settings",
     "crates/audio",
     "crates/icon",
+    "crates/extensions",
     "crates/winter",
     "crates/gtk4",
     "crates/cocoa",
@@ -38,7 +39,10 @@ publish = false
 # and `adapter`: it consumes the parser and the console interfaces. `server`
 # sits on `host` and exposes the console's API surface. `settings` is the
 # user's TOML settings file and needs no workspace crate. `audio` is sound without a
-# device and sees no workspace crate either (ADR 033). `winter` is the
+# device and sees no workspace crate either (ADR 033). `extensions` is the
+# extension loader and, behind its `host` feature, the Slag host; it sees no
+# workspace crate, because a shell implements its `Host` trait and the core
+# never learns that extensions exist. `winter` is the
 # shell-independent core: it sees everything and is the only crate allowed to
 # (ADR 018). `gtk4`, `cocoa` and `winui` are the shells on top of it, one per
 # platform, `demo` is the embedding demo's host, and `app` is the binary that
@@ -57,6 +61,7 @@ host = { path = "crates/host" }
 server = { path = "crates/server" }
 settings = { path = "crates/settings" }
 audio = { path = "crates/audio" }
+extensions = { path = "crates/extensions" }
 winter = { path = "crates/winter" }
 
 arboard = "3"
@@ -70,6 +75,10 @@ notify-rust = "4"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The engine the extension host runs on. `docs/extensions-scope.md` records the
+# choice; the revision is pinned and `Cargo.lock` is the lock, as for any git
+# dependency.
+slag = { git = "https://github.com/sdgoij/slag", rev = "28ec2f61db38dba4c0bb437e72520988774b33eb" }
 tempfile = "3"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }

@@ -17,6 +17,7 @@ term.workspace = true
 types.workspace = true
 utils.workspace = true
 arboard.workspace = true
+extensions = { workspace = true, features = ["host"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # AppKit through `objc2` (ADR 072). Only the modules this shell names: the

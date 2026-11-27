@@ -1,0 +1,1374 @@
+//! The half that runs extensions: one `slag::Context` per extension, the
+//! `winter` global, and event and command dispatch (feature `host`).
+//!
+//! Each extension gets its own agent and realm, so no extension can see
+//! another's globals, and a reload is a dropped context. The entry is an ES
+//! module evaluated in that realm; the modules beside it are registered with
+//! the agent first, so a static import resolves without a network or a
+//! filesystem (the loader read the text already).
+//!
+//! Reads are a handover, writes are a queue: before a handler runs the host
+//! takes one snapshot of the shell ([`Host::tabs`], [`Host::focused`],
+//! [`Host::visible_text`]), and the `winter` calls that change something append
+//! to a list the engine applies after the handler returns. A handler therefore
+//! never re-enters the shell mid-frame, and the worst a second handler can
+//! observe is the state the first one was given.
+
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::rc::Rc;
+
+use serde::Deserialize;
+use slag::{Context, HostCallbacks, JsError, JsValue, PromiseState};
+
+use crate::{Host, Loaded};
+
+/// How many queued command runs (across extensions) one dispatch may perform.
+const HOPS_MAX: usize = 8;
+
+/// An event the shell reports, as `winter.events` names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// A new shell-integration mark appeared: a command finished.
+    CommandFinished {
+        /// The row the mark is on.
+        row: usize,
+        /// Whether the command exited non-zero.
+        error: bool,
+    },
+    /// The focused pane's title changed.
+    TitleChanged {
+        /// The new title.
+        title: String,
+    },
+    /// The focused pane moved.
+    PaneFocused,
+    /// A tab was opened.
+    TabOpened {
+        /// The new tab's index.
+        index: usize,
+    },
+    /// A tab was closed.
+    TabClosed {
+        /// The closed tab's index.
+        index: usize,
+    },
+    /// The settings file was reloaded.
+    SettingsReloaded,
+}
+
+impl Event {
+    /// The name `winter.events.on` uses.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Event::CommandFinished { .. } => "commandFinished",
+            Event::TitleChanged { .. } => "titleChanged",
+            Event::PaneFocused => "paneFocused",
+            Event::TabOpened { .. } => "tabOpened",
+            Event::TabClosed { .. } => "tabClosed",
+            Event::SettingsReloaded => "settingsReloaded",
+        }
+    }
+
+    /// The event as JSON, which the bootstrap parses for the handler.
+    fn payload(&self) -> String {
+        match self {
+            Event::CommandFinished { row, error } => serde_json::json!({ "row": row, "error": error }).to_string(),
+            Event::TitleChanged { title } => serde_json::json!({ "title": title }).to_string(),
+            Event::TabOpened { index } | Event::TabClosed { index } => {
+                serde_json::json!({ "index": index }).to_string()
+            }
+            Event::PaneFocused | Event::SettingsReloaded => "{}".to_string(),
+        }
+    }
+}
+
+/// One command an extension registered, as the palette sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Command {
+    /// `<extension id>:<command id>`, the key the palette dispatches with.
+    pub key: String,
+    /// The extension that registered it.
+    pub extension: String,
+    /// The command's own identifier.
+    pub id: String,
+    /// The row's label.
+    pub label: String,
+}
+
+/// The extensions this process loaded.
+///
+/// Not `Send`: a Slag context is a single-threaded agent, and handlers run on
+/// the shell's thread, like the pty pump.
+#[derive(Default)]
+pub struct Engine {
+    extensions: Vec<Running>,
+    logs: Vec<String>,
+}
+
+/// One loaded extension: its realm, its entry points into the bootstrap, and
+/// the queue its calls land in.
+struct Running {
+    id: String,
+    context: Context,
+    state: Rc<RefCell<State>>,
+    logs: Rc<RefCell<Vec<String>>>,
+    snapshot: JsValue,
+    dispatch: JsValue,
+    command: JsValue,
+    freeze: JsValue,
+    commands: Vec<Command>,
+}
+
+/// What a handler asked the shell to do, applied after it returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Call {
+    Send(String),
+    Copy(String),
+    Notify(String, String),
+    OpenUrl(String),
+    SelectTab(usize),
+    Run(String),
+}
+
+#[derive(Default)]
+struct State {
+    calls: Vec<Call>,
+}
+
+impl Engine {
+    /// Load one discovered extension.
+    ///
+    /// A fresh context is built and discarded on failure, so a broken
+    /// extension leaves nothing behind; the caller reports the error and moves
+    /// to the next extension.
+    pub fn load(&mut self, loaded: &Loaded) -> Result<(), Error> {
+        let id = loaded.manifest.id.clone();
+        let Some(entry) = &loaded.entry else {
+            return Err(Error::new(
+                &id,
+                "a wasm-only extension is not loaded yet; give it an `entry` module",
+            ));
+        };
+
+        let mut context = Context::new().map_err(|error| Error::new(&id, error.to_string()))?;
+        let logs = Rc::new(RefCell::new(Vec::new()));
+        let state = Rc::new(RefCell::new(State::default()));
+
+        context.set_host_callbacks(host_callbacks(&id, &logs));
+        install_primitives(&mut context, &id, &state, &logs).map_err(|error| Error::new(&id, error.to_string()))?;
+
+        let identity = serde_json::json!({
+            "id": loaded.manifest.id,
+            "name": loaded.manifest.name,
+            "version": loaded.manifest.version,
+            "api": crate::manifest::API,
+        })
+        .to_string();
+        let assets = serde_json::to_string(&loaded.manifest.assets.keys().collect::<Vec<_>>())
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+        let bootstrap = BOOTSTRAP
+            .replace("__IDENTITY__", &identity)
+            .replace("__ASSETS__", &assets);
+        context
+            .eval(&bootstrap)
+            .map_err(|error| Error::new(&id, format!("the bootstrap failed: {error}")))?;
+
+        let keys: HashSet<String> = loaded
+            .sources
+            .iter()
+            .map(|source| format!("./{}", source.name))
+            .collect();
+
+        // Every module is compiled once to read what it imports, so a bad
+        // specifier is reported against the file that wrote it instead of
+        // surfacing as `Cannot find module` mid-link.
+        let mut problems = Vec::new();
+        for source in &loaded.sources {
+            let module = context
+                .compile_module(&format!("./{}", source.name), Some(&source.name), &source.text)
+                .map_err(|error| Error::new(&id, format!("{}: {error}", source.name)))?;
+            problems.extend(validate_specifiers(&module, &source.name, &keys));
+        }
+        let module = context
+            .compile_module(&entry.name, Some(&entry.name), &entry.text)
+            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+        problems.extend(validate_specifiers(&module, &entry.name, &keys));
+        if !problems.is_empty() {
+            return Err(Error::new(&id, problems.join("; ")));
+        }
+
+        for source in &loaded.sources {
+            context
+                .agent_mut()
+                .add_module(&format!("./{}", source.name), &source.text);
+        }
+        context
+            .instantiate_module(&module)
+            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+
+        // The evaluation promise is the only reliable answer: the engine marks
+        // a module with a pending top-level await `Evaluated`, as V8 does. No
+        // timer and no I/O exists in this realm, so a promise still pending
+        // after the drain can never settle.
+        let promise = context
+            .evaluate_module(&module)
+            .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
+        match context.promise_state(promise.clone()) {
+            Ok(PromiseState::Fulfilled) => {}
+            Ok(PromiseState::Rejected) => {
+                let detail = context
+                    .promise_result(promise)
+                    .map(|reason| context.describe_thrown(&reason))
+                    .unwrap_or_else(|error| error.to_string());
+                return Err(Error::new(&id, detail));
+            }
+            Ok(PromiseState::Pending) => {
+                return Err(Error::new(
+                    &id,
+                    "the entry module awaits something that will never settle; no timer or I/O exists in this realm",
+                ));
+            }
+            Err(error) => return Err(Error::new(&id, error.to_string())),
+        }
+
+        let winter = context
+            .global()
+            .and_then(|global| global.get("winter"))
+            .and_then(|winter| context.to_object(&winter))
+            .map_err(|error| Error::new(&id, format!("the bootstrap left no `winter` global: {error}")))?;
+        let snapshot = winter
+            .get("__snapshot")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+        let dispatch = winter
+            .get("__dispatch")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+        let command = winter
+            .get("__command")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+        let freeze = winter
+            .get("__freeze")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+
+        self.extensions.push(Running {
+            id,
+            context,
+            state,
+            logs,
+            snapshot,
+            dispatch,
+            command,
+            freeze,
+            commands: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Close registration in every extension and read what each one added.
+    ///
+    /// Called once, after the last extension has loaded: an extension may
+    /// register for its whole load, and none may register after it.
+    pub fn freeze(&mut self) {
+        for index in 0..self.extensions.len() {
+            let running = &mut self.extensions[index];
+            let value = match running.context.call(&running.freeze, &JsValue::undefined(), &[]) {
+                Ok(value) => value,
+                Err(error) => {
+                    push_log(&running.logs, &running.id, &format!("freeze failed: {error}"));
+                    continue;
+                }
+            };
+            let Some(text) = running.context.to_string(&value).ok() else {
+                continue;
+            };
+            match serde_json::from_str::<Vec<Frozen>>(&text) {
+                Ok(frozen) => {
+                    let extension = running.id.clone();
+                    running.commands = frozen
+                        .into_iter()
+                        .map(|frozen| Command {
+                            key: format!("{extension}:{}", frozen.id),
+                            extension: extension.clone(),
+                            id: frozen.id,
+                            label: frozen.label,
+                        })
+                        .collect();
+                }
+                Err(error) => {
+                    push_log(&running.logs, &running.id, &format!("freeze returned junk: {error}"));
+                }
+            }
+        }
+    }
+
+    /// Every command any extension registered, in palette order.
+    pub fn commands(&self) -> Vec<Command> {
+        self.extensions
+            .iter()
+            .flat_map(|running| running.commands.iter().cloned())
+            .collect()
+    }
+
+    /// Report an observation to every extension.
+    pub fn emit(&mut self, host: &mut dyn Host, event: &Event) {
+        let snapshot = snapshot(host);
+        let payload = event.payload();
+        for index in 0..self.extensions.len() {
+            let calls = self.call_hook(host, index, &snapshot, event.name(), &payload);
+            self.apply(host, index, calls);
+        }
+    }
+
+    /// Run the command `key` (`<extension id>:<command id>`). `false` when no
+    /// extension registered it.
+    pub fn run(&mut self, host: &mut dyn Host, key: &str) -> bool {
+        let mut hops = HOPS_MAX;
+        self.run_key(host, key, &mut hops)
+    }
+
+    /// Take everything the extensions logged since the last call, in order,
+    /// each line prefixed with the extension that wrote it.
+    pub fn take_logs(&mut self) -> Vec<String> {
+        for running in &self.extensions {
+            let mut logs = running.logs.borrow_mut();
+            self.logs.append(&mut logs);
+        }
+        std::mem::take(&mut self.logs)
+    }
+
+    /// Set a snapshot on an extension and call one of the bootstrap's entry
+    /// points, returning what the handler queued.
+    fn call_hook(
+        &mut self,
+        host: &mut dyn Host,
+        index: usize,
+        snapshot_json: &str,
+        name: &str,
+        payload: &str,
+    ) -> Vec<Call> {
+        let running = &mut self.extensions[index];
+        if let Err(error) = running.context.call(
+            &running.snapshot,
+            &JsValue::undefined(),
+            &[JsValue::string(snapshot_json)],
+        ) {
+            push_log(
+                &running.logs,
+                &running.id,
+                &format!("the snapshot was refused: {error}"),
+            );
+        }
+        if let Err(error) = running.context.call(
+            &running.dispatch,
+            &JsValue::undefined(),
+            &[JsValue::string(name), JsValue::string(payload)],
+        ) {
+            push_log(&running.logs, &running.id, &format!("{name} dispatch failed: {error}"));
+        }
+        let _ = host;
+        std::mem::take(&mut running.state.borrow_mut().calls)
+    }
+
+    /// Run one extension's command, then whatever its handler queued.
+    fn run_key(&mut self, host: &mut dyn Host, key: &str, hops: &mut usize) -> bool {
+        let Some(index) = self
+            .extensions
+            .iter()
+            .position(|running| running.commands.iter().any(|command| command.key == key))
+        else {
+            self.logs.push(format!("no extension registered the command `{key}`"));
+            return false;
+        };
+        if *hops == 0 {
+            let id = self.extensions[index].id.clone();
+            self.logs
+                .push(format!("{id}: command `{key}` re-entered too deeply; dropped"));
+            return false;
+        }
+        *hops -= 1;
+
+        let snapshot_json = snapshot(host);
+        let calls = {
+            let running = &mut self.extensions[index];
+            let Some(command) = running.commands.iter().find(|command| command.key == key).cloned() else {
+                return false;
+            };
+            if let Err(error) = running.context.call(
+                &running.snapshot,
+                &JsValue::undefined(),
+                &[JsValue::string(&snapshot_json)],
+            ) {
+                push_log(
+                    &running.logs,
+                    &running.id,
+                    &format!("the snapshot was refused: {error}"),
+                );
+            }
+            if let Err(error) =
+                running
+                    .context
+                    .call(&running.command, &JsValue::undefined(), &[JsValue::string(&command.id)])
+            {
+                push_log(
+                    &running.logs,
+                    &running.id,
+                    &format!("command `{}` failed: {error}", command.id),
+                );
+                return false;
+            }
+            std::mem::take(&mut running.state.borrow_mut().calls)
+        };
+        self.apply(host, index, calls);
+        true
+    }
+
+    /// Apply one extension's queued calls, in the order it made them.
+    fn apply(&mut self, host: &mut dyn Host, index: usize, calls: Vec<Call>) {
+        let mut hops = HOPS_MAX;
+        for call in calls {
+            match call {
+                Call::Send(text) => host.send_text(&text),
+                Call::Copy(text) => host.copy(&text),
+                Call::Notify(title, body) => host.notify(&title, &body),
+                Call::OpenUrl(url) => {
+                    if !host.open_url(&url)
+                        && let Some(running) = self.extensions.get(index)
+                    {
+                        push_log(&running.logs, &running.id, "the shell has no URL opener");
+                    }
+                }
+                Call::SelectTab(tab) => host.select_tab(tab),
+                Call::Run(key) => {
+                    self.run_key(host, &key, &mut hops);
+                }
+            }
+        }
+    }
+}
+
+/// What `__freeze` answers for each command.
+#[derive(Debug, Deserialize)]
+struct Frozen {
+    id: String,
+    label: String,
+}
+
+/// Check that every specifier the entry (and, transitively, nothing else yet)
+/// declares is one the extension ships.
+///
+/// The engine resolves a specifier verbatim, so `./util.js` from `lib/a.js` is
+/// the root's file. A miss is reported with the spelling the extension meant
+/// when the sibling exists, and a spelling whose sibling reading is a different
+/// file is refused rather than resolved one way.
+fn validate_specifiers(module: &slag::JsModule, referrer: &str, keys: &HashSet<String>) -> Vec<String> {
+    let mut problems = Vec::new();
+    for index in 0..module.request_count() {
+        let Some(specifier) = module
+            .request_specifier(index)
+            .map(|specifier| specifier.to_string_lossy())
+        else {
+            continue;
+        };
+        // Registered keys are all `./`-prefixed, so a specifier resolves only
+        // when it is written that way; anything else is bare.
+        let relative = specifier.starts_with("./") || specifier.starts_with("../");
+        let shipped = relative && keys.contains(&specifier);
+        let sibling = join(parent(referrer), &specifier).map(|path| format!("./{path}"));
+        let sibling_shipped = sibling.as_deref().is_some_and(|key| keys.contains(key));
+
+        if shipped {
+            if sibling_shipped && sibling.as_deref() != Some(specifier.as_str()) {
+                problems.push(format!(
+                    "`{referrer}` imports `{specifier}`, which is ambiguous here: `{}` exists too; write `{}`",
+                    sibling.clone().unwrap_or_default(),
+                    sibling.unwrap_or_default()
+                ));
+            }
+            continue;
+        }
+        if sibling_shipped {
+            problems.push(format!(
+                "`{referrer}` imports `{specifier}`, which resolves from the extension root; write `{}`",
+                sibling.unwrap_or_default()
+            ));
+        } else if !relative {
+            problems.push(format!(
+                "`{referrer}` imports `{specifier}`, a bare specifier; imports resolve from the extension root, so write `./{specifier}`"
+            ));
+        } else if sibling.as_deref() == Some(&format!("./{referrer}")) {
+            problems.push(format!(
+                "`{referrer}` imports `{specifier}`; the entry cannot be imported, so move the shared code to another module"
+            ));
+        } else {
+            problems.push(format!(
+                "`{referrer}` imports `{specifier}`, which the extension does not ship"
+            ));
+        }
+    }
+    problems
+}
+
+/// The directory part of a root-relative module name.
+fn parent(name: &str) -> &str {
+    name.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("")
+}
+
+/// Resolve `specifier` against `dir`, or `None` when it climbs out of the root.
+fn join(dir: &str, specifier: &str) -> Option<String> {
+    let mut parts: Vec<&str> = if dir.is_empty() {
+        Vec::new()
+    } else {
+        dir.split('/').collect()
+    };
+    for segment in specifier.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other),
+        }
+    }
+    if parts.is_empty() { None } else { Some(parts.join("/")) }
+}
+
+/// The one picture of the shell a handler sees.
+fn snapshot(host: &dyn Host) -> String {
+    let tabs = host.tabs();
+    let focused = host.focused();
+    let text = host.visible_text();
+    serde_json::json!({ "tabs": tabs, "focused": focused, "text": text }).to_string()
+}
+
+/// Console output and unhandled rejections, prefixed with the extension's id.
+fn host_callbacks(id: &str, logs: &Rc<RefCell<Vec<String>>>) -> HostCallbacks {
+    let sink = {
+        let id = id.to_string();
+        let logs = Rc::clone(logs);
+        move |text: &str| push_log(&logs, &id, text)
+    };
+    let console = || Some(Box::new(sink.clone()) as Box<dyn Fn(&str)>);
+    HostCallbacks {
+        console_log: console(),
+        console_info: console(),
+        console_warn: console(),
+        console_error: console(),
+        console_debug: console(),
+        promise_rejection: console(),
+        ..Default::default()
+    }
+}
+
+/// Install the primitives the bootstrap reads and then deletes.
+fn install_primitives(
+    context: &mut Context,
+    id: &str,
+    state: &Rc<RefCell<State>>,
+    logs: &Rc<RefCell<Vec<String>>>,
+) -> Result<(), JsError> {
+    {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_send",
+            1,
+            Box::new(move |call| {
+                queue(&state, Call::Send(argument(call, 0)?));
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_copy",
+            1,
+            Box::new(move |call| {
+                queue(&state, Call::Copy(argument(call, 0)?));
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_notify",
+            2,
+            Box::new(move |call| {
+                let title = argument(call, 0)?;
+                let body = argument(call, 1).unwrap_or_default();
+                queue(&state, Call::Notify(title, body));
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_open_url",
+            1,
+            Box::new(move |call| {
+                queue(&state, Call::OpenUrl(argument(call, 0)?));
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_run",
+            1,
+            Box::new(move |call| {
+                queue(&state, Call::Run(argument(call, 0)?));
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        let logs = Rc::clone(logs);
+        let id = id.to_string();
+        context.register_fn(
+            "__winter_select",
+            1,
+            Box::new(move |call| {
+                let number = call.arg(0).map(|value| call.to_number(&value)).transpose()?;
+                match number {
+                    Some(number) if number >= 0.0 && number.fract() == 0.0 => {
+                        let index = number as usize;
+                        queue(&state, Call::SelectTab(index));
+                    }
+                    _ => push_log(&logs, &id, "tabs.select was given a negative or fractional index"),
+                }
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let logs = Rc::clone(logs);
+        let id = id.to_string();
+        context.register_fn(
+            "__winter_log",
+            1,
+            Box::new(move |call| {
+                let message = argument(call, 0).unwrap_or_else(|_| "<unprintable>".to_string());
+                push_log(&logs, &id, &message);
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    Ok(())
+}
+
+fn argument(call: &slag::FunctionCall<'_>, index: usize) -> Result<String, JsError> {
+    match call.arg(index) {
+        Some(value) => call.to_string(&value),
+        None => Ok(String::new()),
+    }
+}
+
+fn queue(state: &Rc<RefCell<State>>, call: Call) {
+    state.borrow_mut().calls.push(call);
+}
+
+fn push_log(logs: &Rc<RefCell<Vec<String>>>, id: &str, message: &str) {
+    let mut logs = logs.borrow_mut();
+    if message.is_empty() {
+        return;
+    }
+    for line in message.lines() {
+        logs.push(format!("{id}: {line}"));
+    }
+}
+
+/// Why an extension did not load.
+#[derive(Debug, thiserror::Error)]
+#[error("{id}: {message}")]
+pub struct Error {
+    /// The extension's identifier.
+    pub id: String,
+    /// What went wrong, in a line fit for the log.
+    pub message: String,
+}
+
+impl Error {
+    fn new(id: &str, message: impl Into<String>) -> Self {
+        Self {
+            id: id.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+/// The `winter` global and the dispatcher the host calls back into.
+///
+/// The identity and the asset names are spliced in before evaluation; the
+/// primitives it reads are deleted from the global as soon as it has captured
+/// them, so an extension cannot reach the shell except through `winter`.
+const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
+  "use strict";
+
+  const sendText = globalThis.__winter_send;
+  const copyText = globalThis.__winter_copy;
+  const notify = globalThis.__winter_notify;
+  const openUrl = globalThis.__winter_open_url;
+  const log = globalThis.__winter_log;
+  const runElsewhere = globalThis.__winter_run;
+  const selectTab = globalThis.__winter_select;
+
+  delete globalThis.__winter_send;
+  delete globalThis.__winter_copy;
+  delete globalThis.__winter_notify;
+  delete globalThis.__winter_open_url;
+  delete globalThis.__winter_log;
+  delete globalThis.__winter_run;
+  delete globalThis.__winter_select;
+
+  const handlers = new Map();
+  const commands = new Map();
+  const assets = new Set(assetNames);
+  let snapshot = null;
+  let frozen = false;
+
+  function fail(where, message) {
+    throw new TypeError("winter." + where + ": " + message);
+  }
+
+  function report(where, error) {
+    let detail;
+    try {
+      detail = error && error.stack ? String(error.stack) : String(error);
+    } catch (_) {
+      detail = "an unprintable error";
+    }
+    log(where + " threw: " + detail);
+  }
+
+  function invoke(where, handler, argument) {
+    try {
+      handler(argument);
+    } catch (error) {
+      report(where, error);
+    }
+  }
+
+  function open(where) {
+    if (frozen) {
+      throw new Error("winter." + where + ": registration is closed");
+    }
+  }
+
+  const winter = {
+    api: identity.api,
+    extension: Object.freeze({
+      id: identity.id,
+      name: identity.name,
+      version: identity.version,
+    }),
+
+    events: {
+      on(name, handler) {
+        open("events.on");
+        if (typeof name !== "string" || name === "") {
+          fail("events.on", "the event name must be a non-empty string");
+        }
+        if (typeof handler !== "function") {
+          fail("events.on", "the handler must be a function");
+        }
+        const list = handlers.get(name) || [];
+        list.push(handler);
+        handlers.set(name, list);
+        let removed = false;
+        return function unsubscribe() {
+          if (removed) return;
+          removed = true;
+          const current = handlers.get(name) || [];
+          const at = current.indexOf(handler);
+          if (at >= 0) current.splice(at, 1);
+        };
+      },
+    },
+
+    commands: {
+      add(id, label, handler) {
+        open("commands.add");
+        if (typeof id !== "string" || id === "" || id.indexOf(":") >= 0) {
+          fail("commands.add", "the id must be a non-empty string without `:`");
+        }
+        if (typeof label !== "string") {
+          fail("commands.add", "the label must be a string");
+        }
+        if (typeof handler !== "function") {
+          fail("commands.add", "the handler must be a function");
+        }
+        if (commands.has(id)) {
+          fail("commands.add", "`" + id + "` is already registered");
+        }
+        commands.set(id, { label: label, handler: handler });
+      },
+      run(id) {
+        if (typeof id !== "string" || id === "") {
+          fail("commands.run", "the command id must be a non-empty string");
+        }
+        const prefix = identity.id + ":";
+        const local = id.slice(0, prefix.length) === prefix ? id.slice(prefix.length) : id;
+        if (commands.has(local)) {
+          invoke("command " + prefix + local, commands.get(local).handler, undefined);
+          return;
+        }
+        if (id.slice(0, prefix.length) === prefix || id.indexOf(":") < 0) {
+          throw new Error("winter.commands.run: `" + id + "` is not registered");
+        }
+        runElsewhere(id);
+      },
+    },
+
+    panes: {
+      focused() {
+        return snapshot ? snapshot.focused : null;
+      },
+      text() {
+        return snapshot ? snapshot.text : "";
+      },
+      send(text) {
+        if (typeof text !== "string") fail("panes.send", "the text must be a string");
+        sendText(text);
+      },
+    },
+
+    tabs: {
+      list() {
+        return snapshot ? snapshot.tabs : [];
+      },
+      select(index) {
+        if (!Number.isInteger(index) || index < 0) {
+          fail("tabs.select", "the index must be a non-negative integer");
+        }
+        selectTab(index);
+      },
+    },
+
+    app: {
+      notify(title, body) {
+        if (typeof title !== "string") fail("app.notify", "the title must be a string");
+        notify(title, body === undefined ? "" : String(body));
+      },
+      clipboard: {
+        write(text) {
+          if (typeof text !== "string") fail("clipboard.write", "the text must be a string");
+          copyText(text);
+        },
+      },
+      openUrl(url) {
+        if (typeof url !== "string") fail("app.openUrl", "the url must be a string");
+        openUrl(url);
+      },
+      log(message) {
+        log(message === undefined ? "" : String(message));
+      },
+    },
+
+    assets: {
+      get(name) {
+        if (typeof name !== "string" || !assets.has(name)) {
+          fail("assets.get", "`" + name + "` is not declared in the manifest");
+        }
+        return name;
+      },
+    },
+  };
+
+  function hidden(target, name, value) {
+    Object.defineProperty(target, name, {
+      value: value,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+  }
+
+  hidden(winter, "__snapshot", function (json) {
+    snapshot = json ? JSON.parse(json) : null;
+  });
+
+  hidden(winter, "__dispatch", function (name, payload) {
+    const list = handlers.get(name);
+    if (!list || list.length === 0) return;
+    const event = payload ? JSON.parse(payload) : {};
+    for (const handler of list.slice()) {
+      invoke("event " + name, handler, event);
+    }
+  });
+
+  hidden(winter, "__command", function (id) {
+    const command = commands.get(id);
+    if (!command) return;
+    invoke("command " + identity.id + ":" + id, command.handler, undefined);
+  });
+
+  hidden(winter, "__freeze", function () {
+    frozen = true;
+    const list = [];
+    for (const entry of commands) {
+      list.push({ id: entry[0], label: entry[1].label });
+    }
+    return JSON.stringify(list);
+  });
+
+  globalThis.winter = winter;
+})(__IDENTITY__, __ASSETS__);
+"##;
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::discover::{Options, discover};
+    use crate::{PaneInfo, TabInfo};
+
+    /// The shell side of the contract, recorded rather than acted on.
+    #[derive(Default)]
+    struct Recorder {
+        tabs: Vec<TabInfo>,
+        focused: Option<PaneInfo>,
+        text: String,
+        sent: Vec<String>,
+        copied: Vec<String>,
+        notified: Vec<(String, String)>,
+        opened: Vec<String>,
+        selected: Vec<usize>,
+    }
+
+    impl Host for Recorder {
+        fn tabs(&self) -> Vec<TabInfo> {
+            self.tabs.clone()
+        }
+        fn focused(&self) -> Option<PaneInfo> {
+            self.focused.clone()
+        }
+        fn visible_text(&self) -> String {
+            self.text.clone()
+        }
+        fn send_text(&mut self, text: &str) {
+            self.sent.push(text.to_string());
+        }
+        fn copy(&mut self, text: &str) {
+            self.copied.push(text.to_string());
+        }
+        fn notify(&mut self, title: &str, body: &str) {
+            self.notified.push((title.to_string(), body.to_string()));
+        }
+        fn open_url(&mut self, url: &str) -> bool {
+            self.opened.push(url.to_string());
+            true
+        }
+        fn select_tab(&mut self, index: usize) {
+            self.selected.push(index);
+        }
+    }
+
+    fn write(dir: &Path, name: &str, text: &str) {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("parent");
+        }
+        std::fs::write(path, text).expect("write");
+    }
+
+    /// An extension directory under a fresh temp root, with the given entry and
+    /// extra files.
+    fn extension(entry: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("fixture");
+        std::fs::create_dir_all(&dir).expect("dir");
+        write(
+            &dir,
+            "extension.json",
+            r#"{"id": "test.fixture", "name": "Fixture", "version": "1", "api": 1, "entry": "main.js"}"#,
+        );
+        write(&dir, "main.js", entry);
+        for (name, text) in files {
+            write(&dir, name, text);
+        }
+        (temp, dir)
+    }
+
+    fn load(dir: &Path) -> (Engine, Vec<String>) {
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let mut engine = Engine::default();
+        for loaded in &report.loaded {
+            engine.load(loaded).expect("load");
+        }
+        engine.freeze();
+        let logs = engine.take_logs();
+        (engine, logs)
+    }
+
+    #[test]
+    fn a_registered_command_runs_and_reaches_the_shell() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.commands.add("greet", "Greet", () => winter.app.notify("Winter", "hi"));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let commands = engine.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].key, "test.fixture:greet");
+        assert_eq!(commands[0].label, "Greet");
+
+        let mut host = Recorder::default();
+        assert!(engine.run(&mut host, "test.fixture:greet"));
+        assert_eq!(host.notified, [("Winter".to_string(), "hi".to_string())]);
+    }
+
+    #[test]
+    fn a_handler_reads_one_snapshot_of_the_shell() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("commandFinished", (event) => {
+              winter.panes.send(winter.panes.text() + event.row + ":" + event.error + "\n");
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder {
+            text: "prompt$ ".to_string(),
+            ..Recorder::default()
+        };
+        engine.emit(&mut host, &Event::CommandFinished { row: 7, error: true });
+        assert_eq!(host.sent, ["prompt$ 7:true\n"]);
+    }
+
+    #[test]
+    fn a_sibling_module_is_imported_from_the_extension_root() {
+        let (_temp, dir) = extension(
+            r#"
+            import { shout } from "./lib/util.js";
+            winter.commands.add("shout", "Shout", () => winter.app.log(shout("ok")));
+            "#,
+            &[(
+                "lib/util.js",
+                "export function shout(text) { return text.toUpperCase(); }\n",
+            )],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder::default();
+        assert!(engine.run(&mut host, "test.fixture:shout"));
+        assert_eq!(engine.take_logs(), ["test.fixture: OK"]);
+    }
+
+    #[test]
+    fn an_import_of_a_file_the_extension_does_not_ship_is_refused() {
+        let (_temp, dir) = extension(
+            r#"
+            import { value } from "./util.js";
+            winter.app.log(String(value));
+            "#,
+            &[("lib/util.js", "export const value = 1;\n")],
+        );
+        // The entry is at the root, so `./util.js` means the root's file, and
+        // the only `util.js` is in `lib/`. The error says what it did ship.
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        let error = engine.load(&report.loaded[0]).expect_err("the root has no util.js");
+        assert!(error.message.contains("does not ship"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_nested_import_of_a_sibling_names_the_root_spelling() {
+        let (_temp, dir) = extension(
+            r#"
+            import { value } from "./lib/entry.js";
+            winter.app.log(value);
+            "#,
+            &[
+                (
+                    "lib/entry.js",
+                    "import { value } from \"./util.js\";\nexport { value };\n",
+                ),
+                ("lib/util.js", "export const value = 1;\n"),
+            ],
+        );
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        let error = engine
+            .load(&report.loaded[0])
+            .expect_err("the nested import must be refused");
+        assert!(error.message.contains("./lib/util.js"), "{}", error.message);
+    }
+
+    #[test]
+    fn an_ambiguous_import_is_refused_rather_than_picked() {
+        let (_temp, dir) = extension(
+            r#"
+            import { value } from "./lib/entry.js";
+            winter.app.log(value);
+            "#,
+            &[
+                ("util.js", "export const value = \"root\";\n"),
+                (
+                    "lib/entry.js",
+                    "import { value } from \"./util.js\";\nexport { value };\n",
+                ),
+                ("lib/util.js", "export const value = \"sibling\";\n"),
+            ],
+        );
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        let error = engine.load(&report.loaded[0]).expect_err("ambiguous");
+        assert!(error.message.contains("ambiguous"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_top_level_await_that_settles_loads() {
+        let (_temp, dir) = extension(
+            r#"
+            const ready = await Promise.resolve(41);
+            winter.commands.add("answer", "Answer", () => winter.app.log(String(ready + 1)));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        assert_eq!(engine.commands().len(), 1);
+        let mut host = Recorder::default();
+        engine.run(&mut host, "test.fixture:answer");
+        assert_eq!(engine.take_logs(), ["test.fixture: 42"]);
+    }
+
+    #[test]
+    fn a_throwing_handler_is_logged_and_the_next_extension_still_runs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (dir, id, body) in [
+            ("a.throws", "a.throws", r#"throw new Error("boom");"#),
+            (
+                "b.logs",
+                "b.logs",
+                r#"winter.events.on("settingsReloaded", () => winter.app.log("alive"));"#,
+            ),
+        ] {
+            let path = temp.path().join(dir);
+            std::fs::create_dir_all(&path).expect("dir");
+            write(
+                &path,
+                "extension.json",
+                &format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1, "entry": "main.js"}}"#),
+            );
+            write(&path, "main.js", body);
+        }
+        let report = discover(&Options {
+            roots: vec![temp.path().to_path_buf()],
+            disabled: Vec::new(),
+        });
+        assert_eq!(report.loaded.len(), 2);
+        let mut engine = Engine::default();
+        let error = engine.load(&report.loaded[0]).expect_err("the entry throws");
+        assert!(!error.message.is_empty());
+        engine.load(&report.loaded[1]).expect("the second extension loads");
+        engine.freeze();
+
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(logs.iter().any(|line| line == "b.logs: alive"), "{logs:?}");
+    }
+
+    #[test]
+    fn a_throw_inside_a_handler_is_caught_for_that_handler_only() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("paneFocused", () => { throw new Error("nope"); });
+            winter.events.on("paneFocused", () => winter.app.log("second"));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::PaneFocused);
+        let logs = engine.take_logs();
+        assert!(logs.iter().any(|line| line.contains("nope")), "{logs:?}");
+        assert!(logs.iter().any(|line| line.ends_with(": second")), "{logs:?}");
+    }
+
+    #[test]
+    fn registration_closes_after_freeze() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => winter.commands.add("late", "Late", () => {}));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        assert!(engine.commands().is_empty());
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(
+            logs.iter().any(|line| line.contains("registration is closed")),
+            "{logs:?}"
+        );
+        assert!(engine.commands().is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_command_id_fails_the_extension() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.commands.add("same", "One", () => {});
+            winter.commands.add("same", "Two", () => {});
+            "#,
+            &[],
+        );
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        let error = engine.load(&report.loaded[0]).expect_err("duplicate id");
+        assert!(error.message.contains("already registered"), "{}", error.message);
+    }
+
+    #[test]
+    fn console_output_carries_the_extension_id() {
+        let (_temp, dir) = extension(r#"console.log("hello");"#, &[]);
+        let (_engine, logs) = load(&dir);
+        assert!(logs.iter().any(|line| line == "test.fixture: hello"), "{logs:?}");
+    }
+
+    #[test]
+    fn the_clipboard_the_tab_strip_and_the_url_opener_are_writes() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.commands.add("all", "All", () => {
+              winter.app.clipboard.write("copied");
+              winter.tabs.select(2);
+              winter.app.openUrl("https://example.com");
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder::default();
+        assert!(engine.run(&mut host, "test.fixture:all"));
+        assert_eq!(host.copied, ["copied"]);
+        assert_eq!(host.selected, [2]);
+        assert_eq!(host.opened, ["https://example.com"]);
+    }
+
+    #[test]
+    fn one_extension_runs_another_extension_s_command() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (id, body) in [
+            (
+                "a.caller",
+                r#"winter.commands.add("call", "Call", () => winter.commands.run("b.callee:work"));"#,
+            ),
+            (
+                "b.callee",
+                r#"winter.commands.add("work", "Work", () => winter.app.log("ran"));"#,
+            ),
+        ] {
+            let path = temp.path().join(id);
+            std::fs::create_dir_all(&path).expect("dir");
+            write(
+                &path,
+                "extension.json",
+                &format!(r#"{{"id": "{id}", "name": "{id}", "version": "1", "api": 1, "entry": "main.js"}}"#),
+            );
+            write(&path, "main.js", body);
+        }
+        let report = discover(&Options {
+            roots: vec![temp.path().to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        for loaded in &report.loaded {
+            engine.load(loaded).expect("load");
+        }
+        engine.freeze();
+        let _ = engine.take_logs();
+
+        let mut host = Recorder::default();
+        assert!(engine.run(&mut host, "a.caller:call"));
+        assert_eq!(engine.take_logs(), ["b.callee: ran"]);
+    }
+
+    #[test]
+    fn an_undeclared_asset_is_refused_by_name() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => winter.app.log(winter.assets.get("nope")));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(logs.iter().any(|line| line.contains("is not declared")), "{logs:?}");
+    }
+
+    #[test]
+    fn the_identity_and_api_are_visible_to_the_extension() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.app.log(winter.extension.id + "@" + winter.extension.version + " api " + winter.api);
+            "#,
+            &[],
+        );
+        let (_engine, logs) = load(&dir);
+        assert!(
+            logs.iter().any(|line| line.ends_with("test.fixture@1 api 1")),
+            "{logs:?}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_fixture_loads_and_registers_its_command() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        let report = discover(&Options {
+            roots: vec![fixtures],
+            disabled: Vec::new(),
+        });
+        assert_eq!(report.loaded.len(), 1, "{:?}", report.skipped);
+        let mut engine = Engine::default();
+        engine.load(&report.loaded[0]).expect("the fixture loads");
+        engine.freeze();
+        let commands = engine.commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].key, "winter.failed-command:where-am-i");
+    }
+
+    #[test]
+    fn the_dispatcher_is_not_writable_and_not_enumerable() {
+        let (_temp, dir) = extension(
+            r#"
+            const descriptor = Object.getOwnPropertyDescriptor(winter, "__dispatch");
+            winter.app.log("hidden:" + descriptor.enumerable + ":" + descriptor.writable);
+            "#,
+            &[],
+        );
+        let (mut engine, logs) = load(&dir);
+        assert!(
+            logs.iter().any(|line| line.ends_with(": hidden:false:false")),
+            "{logs:?}"
+        );
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::PaneFocused);
+    }
+}

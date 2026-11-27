@@ -1653,6 +1653,9 @@ impl Shell {
                 self.command(action);
             }
             palette::Command::Profile(name) => self.open_profile(Some(&name)),
+            // Extensions are not hosted on this shell yet; the row cannot be
+            // offered because no extension registers here.
+            palette::Command::Extension(_) => {}
         }
     }
 

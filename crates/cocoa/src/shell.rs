@@ -36,6 +36,7 @@ use winter::terminal_render::TerminalData;
 use winter::view::View as ViewState;
 
 use super::chrome::{self, STRIP_HEIGHT, Strip, StripColors, StripHit};
+use super::extension::Extensions;
 use super::frame::Frame;
 use super::metal;
 
@@ -151,7 +152,7 @@ pub(crate) struct Tick {
 
 /// The shell's state.
 pub(crate) struct Shell {
-    tabs: Tabs<Tab>,
+    pub(crate) tabs: Tabs<Tab>,
     template: TerminalSettings,
     bindings: Rc<[settings::Keybinding]>,
     settings: settings::Settings,
@@ -220,6 +221,8 @@ pub(crate) struct Shell {
     composition: Composition,
     /// The DECPS tones every tab asked for, played on a thread of their own.
     sound: Sound,
+    /// Extensions, when `WINTER_EXT` asked for them.
+    pub(crate) extensions: Option<Extensions>,
 }
 
 /// One pane as the controller lays its content layer.
@@ -255,7 +258,7 @@ impl Shell {
         let cell = fonts.settings.font.cell_size;
         let pane = Pane::new(PaneId(0), &template, INITIAL_GRID, fonts, mtm)?;
 
-        Ok(Self {
+        let mut shell = Self {
             tabs: Tabs::new(Tab {
                 panes: vec![pane],
                 layout: Layout::leaf(PaneId(0)),
@@ -305,7 +308,10 @@ impl Shell {
             title_dirty: false,
             composition: Composition::default(),
             sound: Sound::new(),
-        })
+            extensions: None,
+        };
+        shell.start_extensions();
+        Ok(shell)
     }
 
     /// The active tab's title, or the application's name.
@@ -730,10 +736,23 @@ impl Shell {
             tick.redraw = true;
         }
 
+        let mut settings_reloaded = false;
         if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
             self.settings_at = now;
-            self.poll_settings();
+            settings_reloaded = self.poll_settings();
         }
+
+        // Extensions observe the window after it has acted: the marks this
+        // tick left on the focused pane, and whatever the poll found.
+        let marks = self
+            .tabs
+            .active_mut()
+            .and_then(|tab| tab.focused_pane_mut())
+            .map(|pane| (pane.id, pane.control.scroll_facts().1));
+        self.pump_extensions(
+            marks.as_ref().map(|(id, marks)| (*id, marks.as_slice())),
+            settings_reloaded,
+        );
 
         self.paint(now, mtm);
         tick.redraw = true;
@@ -821,14 +840,15 @@ impl Shell {
     }
 
     /// Reloads the settings file when a save changed its stamp.
-    fn poll_settings(&mut self) {
+    fn poll_settings(&mut self) -> bool {
         let Some(path) = &self.settings_path else {
-            return;
+            return false;
         };
         if settings::stamp(path) == self.settings_stamp {
-            return;
+            return false;
         }
         self.reload_settings();
+        true
     }
 
     /// Re-reads the settings and applies what a running session can.
@@ -922,9 +942,8 @@ impl Shell {
         let index = self.tabs.index();
         self.resize_tab(index);
         self.title_dirty = true;
+        self.report_extension(extensions::Event::TabOpened { index });
     }
-
-    /// Splits the focused pane and focuses the new half.
     pub(crate) fn split_pane(&mut self, axis: Axis) {
         let Some(mtm) = objc2::MainThreadMarker::new() else {
             return;
@@ -1039,6 +1058,7 @@ impl Shell {
             self.close_requested = true;
         }
         self.title_dirty = true;
+        self.report_extension(extensions::Event::TabClosed { index });
     }
 
     /// Closes a tab by its position in the strip.
@@ -1048,6 +1068,7 @@ impl Shell {
             self.close_requested = true;
         }
         self.title_dirty = true;
+        self.report_extension(extensions::Event::TabClosed { index });
     }
 
     /// Whether the strip press at `point` was handled.
@@ -1372,7 +1393,15 @@ impl Shell {
 
     /// The rows the current filter leaves, in display order.
     pub(crate) fn palette_rows(&self) -> Vec<palette::Entry> {
-        let entries = palette::entries(&self.settings, palette_supports);
+        let mut entries = palette::entries(&self.settings, palette_supports);
+        if let Some(extensions) = &self.extensions {
+            entries.extend(palette::extension_entries(
+                extensions
+                    .commands()
+                    .into_iter()
+                    .map(|command| (command.key, command.label)),
+            ));
+        }
         self.palette.rows(&entries).into_iter().cloned().collect()
     }
 
@@ -1446,6 +1475,7 @@ impl Shell {
                 self.perform(action);
             }
             palette::Command::Profile(name) => self.open_profile(&name),
+            palette::Command::Extension(key) => self.run_extension(&key),
         }
     }
 
