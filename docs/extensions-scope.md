@@ -112,7 +112,7 @@ One crate, `crates/extensions`, with the engine behind a feature:
 ```
 crates/extensions/src/
   manifest.rs   the manifest type, strict parsing, the API major
-  discover.rs   search path, caps, enablement, id and loadAfter order
+  discover.rs   search path, caps, enablement, id and `load_after` order
   host/         slag::Context per extension, the winter modules, dispatch
                 (feature = "host")
 ```
@@ -165,7 +165,7 @@ version = "0.1.0"
 api = 1
 description = "Says when a command above the prompt exited non-zero."
 author = "example"
-loadAfter = ["com.example.gridkit"]
+load_after = ["com.example.gridkit"]
 entry = "extension.js"
 module = "extension.wasm"
 
@@ -187,7 +187,7 @@ each JavaScript file and their total, the wasm module and the assets, and
 refuses a path that escapes the extension's directory; a broken extension is
 reported and skipped, never fatal.
 
-Ordering is id with `loadAfter` honoured topologically. Loading is all-or-nothing
+Ordering is id with `load_after` honoured topologically. Loading is all-or-nothing
 per extension.
 
 ## Loading and isolation

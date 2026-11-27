@@ -128,7 +128,7 @@ pub struct Options {
 /// What discovery found.
 #[derive(Debug, Default)]
 pub struct Report {
-    /// The extensions to load, in the order `loadAfter` asks for.
+    /// The extensions to load, in the order `load_after` asks for.
     pub loaded: Vec<Loaded>,
     /// The extensions that were found and not loaded, with the reason.
     pub skipped: Vec<Skipped>,
@@ -209,11 +209,11 @@ fn candidates_in(root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Sort by identifier, then honour `loadAfter` with a cycle reported.
+/// Sort by identifier, then honour `load_after` with a cycle reported.
 ///
 /// The scan restarts from the lowest identifier after each emission, so the
 /// result is stable: two extensions with no relation keep identifier order, and
-/// a dependency moves only as far as it must. A `loadAfter` naming an extension
+/// a dependency moves only as far as it must. A `load_after` naming an extension
 /// that is not installed is ignored, since that extension may be absent.
 fn order(candidates: Vec<Loaded>) -> (Vec<Loaded>, Vec<Skipped>) {
     let mut slots: Vec<Option<Loaded>> = candidates.into_iter().map(Some).collect();
@@ -275,7 +275,7 @@ fn order(candidates: Vec<Loaded>) -> (Vec<Loaded>, Vec<Skipped>) {
         .collect();
     let mut skipped = Vec::new();
     if !cycle.is_empty() {
-        let reason = format!("`loadAfter` cycle among {}", cycle.join(", "));
+        let reason = format!("`load_after` cycle among {}", cycle.join(", "));
         for (_, index) in &ids {
             if emitted[*index] {
                 continue;
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn load_after_moves_a_dependency_ahead_without_disturbing_the_rest() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.needs-b", "loadAfter = [\"b.base\"]\n");
+        extension(temp.path(), "a.needs-b", "load_after = [\"b.base\"]\n");
         extension(temp.path(), "b.base", "");
         extension(temp.path(), "c.free", "");
         let report = discover_one(temp.path());
@@ -682,8 +682,8 @@ mod tests {
     #[test]
     fn a_load_after_cycle_drops_its_members_and_keeps_the_others() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", "loadAfter = [\"b.two\"]\n");
-        extension(temp.path(), "b.two", "loadAfter = [\"a.one\"]\n");
+        extension(temp.path(), "a.one", "load_after = [\"b.two\"]\n");
+        extension(temp.path(), "b.two", "load_after = [\"a.one\"]\n");
         extension(temp.path(), "c.three", "");
         let report = discover_one(temp.path());
         assert_eq!(ids(&report), ["c.three"]);
@@ -698,7 +698,7 @@ mod tests {
     #[test]
     fn a_missing_load_after_target_is_ignored() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", "loadAfter = [\"z.absent\"]\n");
+        extension(temp.path(), "a.one", "load_after = [\"z.absent\"]\n");
         let report = discover_one(temp.path());
         assert_eq!(ids(&report), ["a.one"]);
     }
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn a_self_dependency_is_a_cycle() {
         let temp = tempfile::tempdir().expect("tempdir");
-        extension(temp.path(), "a.one", "loadAfter = [\"a.one\"]\n");
+        extension(temp.path(), "a.one", "load_after = [\"a.one\"]\n");
         let report = discover_one(temp.path());
         assert!(report.loaded.is_empty());
         assert!(report.skipped[0].reason.contains("cycle"));

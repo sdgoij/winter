@@ -2,7 +2,7 @@
 //!
 //! Parsing is strict — an unknown key is an error — so a typo is reported
 //! instead of silently ignored. The identifier is the extension's identity
-//! everywhere (in `loadAfter`, in the `winter.<module>` call it registers, in
+//! everywhere (in `load_after`, in the `winter.<module>` call it registers, in
 //! the log line a failure is reported on), so it is validated here rather than
 //! at each use.
 //!
@@ -62,7 +62,7 @@ pub const ASSET_NAME_MAX: usize = 64;
 /// major and is one integer, additive within a major, so a new event or module
 /// does not bump it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     /// The extension's identity: a lowercase dotted name.
     pub id: String,
@@ -291,8 +291,8 @@ pub enum Error {
         /// The major this build hosts, [`API`].
         supported: u32,
     },
-    /// A `loadAfter` entry is not an identifier.
-    #[error("`loadAfter` names {id:?}, which is not an identifier")]
+    /// A `load_after` entry is not an identifier.
+    #[error("`load_after` names {id:?}, which is not an identifier")]
     LoadAfter {
         /// The entry as written.
         id: String,
@@ -328,7 +328,7 @@ mod tests {
         api = 1
         description = "Says when a command exited non-zero."
         author = "example"
-        loadAfter = ["com.example.gridkit"]
+        load_after = ["com.example.gridkit"]
         entry = "extension.js"
         module = "extension.wasm"
 
@@ -356,14 +356,14 @@ mod tests {
 
     #[test]
     fn an_unknown_key_is_an_error_rather_than_forward_compatibility() {
-        let text = FULL.replace("api = 1", "api = 1\nloadAfterX = []");
+        let text = FULL.replace("api = 1", "api = 1\nload_after_x = []");
         let error = Manifest::parse(&text).expect_err("a typo must be refused");
         assert!(matches!(error, Error::Parse(_)), "{error}");
     }
 
     #[test]
-    fn the_snake_case_spelling_of_a_camel_case_key_is_refused() {
-        let text = FULL.replace("loadAfter", "load_after");
+    fn the_camel_case_spelling_of_a_snake_case_key_is_refused() {
+        let text = FULL.replace("load_after", "loadAfter");
         assert!(Manifest::parse(&text).is_err());
     }
 

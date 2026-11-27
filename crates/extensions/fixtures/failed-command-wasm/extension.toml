@@ -6,6 +6,8 @@ api = 1
 description = "A compiled extension: logs on load, reads its asset, registers a palette row and an event, and reports on the shell."
 author = "Winter"
 module = "extension.wasm"
+# Loaded after the script fixture, so the live check exercises the ordering key.
+load_after = ["winter.failed-command"]
 
 [assets]
 greeting = "greeting.txt"
