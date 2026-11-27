@@ -165,15 +165,10 @@ impl Engine {
         let state = Rc::new(RefCell::new(State::default()));
 
         context.set_host_callbacks(host_callbacks(&id, &logs));
-        // The engine's name resolution. It is installed through the agent rather
-        // than `Context::set_host_hooks` because that wrapper predates the
-        // resolver and forwards only string compilation, rejection tracking and
-        // workers, dropping the resolver. The wrapper is what routed unhandled
-        // rejections to the console, so this hook does that itself.
-        context.agent_mut().host_hooks = Some(Box::new(Specifiers {
-            id: id.clone(),
-            logs: Rc::clone(&logs),
-        }));
+        // The engine's name resolution: a relative specifier resolves from the
+        // file that wrote it. Unhandled rejections still reach the console
+        // through the callbacks above.
+        context.set_host_hooks(Box::new(Specifiers));
         install_primitives(&mut context, &id, &state, &logs).map_err(|error| Error::new(&id, error.to_string()))?;
 
         let identity = serde_json::json!({
@@ -608,19 +603,8 @@ struct Frozen {
 /// The engine's name resolution for one extension: a relative specifier is
 /// resolved against the importing module's directory, and the answer is the key
 /// the module was registered under.
-///
-/// Unhandled rejections are logged here too, because installing this through the
-/// agent replaces the engine's rejection-tracking wrapper (see [`Engine::load`]).
-struct Specifiers {
-    id: String,
-    logs: Rc<RefCell<Vec<String>>>,
-}
-
-impl std::fmt::Debug for Specifiers {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Specifiers").field("id", &self.id).finish()
-    }
-}
+#[derive(Debug)]
+struct Specifiers;
 
 impl slag::HostHooks for Specifiers {
     fn resolve_imported_specifier(
@@ -631,17 +615,6 @@ impl slag::HostHooks for Specifiers {
         let referrer = referrer?.to_string_lossy();
         let specifier = specifier.to_string_lossy();
         resolve_specifier(&referrer, &specifier).map(|key| slag::JsString::from_utf8(&key))
-    }
-
-    fn promise_rejection_tracker(
-        &self,
-        _promise: &slag::Value,
-        reason: Option<&slag::Value>,
-        _operation: bool,
-    ) -> Result<(), JsError> {
-        let text = reason.map(ToString::to_string).unwrap_or_default();
-        push_log(&self.logs, &self.id, &text);
-        Ok(())
     }
 }
 

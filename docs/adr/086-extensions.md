@@ -24,7 +24,7 @@ path that would tie an extension to this build.
 1. **JavaScript and WebAssembly only, executed by Slag, one context per
    extension.** Each extension gets its own `slag::Context`, so its realm, its
    `winter` global and its top-level bindings are its own. The engine is a
-   pinned git dependency (`48038e0`), and `Cargo.lock` is the lock.
+   pinned git dependency (`1c916dd2`), and `Cargo.lock` is the lock.
 2. **The global is namespaced into modules**: `winter.events`, `winter.commands`,
    `winter.panes`, `winter.tabs`, `winter.app`, `winter.assets`, plus
    `winter.extension` and `winter.api`. A module is added or a method is added

@@ -1,10 +1,9 @@
 # Proposal to Slag: a host resolver for static import specifiers
 
-Status: implemented in Slag `d02fba3`, usable from a host since `48038e0`, and
-used by Winter's loader. One engine gap remains: `Context::set_host_hooks` does
-not forward the resolver (see "Implementation status").
+Status: implemented in Slag `d02fba3` and used by Winter's loader since
+`48038e0`; usable through `Context::set_host_hooks` since `1c916dd2`.
 Date: 2026-11-27.
-Audience: the engine (`github.com/sdgoij/slag`, pinned at `48038e0`).
+Audience: the engine (`github.com/sdgoij/slag`, pinned at `1c916dd2`).
 Related: ADR 086 and `docs/extensions-scope.md` in this repository; the
 consumer is `crates/extensions` with its `host` feature.
 
@@ -18,27 +17,18 @@ host that hands the engine a module record of its own rather than bytes.
 
 The last blocker for an embedder was `JsString`, which the hook's signature
 carries and which was not re-exported at the crate root; `48038e0` adds it.
-`ModuleSourceKind` came in `f89960b`. Winter is pinned to `48038e0` and now
-resolves `(specifier, referrer)` itself, registers modules under their root path,
-and has deleted both the root-spelling rule and the ambiguity refusal.
+`ModuleSourceKind` came in `f89960b`. Winter resolves `(specifier, referrer)`
+itself, registers modules under their root path, and has deleted both the
+root-spelling rule and the ambiguity refusal.
 
-One engine bug still shapes the host. `Context::set_host_hooks` wraps the host's
-hooks in an internal `RejectionHooks` that forwards only
-`ensure_can_compile_strings`, `promise_rejection_tracker` and `create_worker`
-(`crates/runtime/src/embed.rs`). `resolve_imported_specifier` — and the other
-hooks added since the wrapper was written — never reach a hook installed the
-supported way, and the failure is silent: the resolver simply is not called.
-Winter installs its hooks through `Context::agent_mut().host_hooks` instead, and
-its hook implements `promise_rejection_tracker` so unhandled rejections still
-reach the log.
-
-| Engine gap | What it blocks | Fix |
-|---|---|---|
-| `RejectionHooks` in `embed.rs` forwards only three methods | `set_host_hooks(Box::new(host))` silently drops the resolver, the host module resolver, the dynamic-import hook and `import.meta` for every host that installs hooks the documented way | forward every `HostHooks` method, delegating to `inner` (or store the host's hooks unwrapped and route rejections in the dispatchers) |
-
-Confirmed by a probe crate at the pinned revision: with
-`ctx.agent_mut().host_hooks = Some(Box::new(Specifiers))` the hook is called for
-each resolution; with `ctx.set_host_hooks(Box::new(Specifiers))` it never is.
+`1c916dd2` closes the last gap. `Context::set_host_hooks` installs an internal
+`RejectionHooks` wrapper, and that wrapper forwarded only string compilation,
+rejection tracking and workers: `resolve_imported_specifier` — and the other
+hooks added since it was written — never reached a hook installed the
+documented way, and the failure was silent. The wrapper now forwards every
+`HostHooks` method over a private no-op default, so Winter installs its hooks
+with `set_host_hooks` and unhandled rejections still reach the console through
+the callbacks in front of it.
 
 ## The problem
 
