@@ -26,6 +26,11 @@ use crate::{Host, Loaded, manifest};
 /// How many queued command runs (across extensions) one dispatch may perform.
 const HOPS_MAX: usize = 8;
 
+/// How many rounds of history continuations one dispatch may answer. A
+/// continuation that asks for more history is answered again, but the count is
+/// bounded the way command hops are.
+const HISTORY_ROUNDS: usize = 8;
+
 /// An event the shell reports, as `winter.events` names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -117,6 +122,10 @@ struct Running {
     dispatch: JsValue,
     command: JsValue,
     freeze: JsValue,
+    /// The two halves of a history continuation: what the handler asked for
+    /// beyond the snapshot, and the answer.
+    history_take: JsValue,
+    history_resolve: JsValue,
     commands: Vec<Command>,
 }
 
@@ -310,6 +319,12 @@ impl Engine {
         let freeze = winter
             .get("__freeze")
             .map_err(|error| Error::new(&id, error.to_string()))?;
+        let history_take = winter
+            .get("__historyTake")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
+        let history_resolve = winter
+            .get("__historyResolve")
+            .map_err(|error| Error::new(&id, error.to_string()))?;
 
         self.extensions.push(Running {
             id,
@@ -320,6 +335,8 @@ impl Engine {
             dispatch,
             command,
             freeze,
+            history_take,
+            history_resolve,
             commands: Vec::new(),
         });
         Ok(())
@@ -375,7 +392,8 @@ impl Engine {
         let snapshot = snapshot(host);
         let payload = event.payload();
         for index in 0..self.extensions.len() {
-            let calls = self.call_hook(host, index, &snapshot, event.name(), &payload);
+            let mut calls = self.call_hook(host, index, &snapshot, event.name(), &payload);
+            self.drain_history(host, index, &mut calls);
             self.apply(host, index, calls);
         }
     }
@@ -479,8 +497,58 @@ impl Engine {
             }
             std::mem::take(&mut running.state.borrow_mut().calls)
         };
+        let mut calls = calls;
+        self.drain_history(host, index, &mut calls);
         self.apply(host, index, calls);
         true
+    }
+
+    /// Answer the history a handler asked for beyond the snapshot.
+    ///
+    /// The bootstrap holds the callbacks; this walks the buffer for each
+    /// request, hands the text back, and takes whatever the callbacks queued.
+    /// A continuation may ask for more, so the rounds are bounded rather than
+    /// trusted.
+    fn drain_history(&mut self, host: &mut dyn Host, index: usize, calls: &mut Vec<Call>) {
+        for _ in 0..HISTORY_ROUNDS {
+            let requested = {
+                let running = &mut self.extensions[index];
+                let taken = match running.context.call(&running.history_take, &JsValue::undefined(), &[]) {
+                    Ok(value) => running.context.to_string(&value).unwrap_or_default(),
+                    Err(error) => {
+                        push_log(
+                            &running.logs,
+                            &running.id,
+                            &format!("the history request was refused: {error}"),
+                        );
+                        String::new()
+                    }
+                };
+                serde_json::from_str::<Vec<usize>>(&taken).unwrap_or_default()
+            };
+            if requested.is_empty() {
+                return;
+            }
+            for (position, lines) in requested.iter().enumerate() {
+                let text = host.history(*lines);
+                let running = &mut self.extensions[index];
+                if let Err(error) = running.context.call(
+                    &running.history_resolve,
+                    &JsValue::undefined(),
+                    &[JsValue::number(position as f64), JsValue::string(text)],
+                ) {
+                    push_log(
+                        &running.logs,
+                        &running.id,
+                        &format!("a history continuation failed: {error}"),
+                    );
+                }
+            }
+            calls.extend(std::mem::take(&mut self.extensions[index].state.borrow_mut().calls));
+        }
+        let id = self.extensions[index].id.clone();
+        self.logs
+            .push(format!("{id}: history continuations kept asking; stopped"));
     }
 
     /// Apply one extension's queued calls, in the order it made them.
@@ -803,6 +871,10 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
 
   const handlers = new Map();
   const commands = new Map();
+  // The history a handler asked for beyond the snapshot, and the batch the host
+  // is resolving now; both are drained by the host after the handler returns.
+  const historyRequests = [];
+  let historyTaken = [];
   // The declared assets, by the opaque name the extension asks for: the bytes
   // arrive as `ArrayBuffer`s in the same order as the names.
   const bytesByAsset = globalThis.__winter_asset_bytes || [];
@@ -915,14 +987,26 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
         return current ? current.text : "";
       },
       // The last `lines` rows of the scrollback the host gathered before this
-      // handler ran. A larger request returns what was gathered, not an error:
-      // the snapshot cannot grow underneath the handler.
-      history(lines) {
-        if (!Number.isInteger(lines) || lines < 1) return "";
+      // handler ran. Without a callback, a larger request returns what was
+      // gathered; with one, the host walks the buffer for exactly that many rows
+      // and calls back before the dispatch ends.
+      history(lines, callback) {
+        if (!Number.isInteger(lines) || lines < 1) {
+          fail("panes.history", "the row count must be a positive integer");
+        }
+        if (callback !== undefined && typeof callback !== "function") {
+          fail("panes.history", "the second argument must be a function");
+        }
         const all = current && typeof current.history === "string" ? current.history : "";
-        if (all === "") return "";
-        const rows = all.split("\n");
-        return rows.slice(Math.max(0, rows.length - lines)).join("\n");
+        const rows = all === "" ? [] : all.split("\n");
+        if (callback === undefined) {
+          return rows.length === 0 ? "" : rows.slice(Math.max(0, rows.length - lines)).join("\n");
+        }
+        if (lines <= rows.length) {
+          invoke("panes.history", callback, rows.slice(rows.length - lines).join("\n"));
+          return;
+        }
+        historyRequests.push({ lines: lines, callback: callback });
       },
       send(text) {
         if (typeof text !== "string") fail("panes.send", "the text must be a string");
@@ -1183,6 +1267,60 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     snapshot(ptr, cap) {
       return writeBytes(ptr, cap, encodeUtf8(JSON.stringify(current)));
     },
+    // The typed half of the same picture, for a module that would rather not
+    // carry a parser. `-1` is "no such tab" and "no focused pane"; a string
+    // accessor answers the bytes it needs, like `snapshot`.
+    tabs_count() {
+      return current ? current.tabs.length : 0;
+    },
+    tabs_active() {
+      if (!current) return -1;
+      for (let i = 0; i < current.tabs.length; i++) {
+        if (current.tabs[i].active) return current.tabs[i].index;
+      }
+      return -1;
+    },
+    tab_panes(index) {
+      if (!current) return -1;
+      for (let i = 0; i < current.tabs.length; i++) {
+        if (current.tabs[i].index === index) return current.tabs[i].panes;
+      }
+      return -1;
+    },
+    tab_title(index, ptr, cap) {
+      if (!current) return -1;
+      for (let i = 0; i < current.tabs.length; i++) {
+        if (current.tabs[i].index === index) {
+          return writeBytes(ptr, cap, encodeUtf8(current.tabs[i].title));
+        }
+      }
+      return -1;
+    },
+    pane_columns() {
+      const pane = current ? current.focused : null;
+      return pane ? pane.columns : 0;
+    },
+    pane_rows() {
+      const pane = current ? current.focused : null;
+      return pane ? pane.rows : 0;
+    },
+    pane_id(ptr, cap) {
+      const pane = current ? current.focused : null;
+      return pane ? writeBytes(ptr, cap, encodeUtf8(pane.id)) : -1;
+    },
+    pane_title(ptr, cap) {
+      const pane = current ? current.focused : null;
+      return pane ? writeBytes(ptr, cap, encodeUtf8(pane.title)) : -1;
+    },
+    pane_program(ptr, cap) {
+      const pane = current ? current.focused : null;
+      return pane ? writeBytes(ptr, cap, encodeUtf8(pane.program)) : -1;
+    },
+    // The scrollback the host gathered before this dispatch, as one string
+    // separated by newlines — the same text `panes.history` trims.
+    history(ptr, cap) {
+      return writeBytes(ptr, cap, encodeUtf8(current && current.history ? current.history : ""));
+    },
     // The bytes of a declared asset, copied into the module's own memory. `-1`
     // is "no such asset", so an empty asset and a missing one are different
     // answers.
@@ -1299,6 +1437,20 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
     } catch (error) {
       return error && error.message ? String(error.message) : String(error);
     }
+  });
+
+  hidden(winter, "__historyTake", function () {
+    historyTaken = historyRequests.slice();
+    historyRequests.length = 0;
+    const counts = [];
+    for (let i = 0; i < historyTaken.length; i++) counts.push(historyTaken[i].lines);
+    return JSON.stringify(counts);
+  });
+
+  hidden(winter, "__historyResolve", function (index, text) {
+    const request = historyTaken[index];
+    if (!request) return;
+    invoke("panes.history", request.callback, text);
   });
 
   globalThis.winter = winter;
@@ -1781,13 +1933,24 @@ mod tests {
         assert_eq!(commands[0].key, "test.wasm:hello-wasm");
         assert_eq!(commands[0].label, "Hello from wasm");
 
-        let mut host = Recorder::default();
+        let mut host = Recorder {
+            focused: Some(PaneInfo {
+                id: "7".to_string(),
+                title: "shell".to_string(),
+                program: "zsh".to_string(),
+                columns: 80,
+                rows: 24,
+            }),
+            ..Recorder::default()
+        };
         assert!(engine.run(&mut host, "test.wasm:hello-wasm"));
         let logs = engine.take_logs();
         assert!(
             logs.iter().any(|line| line == "test.wasm: A wasm command ran"),
             "{logs:?}"
         );
+        // The typed accessor answered with the pane the host put in the snapshot.
+        assert!(logs.iter().any(|line| line == "test.wasm: 7"), "{logs:?}");
     }
 
     #[test]
@@ -1968,6 +2131,62 @@ mod tests {
             logs.iter().any(|line| line == "test.fixture: history: [only]"),
             "{logs:?}"
         );
+    }
+
+    #[test]
+    fn a_handler_can_ask_for_more_history_than_the_snapshot_holds() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => {
+              winter.panes.history(500, (text) => {
+                const rows = text === "" ? [] : text.split("\n");
+                winter.app.log("rows: " + rows.length);
+                winter.app.notify("History", "continued");
+              });
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+
+        // More rows than the snapshot gathers, so the answer is a continuation
+        // the host serves after the handler returns.
+        let long: Vec<String> = (0..300).map(|row| format!("row {row}")).collect();
+        let mut host = Recorder {
+            history: long.join("\n"),
+            ..Recorder::default()
+        };
+        engine.emit(&mut host, &Event::SettingsReloaded);
+
+        let logs = engine.take_logs();
+        assert!(logs.iter().any(|line| line == "test.fixture: rows: 300"), "{logs:?}");
+        // And what the continuation queued reached the shell like any other call.
+        assert_eq!(host.notified, [("History".to_string(), "continued".to_string())]);
+    }
+
+    #[test]
+    fn a_history_continuation_may_ask_again() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("settingsReloaded", () => {
+              winter.panes.history(500, () => {
+                winter.panes.history(600, (text) => {
+                  winter.app.log("second: " + text.split("\n").length);
+                });
+              });
+            });
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let long: Vec<String> = (0..300).map(|row| format!("row {row}")).collect();
+        let mut host = Recorder {
+            history: long.join("\n"),
+            ..Recorder::default()
+        };
+        engine.emit(&mut host, &Event::SettingsReloaded);
+        let logs = engine.take_logs();
+        assert!(logs.iter().any(|line| line == "test.fixture: second: 300"), "{logs:?}");
     }
 
     #[test]

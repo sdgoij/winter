@@ -63,6 +63,7 @@ winter.commands.add("git.status", "Git status", () => { ... });
 winter.panes.focused()        // { id, title, program, columns, rows }
 winter.panes.text()           // the focused pane's visible screen
 winter.panes.history(200)     // rows above it, as far back as the host gathered
+winter.panes.history(5000, (text) => { ... });   // the whole scrollback, continued
 winter.panes.send("ls\n")     // into the focused pty
 winter.tabs.list()            // [{ index, title, active, panes }]
 winter.tabs.select(2)
@@ -79,7 +80,7 @@ winter.assets.bytes("icon")            // its bytes, as a fresh Uint8Array
 |---|---|
 | `winter.events` | `on(name, handler)` → unsubscribe; the names are the table below |
 | `winter.commands` | `add(id, label, handler)` → a command palette row; `run(id)` |
-| `winter.panes` | the focused pane's identity, text and pty writes |
+| `winter.panes` | the focused pane's identity, text, scrollback and pty writes |
 | `winter.tabs` | the tab list, selection, and open/close |
 | `winter.app` | notifications, clipboard, URLs and logging |
 | `winter.assets` | a manifest-declared asset's opaque name |
@@ -227,6 +228,13 @@ installs no timers, so a module can only await promises that are already
 settled; an evaluation still stalled after the drain is reported and that
 extension is dropped. A stuck extension cannot block a shell task.
 
+A read that needs the whole buffer arrives as a continuation: `history(lines)`
+answers from the snapshot up to what the host gathered, and `history(lines, cb)`
+has the host walk for exactly `lines` rows and call `cb` before the dispatch ends.
+The host serves the continuations after the handler returns, so the shell is still
+never entered from inside a callback; a continuation that asks again is answered
+again, up to a bounded number of rounds.
+
 ### The compiled half
 
 A manifest may name a `module` beside or instead of an `entry`. The host reads the
@@ -252,6 +260,11 @@ policed at call time.
 | `register_event` | `(nameptr, namelen) -> i32` | a subscription; the same answer |
 | `snapshot` | `(ptr, cap) -> i32` | the shell's one picture, as JSON; answers how many bytes it needs |
 | `asset` | `(nptr, nlen, ptr, cap) -> i32` | a declared asset's bytes; `-1` when the name is not declared |
+| `tabs_count`, `tabs_active` | `() -> i32` | how many tabs, and which is active (`-1` for none) |
+| `tab_panes`, `tab_title` | `(index) -> i32`, `(index, ptr, cap) -> i32` | one tab's pane count and title; `-1` for no such tab |
+| `pane_columns`, `pane_rows` | `() -> i32` | the focused pane's grid, or `0` |
+| `pane_id`, `pane_title`, `pane_program` | `(ptr, cap) -> i32` | the focused pane's strings, or `-1` |
+| `history` | `(ptr, cap) -> i32` | the gathered scrollback, newline-separated |
 
 | Export | Signature | Meaning |
 |---|---|---|
@@ -275,8 +288,10 @@ length it needs rather than the length it wrote, so a module asks with an empty
 buffer, calls `winter_alloc(len)`, and asks again: the `snprintf` convention, and
 no second record layout in the ABI. Before the first dispatch the snapshot is
 `null`, which is how a module tells `winter_init` (no shell to read yet) from a
-callback. A module that wants typed access instead of JSON pays for its own
-parser; typed accessors would be an additive import beside this one.
+callback. The typed imports beside it are the same picture field by field, for a
+module that would rather not carry a JSON parser: strings answer the bytes they
+need, counts answer `0` or `-1` for "nothing there", and a tab or pane that does
+not exist is `-1` rather than an empty answer.
 
 **A compiled module reads its assets as bytes.** `asset` copies a declared
 asset's bytes into the module's memory by the same convention, and answers `-1`
@@ -299,7 +314,7 @@ command id is a load failure for the later extension, not a shadow. A command ma
 run another extension's command; the host keeps a small depth guard and logs a
 cycle rather than recursing. This is the same shape as Goat's console.
 
-## Commands in the palette
+## Commands in the palette, and on a chord
 
 Each extension command is a palette row. The shared `palette::Command` grows one
 variant:
@@ -313,9 +328,22 @@ pub enum Command {
 ```
 
 The macOS and GTK shells already dispatch `Action`/`Profile`; each gains the third
-arm and the host lookup. Commands carry no chord: the settings file's action
-vocabulary is strict, and an extension chord would need a schema change or a
-second file. The palette is the extension's command surface.
+arm and the host lookup.
+
+A command can also be bound to a chord, in the settings file rather than in the
+command's own manifest:
+
+```toml
+[[extensions.commands]]
+keys = "ctrl+g"
+command = "winter.failed-command:where-am-i"
+```
+
+The window's own bindings are checked first, so an extension cannot shadow a chord
+the window already runs, and the first matching entry in the file wins. The
+settings screen's action vocabulary stays strict: this is a table of its own, not
+a new `action` value, so a typo inside it is an error and `Action` stays a plain
+copyable enum.
 
 ## Safety
 
@@ -351,26 +379,21 @@ second file. The palette is the extension's command surface.
    master switch that turns the engine on, and the reason a row is not running.
    Saving writes the `[extensions]` table; loading changes on the next start.
 
-What is not here: `winter.commands` cannot be run from a chord, a compiled module
-has no typed accessors beside `snapshot`, and `panes.history` reads the rows the
-host gathered before the handler ran rather than walking the buffer live. The GTK
-and WinUI `Host`s are the per-shell work. ADR 086 records the surface;
-`cargo test -p extensions --features host` and `cargo test -p winter-cocoa` are
-the suites.
+What is not here: the GTK and WinUI `Host`s and their screens, which are
+per-shell work, and a continuation form for a compiled module's history — it
+reads the bounded walk through its typed accessor instead. ADR 086 records the
+surface; `cargo test -p extensions --features host` and
+`cargo test -p winter-cocoa` are the suites.
 
 ## Open questions
 
-- **A live history walk.** `panes.history(lines)` answers from the snapshot the
-  host takes before a handler runs, which means the host gathers a bounded walk
-  (`HISTORY_LINES`, 200 rows) on every dispatch. A handler that wants the whole
-  buffer needs the shell entered from inside a callback — the one re-entrancy the
-  write queue exists to avoid — or a request/response turn in the engine.
-- **A chord for an extension command.** The settings file's action vocabulary is
-  strict, so a chord would need a schema change or a second file; the palette is
-  the command's surface until then.
-- **Typed accessors for a compiled module.** `snapshot` is JSON, so a module that
-  wants fields pays for a parser. Importing `tabsCount`, `paneColumns` and the
-  like would be additive, and would duplicate the shape the JSON already has.
+- **A live history walk for a compiled module.** A script continues through a
+  callback the host calls after the handler; a module would need an export the
+  host could call with a pointer, which is a second protocol for a read that
+  `history(ptr, cap)` already covers up to the gathered bound.
+- **Namespace names.** `winter.panes` / `winter.tabs` / `winter.app` are the
+  names; `winter.terminal` or `winter.ui` would have read better for the first,
+  and renaming one is a new `api` major rather than an edit.
 - **Root-relative specifiers.** The engine resolves static imports through one
   map with no referrer, so an extension says `./lib/util.js` from anywhere and
   the loader refuses an import whose sibling reading would differ. File-relative
@@ -379,6 +402,3 @@ the suites.
   `Module::requested_modules` already reports each specifier's offset, so the
   rewrite is possible, but it puts a source transformation in the loader's trust
   path.
-- **Namespace names.** `winter.panes` / `winter.tabs` / `winter.app` are the
-  names; `winter.terminal` or `winter.ui` would have read better for the first,
-  and renaming one is a new `api` major rather than an edit.

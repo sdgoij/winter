@@ -1151,6 +1151,14 @@ impl Shell {
             return true;
         }
 
+        // The window's own bindings are checked first, so an extension chord can
+        // never shadow one; this runs the command the file named.
+        if let Some(command) = input::extension_chord(&self.settings.extensions.commands, key, modifiers) {
+            let command = command.to_string();
+            self.run_extension(&command);
+            return true;
+        }
+
         if self.find_open() {
             if key == Key::Escape {
                 self.close_find();

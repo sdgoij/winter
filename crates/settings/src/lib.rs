@@ -24,7 +24,7 @@ mod watch;
 
 pub use actions::Action;
 pub use defaults::ensure_file;
-pub use extensions::Extensions;
+pub use extensions::{ExtensionCommand, Extensions};
 pub use fonts::Font;
 pub use keybindings::{Chord, ChordError, DEFAULT_KEYBINDINGS, Key, Keybinding, Modifiers, resolve};
 pub use palette::{Color, ColorError, Scheme};

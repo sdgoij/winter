@@ -305,6 +305,26 @@ pub fn chord_action(bindings: &[settings::Keybinding], key: Key, modifiers: Modi
         .map(|binding| binding.action)
 }
 
+/// The extension command `key` and `modifiers` name, if `[extensions.commands]`
+/// binds it.
+///
+/// The shell checks its own bindings first and this second, so an extension can
+/// never shadow a chord the window already runs; the first binding that matches
+/// wins, and the user's file is the order.
+#[cfg(feature = "settings")]
+pub fn extension_chord(commands: &[settings::ExtensionCommand], key: Key, modifiers: Modifiers) -> Option<&str> {
+    let key = settings_key(key)?;
+    let chord = settings::Modifiers {
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+    };
+    commands
+        .iter()
+        .find(|command| command.keys.matches(key, chord))
+        .map(|command| command.command.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,6 +660,27 @@ mod tests {
     }
 
     #[cfg(feature = "settings")]
+    #[test]
+    fn an_extension_chord_answers_only_its_own_keys() {
+        let commands = [settings::ExtensionCommand {
+            keys: settings::Chord::parse("ctrl+g").expect("chord"),
+            command: "com.example.x:run".to_string(),
+        }];
+
+        assert_eq!(
+            extension_chord(&commands, Key::Char('g'), chord_modifiers(true, false)),
+            Some("com.example.x:run")
+        );
+        assert_eq!(
+            extension_chord(&commands, Key::Char('G'), chord_modifiers(true, true)),
+            None
+        );
+        assert_eq!(
+            extension_chord(&commands, Key::Char('g'), chord_modifiers(false, false)),
+            None
+        );
+    }
+
     #[test]
     fn a_chord_must_match_exactly() {
         let bindings = settings::DEFAULT_KEYBINDINGS;

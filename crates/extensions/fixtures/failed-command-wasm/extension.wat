@@ -12,6 +12,7 @@
   (import "winter" "register_event" (func $register_event (param i32 i32) (result i32)))
   (import "winter" "snapshot" (func $snapshot (param i32 i32) (result i32)))
   (import "winter" "asset" (func $asset (param i32 i32 i32 i32) (result i32)))
+  (import "winter" "pane_id" (func $pane_id (param i32 i32) (result i32)))
 
   (memory (export "memory") 1)
   (global $next (mut i32) (i32.const 1024))
@@ -54,7 +55,15 @@
     (i32.const 0))
 
   (func (export "winter_command") (param $id i32) (param $len i32) (result i32)
+    (local $buffer i32)
+    (local $written i32)
     (call $log (i32.const 80) (i32.const 18))
+    ;; A typed read beside the JSON one: the focused pane's identifier, which
+    ;; needs no parser in the module.
+    (local.set $buffer (call $alloc (i32.const 128)))
+    (local.set $written (call $pane_id (local.get $buffer) (i32.const 128)))
+    (if (i32.gt_s (local.get $written) (i32.const 0))
+      (then (call $log (local.get $buffer) (local.get $written))))
     (i32.const 0))
 
   ;; Logs the payload the host wrote in, then the head of the snapshot it can

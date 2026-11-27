@@ -46,7 +46,9 @@ path that would tie an extension to this build.
    memory; registration happens in `winter_init`, because a start function runs
    before the host owns the memory. `snapshot(ptr, cap)` writes the same JSON a
    script handler is handed and answers the length it needs, so the read surface
-   is one import and no record layout; typed accessors would be additive.
+   is one import and no record layout; the typed imports beside it
+   (`tabs_count`, `pane_columns`, `pane_id`, …) are the same fields without a
+   parser in the module.
    `asset(ptr, len, …)` copies a declared asset's bytes in the same way, and the
    host reads those bytes once at load rather than inside a callback.
 5. **The loader owns the filesystem, the engine never touches it.** `manifest`
@@ -63,9 +65,12 @@ path that would tie an extension to this build.
 7. **The shell implements `Host`.** `crates/extensions` names no window, no
    pty and no workspace crate; the trait is the internal half of the contract,
    and its reads are the snapshot and its writes are applied by the engine.
-8. **A command is a palette row.** `palette::Command::Extension("<id>:<cmd>")`
-   is dispatched by the shell; commands carry no chord, because the settings
-   file's action vocabulary is strict and the palette is the command's surface.
+7. **A command is a palette row, and may be bound to a chord.**
+   `palette::Command::Extension("<id>:<cmd>")` is dispatched by the shell. A
+   chord comes from the settings file's `[extensions.commands]` table rather than
+   from a new `action` value, so `settings::Action` stays a plain copyable enum and
+   a typo inside the table is still an error. The window's own bindings are
+   checked first, so an extension cannot shadow a chord the window runs.
 9. **Off by default, switched on from the extensions window.** Loading needs
    `[extensions] enabled = true` in the settings file or `WINTER_EXT` set to
    anything but `0`; `WINTER_EXT=0` overrides an enabled file for one run, and
