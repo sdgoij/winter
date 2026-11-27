@@ -24,7 +24,7 @@ path that would tie an extension to this build.
 1. **JavaScript and WebAssembly only, executed by Slag, one context per
    extension.** Each extension gets its own `slag::Context`, so its realm, its
    `winter` global and its top-level bindings are its own. The engine is a
-   pinned git dependency (`28ec2f6`), and `Cargo.lock` is the lock.
+   pinned git dependency (`48038e0`), and `Cargo.lock` is the lock.
 2. **The global is namespaced into modules**: `winter.events`, `winter.commands`,
    `winter.panes`, `winter.tabs`, `winter.app`, `winter.assets`, plus
    `winter.extension` and `winter.api`. A module is added or a method is added
@@ -32,12 +32,11 @@ path that would tie an extension to this build.
 3. **The entry is an ES module, and a compiled module may stand beside it.**
    Module scope is the scope, so there is no wrapper to write and no globals to
    leak. The other `.js` and `.json` files under the extension directory are
-   registered with the agent under `./<root path>`. The engine resolves a static
-   specifier through one flat map with no referrer, so a specifier is
-   root-relative, not file-relative; the loader compiles every module once
-   before evaluating, reports a miss against the file that wrote it, and refuses
-   a spelling whose sibling reading would be a different file instead of picking
-   one.
+   registered with the agent under their plain root path (`lib/util.js`), and the
+   host installs `HostHooks::resolve_imported_specifier` so a specifier resolves
+   against the importing file. The loader compiles every module once before
+   evaluating, reports a miss against the file that wrote it, and refuses a bare
+   specifier, one that climbs out of the directory, or an import of the entry.
 4. **A compiled extension's import list is its API.** A manifest may name a
    `module` instead of or beside an `entry`; the host instantiates it in the same
    realm with `WebAssembly`, grants only the function imports in the `winter`
@@ -112,7 +111,6 @@ trap is reported like a throwing handler.
 | A compile-time Rust extension path | Ties an extension to this build and this ABI; the two reference projects both rejected it |
 | One flat `winter` global like Goats and Noctis | It is what both projects grew away from; modules keep the surface readable and let one module change without renaming another's members |
 | Script entries in a wrapper, as Goats does | Slag has source text module records; the wrapper was only there to recover the scope a module gives for free |
-| File-relative import specifiers | The engine has no per-referrer resolution hook, so it would need a source rewrite in the loader's trust path; root-relative plus a load-time check is smaller and cannot corrupt code |
 | A second crate for the host behind a feature on the loader | Two crates, one contract; a feature on one crate keeps the loader engine-free and the shells' build single |
 | Applying writes inside a handler | A handler would re-enter the shell mid-frame, and the window's own rules assume one actor per frame |
 | Noctis's raw record ABI for the compiled half (`noctis_update(ptr, count, dt)`) | It is a second protocol to specify, and it puts a per-frame crossing in the way of a surface whose work is registration and one-off actions. The import list and the four exports carry the same capabilities with no record layout in the ABI |

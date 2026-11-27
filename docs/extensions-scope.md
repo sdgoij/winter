@@ -198,27 +198,26 @@ One `slag::Context` per extension. The host first defines `winter` in that realm
 extension's top-level declarations private, so there is no wrapper to write and
 no globals to leak; a reload drops the whole realm.
 
-Imports are **local and resolved from the extension's root**. Every `.js` and
+Imports are **local and resolved from the importing file**. Every `.js` and
 `.json` file anywhere under the extension's directory, other than the entry, is
-registered with the agent under its root path with a `./` prefix — `./lib/util.js`
-— so a tree of any depth is ordinary and that prefix is the only spelling that
-resolves. The engine resolves a static specifier through one flat map and has no
-referrer to resolve against, so `./util.js` written in `lib/a.js` is the root's
-`util.js`, not its sibling.
+registered with the agent under its plain root path — `lib/util.js` — and the
+host installs a `HostHooks::resolve_imported_specifier` that turns
+`(./util.js, lib/a.js)` into `lib/util.js`. A tree of any depth is ordinary, and
+`./util.js` means the sibling a reader expects, as in every other JavaScript
+environment.
 
-The loader makes that rule visible rather than silently surprising. Before
-evaluating, it compiles every module once and checks each declared specifier
-against the registered set: a miss names the file and the specifier, and a
-specifier whose sibling reading would be a different file from its root reading
-is refused as ambiguous instead of being resolved one way. So `lib/a.js`
-importing `./util.js` beside its own `lib/util.js` is an error that says to write
-`./lib/util.js`. Re-exports take the same path.
+The loader makes a miss visible at load rather than at first evaluation: before
+evaluating, it compiles every module once and resolves each declared specifier
+the same way the engine will. A specifier that names no shipped file fails with
+the key it resolved to; a bare specifier (`lodash`), a `file:` or `node:` URL,
+or a path that climbs out of the directory fails with the rule spelled out; and
+importing the entry itself is refused by name. Re-exports take the same path.
 
-A bare specifier (`lodash`), a `file:` or `node:` URL, or a path that escapes the
-directory fails that extension and never the shell. Dynamic `import()` answers
-from the same map, so it is root-relative too. `import data from "./data.json"
-with { type: "json" }` is the way to ship structured data — `.json` files
-register as JSON modules — and binary assets stay opaque `winter.assets` names.
+Identity is the resolved key, so two importers of the same sibling share one
+record and its side effects run once. Dynamic `import()` resolves from the same
+names. `import data from "./data.json" with { type: "json" }` is the way to ship
+structured data — `.json` files register as JSON modules — and binary assets
+stay opaque `winter.assets` names.
 
 The identity is `winter.extension` (`{ id, name, version }`) plus `winter.api`,
 not `import.meta`. Slag's `initialize_import_meta_object` hook hands the host the
@@ -397,13 +396,3 @@ surface; `cargo test -p extensions --features host` and
 - **Namespace names.** `winter.panes` / `winter.tabs` / `winter.app` are the
   names; `winter.terminal` or `winter.ui` would have read better for the first,
   and renaming one is a new `api` major rather than an edit.
-- **Root-relative specifiers.** The engine resolves static imports through one
-  map with no referrer, so an extension says `./lib/util.js` from anywhere and
-  the loader refuses an import whose sibling reading would differ. File-relative
-  imports need one of two things: a per-referrer resolution hook in Slag, or a
-  loader that rewrites each specifier before compiling —
-  `Module::requested_modules` already reports each specifier's offset, so the
-  rewrite is possible, but it puts a source transformation in the loader's trust
-  path. The hook is specified for the engine in
-  `docs/slag-static-import-resolution.md`; the loader above is what changes when
-  it lands.

@@ -165,6 +165,15 @@ impl Engine {
         let state = Rc::new(RefCell::new(State::default()));
 
         context.set_host_callbacks(host_callbacks(&id, &logs));
+        // The engine's name resolution. It is installed through the agent rather
+        // than `Context::set_host_hooks` because that wrapper predates the
+        // resolver and forwards only string compilation, rejection tracking and
+        // workers, dropping the resolver. The wrapper is what routed unhandled
+        // rejections to the console, so this hook does that itself.
+        context.agent_mut().host_hooks = Some(Box::new(Specifiers {
+            id: id.clone(),
+            logs: Rc::clone(&logs),
+        }));
         install_primitives(&mut context, &id, &state, &logs).map_err(|error| Error::new(&id, error.to_string()))?;
 
         let identity = serde_json::json!({
@@ -218,11 +227,8 @@ impl Engine {
             .eval(&bootstrap)
             .map_err(|error| Error::new(&id, format!("the bootstrap failed: {error}")))?;
 
-        let keys: HashSet<String> = loaded
-            .sources
-            .iter()
-            .map(|source| format!("./{}", source.name))
-            .collect();
+        let keys: HashSet<String> = loaded.sources.iter().map(|source| source.name.clone()).collect();
+        let entry_name = loaded.entry.as_ref().map(|entry| entry.name.as_str()).unwrap_or("");
 
         // Every module is compiled once to read what it imports, so a bad
         // specifier is reported against the file that wrote it instead of
@@ -230,23 +236,28 @@ impl Engine {
         let mut problems = Vec::new();
         for source in &loaded.sources {
             let source_module = context
-                .compile_module(&format!("./{}", source.name), Some(&source.name), &source.text)
+                .compile_module(&source.name, Some(&source.name), &source.text)
                 .map_err(|error| Error::new(&id, format!("{}: {error}", source.name)))?;
-            problems.extend(validate_specifiers(&source_module, &source.name, &keys));
+            problems.extend(validate_specifiers(&source_module, &source.name, &keys, entry_name));
         }
         if let Some(entry) = &loaded.entry {
             let entry_module = context
                 .compile_module(&entry.name, Some(&entry.name), &entry.text)
                 .map_err(|error| Error::new(&id, format!("{}: {error}", entry.name)))?;
-            problems.extend(validate_specifiers(&entry_module, &entry.name, &keys));
+            problems.extend(validate_specifiers(&entry_module, &entry.name, &keys, entry_name));
             if !problems.is_empty() {
                 return Err(Error::new(&id, problems.join("; ")));
             }
 
             for source in &loaded.sources {
-                context
-                    .agent_mut()
-                    .add_module(&format!("./{}", source.name), &source.text);
+                // The supported registration call, with the kind declared rather
+                // than guessed from the suffix: a `.json` file is a JSON module.
+                let kind = if source.name.ends_with(".json") {
+                    slag::ModuleSourceKind::Json
+                } else {
+                    slag::ModuleSourceKind::Js
+                };
+                context.add_module_source(&source.name, source.text.as_bytes(), kind);
             }
             context
                 .instantiate_module(&entry_module)
@@ -269,10 +280,22 @@ impl Engine {
                     return Err(Error::new(&id, detail));
                 }
                 Ok(PromiseState::Pending) => {
-                    return Err(Error::new(
-                        &id,
-                        "the entry module awaits something that will never settle; no timer or I/O exists in this realm",
-                    ));
+                    // The engine knows which modules are still waiting, which is a
+                    // better sentence than "the promise never settled".
+                    let stalled: Vec<String> = entry_module
+                        .stalled_top_level_await_modules()
+                        .iter()
+                        .filter_map(|module| module.as_api_module().name())
+                        .collect();
+                    let detail = if stalled.is_empty() {
+                        "the entry module's evaluation never settled".to_string()
+                    } else {
+                        format!(
+                            "{} awaits something that will never settle; no timer or I/O exists in this realm",
+                            stalled.join(", ")
+                        )
+                    };
+                    return Err(Error::new(&id, detail));
                 }
                 Err(error) => return Err(Error::new(&id, error.to_string())),
             }
@@ -582,14 +605,55 @@ struct Frozen {
     label: String,
 }
 
-/// Check that every specifier the entry (and, transitively, nothing else yet)
-/// declares is one the extension ships.
+/// The engine's name resolution for one extension: a relative specifier is
+/// resolved against the importing module's directory, and the answer is the key
+/// the module was registered under.
 ///
-/// The engine resolves a specifier verbatim, so `./util.js` from `lib/a.js` is
-/// the root's file. A miss is reported with the spelling the extension meant
-/// when the sibling exists, and a spelling whose sibling reading is a different
-/// file is refused rather than resolved one way.
-fn validate_specifiers(module: &slag::JsModule, referrer: &str, keys: &HashSet<String>) -> Vec<String> {
+/// Unhandled rejections are logged here too, because installing this through the
+/// agent replaces the engine's rejection-tracking wrapper (see [`Engine::load`]).
+struct Specifiers {
+    id: String,
+    logs: Rc<RefCell<Vec<String>>>,
+}
+
+impl std::fmt::Debug for Specifiers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Specifiers").field("id", &self.id).finish()
+    }
+}
+
+impl slag::HostHooks for Specifiers {
+    fn resolve_imported_specifier(
+        &self,
+        specifier: &slag::JsString,
+        referrer: Option<&slag::JsString>,
+    ) -> Option<slag::JsString> {
+        let referrer = referrer?.to_string_lossy();
+        let specifier = specifier.to_string_lossy();
+        resolve_specifier(&referrer, &specifier).map(|key| slag::JsString::from_utf8(&key))
+    }
+
+    fn promise_rejection_tracker(
+        &self,
+        _promise: &slag::Value,
+        reason: Option<&slag::Value>,
+        _operation: bool,
+    ) -> Result<(), JsError> {
+        let text = reason.map(ToString::to_string).unwrap_or_default();
+        push_log(&self.logs, &self.id, &text);
+        Ok(())
+    }
+}
+
+/// Check that every specifier a module declares resolves to one the extension
+/// ships.
+///
+/// A relative specifier resolves against the importing file, exactly as the
+/// engine's resolver will at instantiation, so a miss names the file the
+/// specifier actually denotes. A bare specifier is refused because nothing is
+/// installed under one, a specifier that climbs out of the root is refused for
+/// the same reason, and the entry is named as unimportable.
+fn validate_specifiers(module: &slag::JsModule, referrer: &str, keys: &HashSet<String>, entry: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for index in 0..module.request_count() {
         let Some(specifier) = module
@@ -598,43 +662,45 @@ fn validate_specifiers(module: &slag::JsModule, referrer: &str, keys: &HashSet<S
         else {
             continue;
         };
-        // Registered keys are all `./`-prefixed, so a specifier resolves only
-        // when it is written that way; anything else is bare.
-        let relative = specifier.starts_with("./") || specifier.starts_with("../");
-        let shipped = relative && keys.contains(&specifier);
-        let sibling = join(parent(referrer), &specifier).map(|path| format!("./{path}"));
-        let sibling_shipped = sibling.as_deref().is_some_and(|key| keys.contains(key));
-
-        if shipped {
-            if sibling_shipped && sibling.as_deref() != Some(specifier.as_str()) {
-                problems.push(format!(
-                    "`{referrer}` imports `{specifier}`, which is ambiguous here: `{}` exists too; write `{}`",
-                    sibling.clone().unwrap_or_default(),
-                    sibling.unwrap_or_default()
-                ));
-            }
+        if !is_relative(&specifier) {
+            problems.push(format!(
+                "`{referrer}` imports `{specifier}`, a bare specifier; every import resolves from the importing file, so write it as `./{specifier}`"
+            ));
             continue;
         }
-        if sibling_shipped {
+        let Some(resolved) = resolve_specifier(referrer, &specifier) else {
             problems.push(format!(
-                "`{referrer}` imports `{specifier}`, which resolves from the extension root; write `{}`",
-                sibling.unwrap_or_default()
+                "`{referrer}` imports `{specifier}`, which climbs out of the extension root"
             ));
-        } else if !relative {
+            continue;
+        };
+        if resolved == entry {
             problems.push(format!(
-                "`{referrer}` imports `{specifier}`, a bare specifier; imports resolve from the extension root, so write `./{specifier}`"
+                "`{referrer}` imports `{specifier}`, which resolves to the entry `{entry}`; the entry cannot be imported, so move the shared code to another module"
             ));
-        } else if sibling.as_deref() == Some(&format!("./{referrer}")) {
+        } else if !keys.contains(&resolved) {
             problems.push(format!(
-                "`{referrer}` imports `{specifier}`; the entry cannot be imported, so move the shared code to another module"
-            ));
-        } else {
-            problems.push(format!(
-                "`{referrer}` imports `{specifier}`, which the extension does not ship"
+                "`{referrer}` imports `{specifier}`, which resolves to `{resolved}`, a module the extension does not ship"
             ));
         }
     }
     problems
+}
+
+/// Resolve `specifier` against the importing module's directory, relative to the
+/// extension root. `None` for a bare specifier (the engine has no module under
+/// it) or for one that climbs out of the root.
+fn resolve_specifier(referrer: &str, specifier: &str) -> Option<String> {
+    if !is_relative(specifier) {
+        return None;
+    }
+    join(parent(referrer), specifier)
+}
+
+/// Whether `specifier` names a file relative to the importer rather than a bare
+/// module name.
+fn is_relative(specifier: &str) -> bool {
+    matches!(specifier, "." | ".." | "./" | "../") || specifier.starts_with("./") || specifier.starts_with("../")
 }
 
 /// The directory part of a root-relative module name.
@@ -1633,11 +1699,11 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_import_of_a_sibling_names_the_root_spelling() {
+    fn a_nested_import_of_a_sibling_resolves() {
         let (_temp, dir) = extension(
             r#"
             import { value } from "./lib/entry.js";
-            winter.app.log(value);
+            winter.app.log(String(value));
             "#,
             &[
                 (
@@ -1647,6 +1713,54 @@ mod tests {
                 ("lib/util.js", "export const value = 1;\n"),
             ],
         );
+        // `./util.js` from `lib/entry.js` is `lib/util.js`, not the root's.
+        let (_engine, logs) = load(&dir);
+        assert_eq!(logs, ["test.fixture: 1"]);
+    }
+
+    #[test]
+    fn two_importers_of_a_sibling_share_one_record() {
+        let (_temp, dir) = extension(
+            r#"
+            import { a } from "./lib/a.js";
+            import { b } from "./lib/b.js";
+            winter.app.log(String(a + b));
+            "#,
+            &[
+                (
+                    "lib/util.js",
+                    "winter.app.log(\"evaluated\");\nexport const value = 1;\n",
+                ),
+                (
+                    "lib/a.js",
+                    "import { value } from \"./util.js\";\nexport const a = value;\n",
+                ),
+                (
+                    "lib/b.js",
+                    "import { value } from \"./util.js\";\nexport const b = value;\n",
+                ),
+            ],
+        );
+        // Both importers resolve `./util.js` to the same key, so the module is
+        // evaluated once and its side effect is seen once.
+        let (_engine, logs) = load(&dir);
+        let evaluated = logs.iter().filter(|line| line.ends_with("evaluated")).count();
+        assert_eq!(evaluated, 1, "{logs:?}");
+        assert!(logs.iter().any(|line| line == "test.fixture: 2"), "{logs:?}");
+    }
+
+    #[test]
+    fn a_specifier_that_climbs_out_of_the_root_is_refused() {
+        let (_temp, dir) = extension(
+            r#"
+            import { value } from "./lib/a.js";
+            winter.app.log(String(value));
+            "#,
+            &[(
+                "lib/a.js",
+                "import { value } from \"../../outside.js\";\nexport { value };\n",
+            )],
+        );
         let report = discover(&Options {
             roots: vec![dir.to_path_buf()],
             disabled: Vec::new(),
@@ -1654,33 +1768,44 @@ mod tests {
         let mut engine = Engine::default();
         let error = engine
             .load(&report.loaded[0])
-            .expect_err("the nested import must be refused");
-        assert!(error.message.contains("./lib/util.js"), "{}", error.message);
+            .expect_err("two levels up from lib/ leaves the root");
+        assert!(error.message.contains("climbs out"), "{}", error.message);
     }
 
     #[test]
-    fn an_ambiguous_import_is_refused_rather_than_picked() {
+    fn a_bare_specifier_is_refused_with_the_rule() {
         let (_temp, dir) = extension(
             r#"
-            import { value } from "./lib/entry.js";
-            winter.app.log(value);
+            import { value } from "winter";
+            winter.app.log(String(value));
             "#,
-            &[
-                ("util.js", "export const value = \"root\";\n"),
-                (
-                    "lib/entry.js",
-                    "import { value } from \"./util.js\";\nexport { value };\n",
-                ),
-                ("lib/util.js", "export const value = \"sibling\";\n"),
-            ],
+            &[],
         );
         let report = discover(&Options {
             roots: vec![dir.to_path_buf()],
             disabled: Vec::new(),
         });
         let mut engine = Engine::default();
-        let error = engine.load(&report.loaded[0]).expect_err("ambiguous");
-        assert!(error.message.contains("ambiguous"), "{}", error.message);
+        let error = engine.load(&report.loaded[0]).expect_err("bare");
+        assert!(error.message.contains("bare specifier"), "{}", error.message);
+    }
+
+    #[test]
+    fn an_import_of_the_entry_is_refused() {
+        let (_temp, dir) = extension(
+            r#"
+            import { value } from "./lib/a.js";
+            winter.app.log(String(value));
+            "#,
+            &[("lib/a.js", "import { value } from \"../main.js\";\nexport { value };\n")],
+        );
+        let report = discover(&Options {
+            roots: vec![dir.to_path_buf()],
+            disabled: Vec::new(),
+        });
+        let mut engine = Engine::default();
+        let error = engine.load(&report.loaded[0]).expect_err("the entry is not a source");
+        assert!(error.message.contains("entry cannot be imported"), "{}", error.message);
     }
 
     #[test]

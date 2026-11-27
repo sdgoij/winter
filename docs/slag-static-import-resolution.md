@@ -1,10 +1,44 @@
 # Proposal to Slag: a host resolver for static import specifiers
 
-Status: proposal, not implemented on either side.
+Status: implemented in Slag `d02fba3`, usable from a host since `48038e0`, and
+used by Winter's loader. One engine gap remains: `Context::set_host_hooks` does
+not forward the resolver (see "Implementation status").
 Date: 2026-11-27.
-Audience: the engine (`github.com/sdgoij/slag`, pinned at `28ec2f6`).
+Audience: the engine (`github.com/sdgoij/slag`, pinned at `48038e0`).
 Related: ADR 086 and `docs/extensions-scope.md` in this repository; the
 consumer is `crates/extensions` with its `host` feature.
+
+## Implementation status
+
+The resolver landed as proposed — `HostHooks::resolve_imported_specifier`, and
+`host_resolve_imported_module` taking the referrer and keying the cache, the
+registry and the parse's name by the answer — together with the three smaller
+asks below, and with one addition: `HostHooks::resolve_imported_module`, for a
+host that hands the engine a module record of its own rather than bytes.
+
+The last blocker for an embedder was `JsString`, which the hook's signature
+carries and which was not re-exported at the crate root; `48038e0` adds it.
+`ModuleSourceKind` came in `f89960b`. Winter is pinned to `48038e0` and now
+resolves `(specifier, referrer)` itself, registers modules under their root path,
+and has deleted both the root-spelling rule and the ambiguity refusal.
+
+One engine bug still shapes the host. `Context::set_host_hooks` wraps the host's
+hooks in an internal `RejectionHooks` that forwards only
+`ensure_can_compile_strings`, `promise_rejection_tracker` and `create_worker`
+(`crates/runtime/src/embed.rs`). `resolve_imported_specifier` — and the other
+hooks added since the wrapper was written — never reach a hook installed the
+supported way, and the failure is silent: the resolver simply is not called.
+Winter installs its hooks through `Context::agent_mut().host_hooks` instead, and
+its hook implements `promise_rejection_tracker` so unhandled rejections still
+reach the log.
+
+| Engine gap | What it blocks | Fix |
+|---|---|---|
+| `RejectionHooks` in `embed.rs` forwards only three methods | `set_host_hooks(Box::new(host))` silently drops the resolver, the host module resolver, the dynamic-import hook and `import.meta` for every host that installs hooks the documented way | forward every `HostHooks` method, delegating to `inner` (or store the host's hooks unwrapped and route rejections in the dispatchers) |
+
+Confirmed by a probe crate at the pinned revision: with
+`ctx.agent_mut().host_hooks = Some(Box::new(Specifiers))` the hook is called for
+each resolution; with `ctx.set_host_hooks(Box::new(Specifiers))` it never is.
 
 ## The problem
 
@@ -217,11 +251,11 @@ smaller, cannot fail, and covers every host whose modules are files.
 | Make the hook return a module record | `HostHooks` methods take `&self` and cannot reach `&mut Agent`, which parsing needs; the hook would need a second registration API instead. |
 | Resolve inside the host's own `import_module_dynamically` only | Dynamic imports already work; static ones are the ones that do not, and a mixed graph would resolve `import("./b.js")` and `import "./b.js"` differently. |
 
-## What the consumer does now, and what changes after
+## What the consumer did, and what it does
 
-Winter's loader registers an extension's modules flat, under `./<root path>`, and
-compiles every file once before evaluating it to check what it imports. Because
-nothing resolves relative to the importer, the loader must
+Before the hook, Winter's loader registered an extension's modules flat, under
+`./<root path>`, and compiled every file once before evaluating it to check what
+it imports. Because nothing resolved relative to the importer, the loader had to
 
 - tell authors that specifiers are root-relative (`./lib/util.js`, never
   `./util.js` inside `lib/`), and
@@ -229,12 +263,15 @@ nothing resolves relative to the importer, the loader must
   "ambiguous", rather than resolving it one way.
 
 With the hook, `crates/extensions` resolves `(specifier, referrer)` to a
-root-relative key itself, registers modules under those keys, and deletes both the
-rule and the ambiguity refusal: `./util.js` in `lib/a.js` is `lib/util.js`, which
-is what a reader expects and what every other JavaScript environment does. The
-one-file-per-key identity rule stays, and the "does not ship" message keeps
-naming the importing file, because the loader still compiles each file once to
-report an unregistered import at load rather than at first evaluation.
+root-relative key itself, registers modules under those plain keys (no `./`), and
+has deleted both the rule and the ambiguity refusal: `./util.js` in `lib/a.js` is
+`lib/util.js`, which is what a reader expects and what every other JavaScript
+environment does. The one-file-per-key identity rule stays — two importers of the
+same sibling share one record, so its side effects run once — and the "does not
+ship" message still names the importing file, because the loader compiles each
+file once to report an unregistered import at load rather than at first
+evaluation. A bare specifier and one that climbs out of the root are refused at
+load with the rule spelled out, and importing the entry is refused by name.
 
 ## Two smaller asks, from the same integration
 

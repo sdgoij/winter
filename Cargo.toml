@@ -78,7 +78,7 @@ serde_json = "1"
 # The engine the extension host runs on. `docs/extensions-scope.md` records the
 # choice; the revision is pinned and `Cargo.lock` is the lock, as for any git
 # dependency.
-slag = { git = "https://github.com/sdgoij/slag", rev = "28ec2f61db38dba4c0bb437e72520988774b33eb" }
+slag = { git = "https://github.com/sdgoij/slag", rev = "48038e0d5e32ffed60e759fc1d6d9e058ab7c32e" }
 tempfile = "3"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
