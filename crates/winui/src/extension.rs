@@ -373,11 +373,10 @@ impl extensions::Host for Shell {
         winter::notifications::show(title, body);
     }
 
-    /// The WinUI shell has no URL opener: its About dialog navigates a
-    /// `HyperlinkButton` and the shell never calls `ShellExecute` (ADR 070), so
-    /// an extension sees a normal `false` and the engine logs it.
-    fn open_url(&mut self, _url: &str) -> bool {
-        false
+    /// Opens the URL through the shell's one `ShellExecuteW`, so a handler's
+    /// link reaches the browser without a control to click (ADR 070, 086).
+    fn open_url(&mut self, url: &str) -> bool {
+        super::shell_exec::open(url)
     }
 }
 

@@ -408,13 +408,14 @@ methods; `Host for Shell` is there too.
 - The dialog is opened from the profile menu (or `WINTER_OPEN_EXTENSIONS=1`): a
   master `ToggleSwitch` plus one per row. Save writes the same `[extensions]`
   table the other shells write; loading changes on the next start.
-- The shell has no URL opener: `Host::open_url` answers `false` and the engine
-  logs it. Do not call `ShellExecute` (ADR 070).
+- `Host::open_url` calls `shell_exec::open`, the shell's one `ShellExecuteW`. A
+  URL from a handler has no `HyperlinkButton` to navigate it (ADR 070), and the
+  call carries a `SAFETY` note like the other four (ADR 086).
 
 ## Do not
 
 - Add a second renderer, swap chain or pty pump thread. The connection is not
   `Send`; the timer polls every pty on the UI thread.
-- Put `unsafe` outside `surface.rs`, `wheel.rs`, `icon.rs` and `profile_icon.rs`;
-  each call needs a `SAFETY:` note.
+- Put `unsafe` outside `surface.rs`, `wheel.rs`, `icon.rs`, `profile_icon.rs`
+  and `shell_exec.rs`; each call needs a `SAFETY:` note.
 - Put Windows-only logic in `input`, `view`, `tabs` or `term_control`.

@@ -384,20 +384,19 @@ copyable enum.
 3. Each native shell — macOS, WinUI and GTK — implements `Host for Shell`
    (including opening and closing tabs from a handler), offers the extension
    commands as palette rows and matches their chords after the window's own,
-   and reports `commandFinished`, `titleChanged`, `paneFocused`, `tabOpened`,
-   `tabClosed`, `bell`, `notification`, `paneExited`, `paneSplit` and
-   `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
-   script notifier and a compiled one.
+   opens a URL through its platform's opener (`NSWorkspace`, `gio::AppInfo`,
+   `ShellExecuteW`), and reports `commandFinished`, `titleChanged`,
+   `paneFocused`, `tabOpened`, `tabClosed`, `bell`, `notification`,
+   `paneExited`, `paneSplit` and `settingsReloaded`, with the fixtures in
+   `crates/extensions/fixtures`: a script notifier and a compiled one.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
    the `[extensions]` table; loading changes on the next start.
 
 What is not here: a continuation form for a compiled module's history — it
-reads the bounded walk through its typed accessor instead. The WinUI shell has
-no URL opener, so `app.openUrl` answers `false` there and the engine logs it;
-ADR 070 keeps `ShellExecute` out of that shell. ADR 086 records the surface;
-`cargo test -p extensions --features host`, `cargo test -p winter-cocoa`,
+reads the bounded walk through its typed accessor instead. ADR 086 records the
+surface; `cargo test -p extensions --features host`, `cargo test -p winter-cocoa`,
 `cargo test -p winter-winui` and `cargo test -p winter-gtk4` are the suites.
 
 ## Open questions

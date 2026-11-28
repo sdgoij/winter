@@ -105,6 +105,11 @@ trap is reported like a throwing handler.
   after the window's own, and each has a screen that switches extensions. The
   screens write the same `[extensions]` table, and a switch takes effect on the
   next start because a live engine is not reloaded.
+- `Host::open_url` reaches the browser through the platform's own opener: macOS
+  `NSWorkspace`, GTK `gio::AppInfo`, and WinUI `ShellExecuteW` from a new
+  permitted `unsafe` module, `shell_exec.rs` — a URL from a handler has no
+  `HyperlinkButton` to navigate it (ADR 070), and the call carries a `SAFETY`
+  note like the shell's other four.
 
 ## Alternatives considered
 

@@ -36,7 +36,8 @@ button and the Apply row is painted over.
 - One hairline separates the last profile from `Settings`. It is inserted once,
   before the first non-profile row, and not at all when there are no profiles.
 - The About dialog links to the repository with a `HyperlinkButton`, which
-  navigates the URI itself. The shell does not call `ShellExecute` for it.
+  navigates the URI itself. That dialog needs no `ShellExecute`; the shell's one
+  `ShellExecuteW` call is the extensions' URL opener (ADR 086).
 - The settings dialog's `ScrollViewer` gets `max_height` (420 DIP) instead of a
   fixed `height`. The content is then never forced taller than the dialog can
   show, and it still scrolls when the lists grow.
