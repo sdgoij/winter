@@ -676,6 +676,9 @@ impl Shell {
         let mut exited: Vec<(usize, PaneId)> = Vec::new();
         let mut title_changed = false;
         let mut notes = Vec::new();
+        // The pty events this tick saw, in the order it saw them. Extensions are
+        // handed them with the state diff, after the shell has acted on both.
+        let mut observed = Vec::new();
 
         if self.close_requested {
             tick.close_window = true;
@@ -692,8 +695,17 @@ impl Shell {
                 for event in pane.control.take_events(now) {
                     match event {
                         TerminalEvent::Exited => exited.push((index, pane.id)),
-                        TerminalEvent::Bell => tick.bell = true,
-                        TerminalEvent::Notification { title, body } => tick.notifications.push((title, body)),
+                        TerminalEvent::Bell => {
+                            tick.bell = true;
+                            observed.push(extensions::Event::Bell);
+                        }
+                        TerminalEvent::Notification { title, body } => {
+                            observed.push(extensions::Event::Notification {
+                                title: title.clone(),
+                                body: body.clone(),
+                            });
+                            tick.notifications.push((title, body));
+                        }
                     }
                 }
                 if let Some(title) = pane.control.title().map(str::to_string)
@@ -710,6 +722,10 @@ impl Shell {
         }
 
         for (index, pane_id) in exited.into_iter().rev() {
+            observed.push(extensions::Event::PaneExited {
+                tab: index,
+                pane: pane_id.0.to_string(),
+            });
             if self.tabs.get(index).is_none() {
                 continue;
             }
@@ -751,6 +767,7 @@ impl Shell {
             .map(|pane| (pane.id, pane.control.scroll_facts().1));
         self.pump_extensions(
             marks.as_ref().map(|(id, marks)| (*id, marks.as_slice())),
+            observed,
             settings_reloaded,
         );
 
@@ -1006,6 +1023,10 @@ impl Shell {
         let index = self.tabs.index();
         self.resize_tab(index);
         self.title_dirty = true;
+        self.report_extension(extensions::Event::PaneSplit {
+            tab: index,
+            pane: id.0.to_string(),
+        });
     }
 
     /// Closes the focused pane, or the tab when it is the last one.

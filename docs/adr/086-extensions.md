@@ -58,10 +58,11 @@ path that would tie an extension to this build.
    the text. Slag's `fs` feature stays off.
 6. **Events are observations.** A handler runs after the shell has acted, and
    the shell hands it one snapshot taken before the handler (`tabs`, `focused`,
-   `visible_text`). A handler's writes — `panes.send`, `tabs.select`,
-   `app.notify`, `app.clipboard.write`, `app.openUrl` — are queued and applied
-   after it returns, so an extension cannot re-enter the shell mid-frame. The
-   parked "bugs" layer is the opposite shape and stays a separate surface.
+   `visible_text`, and the gathered `history`). A handler's writes —
+   `panes.send`, `tabs.select`, `tabs.open`, `tabs.close`, `app.notify`,
+   `app.clipboard.write`, `app.openUrl` — are queued and applied
+after it returns, so an extension cannot re-enter the shell mid-frame. The
+parked "bugs" layer is the opposite shape and stays a separate surface.
 7. **The shell implements `Host`.** `crates/extensions` names no window, no
    pty and no workspace crate; the trait is the internal half of the contract,
    and its reads are the snapshot and its writes are applied by the engine.
@@ -84,16 +85,15 @@ path that would tie an extension to this build.
 ## Consequences
 
 - An extension is trusted code in the terminal's process: the I/O wall and the
-  realm are the containment, not a sandbox. WASM is the sandbox for the compiled
-  half when that path lands.
+  realm are the containment, not a sandbox.
 - No timer and no I/O exists in the realm, so a top-level `await` can only
   await promises that are already settled. The host drains the job queue and
   drops an extension whose evaluation promise is still pending.
 - A broken extension is reported and skipped. Loading one never stops another
   and never stops the window.
-- `import.meta` is not filled: Slag's hook hands the host engine-internal value
-  types that the embedding surface does not export. `winter.extension` carries
-  the identity instead.
+- `import.meta` is empty for now: the engine's hook can fill flat properties,
+  but the nested identity the API describes would need an allocator in the hook.
+  `winter.extension` carries the identity instead.
 - A failed handler is logged with its extension's identifier and the other
   handlers still run; a duplicate command id fails the later extension rather
   than shadowing.

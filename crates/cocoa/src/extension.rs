@@ -209,13 +209,21 @@ impl Shell {
     /// Reports the window's changes to every extension.
     ///
     /// `marks` is the active pane's scrollbar marks, taken by the caller
-    /// because reading them needs the pane mutably. `settings_reloaded` is the
-    /// settings poll's answer for this tick.
-    pub(crate) fn pump_extensions(&mut self, marks: Option<(PaneId, &[MarkTick])>, settings_reloaded: bool) {
+    /// because reading them needs the pane mutably. `observed` are the pty
+    /// events the tick saw (a bell, a notification, a pane exiting) in the order
+    /// it saw them; `settings_reloaded` is the settings poll's answer for this
+    /// tick.
+    pub(crate) fn pump_extensions(
+        &mut self,
+        marks: Option<(PaneId, &[MarkTick])>,
+        observed: Vec<extensions::Event>,
+        settings_reloaded: bool,
+    ) {
         let Some(mut holder) = self.extensions.take() else {
             return;
         };
-        let mut events = holder.changes(self, marks);
+        let mut events = observed;
+        events.extend(holder.changes(self, marks));
         if settings_reloaded {
             events.push(extensions::Event::SettingsReloaded);
         }
@@ -307,6 +315,22 @@ impl extensions::Host for Shell {
 
     fn select_tab(&mut self, index: usize) {
         Shell::select_tab(self, index);
+    }
+
+    fn open_tab(&mut self) -> bool {
+        let before = self.tabs.len();
+        Shell::open_tab(self);
+        self.tabs.len() > before
+    }
+
+    fn close_tab(&mut self, index: usize) -> bool {
+        // An extension may not close the last tab: that is the window, and a
+        // handler has no business ending it.
+        if index >= self.tabs.len() || self.tabs.len() == 1 {
+            return false;
+        }
+        Shell::close_tab(self, index);
+        true
     }
 
     fn send_text(&mut self, text: &str) {

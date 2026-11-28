@@ -48,6 +48,29 @@ pub enum Event {
     },
     /// The focused pane moved.
     PaneFocused,
+    /// A program rang the terminal bell.
+    Bell,
+    /// A program asked for a desktop notification.
+    Notification {
+        /// The notification's title.
+        title: String,
+        /// The notification's body.
+        body: String,
+    },
+    /// A pane's process exited.
+    PaneExited {
+        /// The tab the pane belonged to.
+        tab: usize,
+        /// The pane's identifier, as `panes.focused()` reports it.
+        pane: String,
+    },
+    /// A pane was split, and `pane` is the new pane.
+    PaneSplit {
+        /// The tab that was split.
+        tab: usize,
+        /// The new pane's identifier.
+        pane: String,
+    },
     /// A tab was opened.
     TabOpened {
         /// The new tab's index.
@@ -69,6 +92,10 @@ impl Event {
             Event::CommandFinished { .. } => "commandFinished",
             Event::TitleChanged { .. } => "titleChanged",
             Event::PaneFocused => "paneFocused",
+            Event::Bell => "bell",
+            Event::Notification { .. } => "notification",
+            Event::PaneExited { .. } => "paneExited",
+            Event::PaneSplit { .. } => "paneSplit",
             Event::TabOpened { .. } => "tabOpened",
             Event::TabClosed { .. } => "tabClosed",
             Event::SettingsReloaded => "settingsReloaded",
@@ -83,7 +110,11 @@ impl Event {
             Event::TabOpened { index } | Event::TabClosed { index } => {
                 serde_json::json!({ "index": index }).to_string()
             }
-            Event::PaneFocused | Event::SettingsReloaded => "{}".to_string(),
+            Event::Bell | Event::PaneFocused | Event::SettingsReloaded => "{}".to_string(),
+            Event::Notification { title, body } => serde_json::json!({ "title": title, "body": body }).to_string(),
+            Event::PaneExited { tab, pane } | Event::PaneSplit { tab, pane } => {
+                serde_json::json!({ "tab": tab, "pane": pane }).to_string()
+            }
         }
     }
 }
@@ -137,6 +168,8 @@ enum Call {
     Notify(String, String),
     OpenUrl(String),
     SelectTab(usize),
+    OpenTab,
+    CloseTab(usize),
     Run(String),
 }
 
@@ -585,6 +618,24 @@ impl Engine {
                     }
                 }
                 Call::SelectTab(tab) => host.select_tab(tab),
+                Call::OpenTab => {
+                    if !host.open_tab()
+                        && let Some(running) = self.extensions.get(index)
+                    {
+                        push_log(&running.logs, &running.id, "the shell could not open a tab");
+                    }
+                }
+                Call::CloseTab(tab) => {
+                    if !host.close_tab(tab)
+                        && let Some(running) = self.extensions.get(index)
+                    {
+                        push_log(
+                            &running.logs,
+                            &running.id,
+                            &format!("the shell could not close the tab at index {tab}"),
+                        );
+                    }
+                }
                 Call::Run(key) => {
                     self.run_key(host, &key, &mut hops);
                 }
@@ -829,6 +880,37 @@ fn install_primitives(
         )?;
     }
     {
+        let state = Rc::clone(state);
+        context.register_fn(
+            "__winter_open_tab",
+            0,
+            Box::new(move |_call| {
+                queue(&state, Call::OpenTab);
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
+        let state = Rc::clone(state);
+        let logs = Rc::clone(logs);
+        let id = id.to_string();
+        context.register_fn(
+            "__winter_close_tab",
+            1,
+            Box::new(move |call| {
+                let number = call.arg(0).map(|value| call.to_number(&value)).transpose()?;
+                match number {
+                    Some(number) if number >= 0.0 && number.fract() == 0.0 => {
+                        let index = number as usize;
+                        queue(&state, Call::CloseTab(index));
+                    }
+                    _ => push_log(&logs, &id, "tabs.close was given a negative or fractional index"),
+                }
+                Ok(JsValue::undefined())
+            }),
+        )?;
+    }
+    {
         let logs = Rc::clone(logs);
         let id = id.to_string();
         context.register_fn(
@@ -899,6 +981,8 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
   const log = globalThis.__winter_log;
   const runElsewhere = globalThis.__winter_run;
   const selectTab = globalThis.__winter_select;
+  const openTab = globalThis.__winter_open_tab;
+  const closeTab = globalThis.__winter_close_tab;
 
   delete globalThis.__winter_send;
   delete globalThis.__winter_copy;
@@ -907,6 +991,8 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
   delete globalThis.__winter_log;
   delete globalThis.__winter_run;
   delete globalThis.__winter_select;
+  delete globalThis.__winter_open_tab;
+  delete globalThis.__winter_close_tab;
 
   const handlers = new Map();
   const commands = new Map();
@@ -1062,6 +1148,15 @@ const BOOTSTRAP: &str = r##"(function (identity, assetNames) {
           fail("tabs.select", "the index must be a non-negative integer");
         }
         selectTab(index);
+      },
+      open() {
+        openTab();
+      },
+      close(index) {
+        if (!Number.isInteger(index) || index < 0) {
+          fail("tabs.close", "the index must be a non-negative integer");
+        }
+        closeTab(index);
       },
     },
 
@@ -1516,6 +1611,8 @@ mod tests {
         notified: Vec<(String, String)>,
         opened: Vec<String>,
         selected: Vec<usize>,
+        opened_tabs: usize,
+        closed: Vec<usize>,
     }
 
     impl Host for Recorder {
@@ -1551,6 +1648,14 @@ mod tests {
         }
         fn select_tab(&mut self, index: usize) {
             self.selected.push(index);
+        }
+        fn open_tab(&mut self) -> bool {
+            self.opened_tabs += 1;
+            true
+        }
+        fn close_tab(&mut self, index: usize) -> bool {
+            self.closed.push(index);
+            true
         }
     }
 
@@ -1903,6 +2008,8 @@ mod tests {
             winter.commands.add("all", "All", () => {
               winter.app.clipboard.write("copied");
               winter.tabs.select(2);
+              winter.tabs.open();
+              winter.tabs.close(1);
               winter.app.openUrl("https://example.com");
             });
             "#,
@@ -1913,7 +2020,67 @@ mod tests {
         assert!(engine.run(&mut host, "test.fixture:all"));
         assert_eq!(host.copied, ["copied"]);
         assert_eq!(host.selected, [2]);
+        assert_eq!(host.opened_tabs, 1);
+        assert_eq!(host.closed, [1]);
         assert_eq!(host.opened, ["https://example.com"]);
+    }
+
+    #[test]
+    fn the_event_names_and_payloads_are_the_api() {
+        assert_eq!(Event::Bell.name(), "bell");
+        assert_eq!(Event::Bell.payload(), "{}");
+
+        let note = Event::Notification {
+            title: "Build".to_string(),
+            body: "done".to_string(),
+        };
+        assert_eq!(note.name(), "notification");
+        assert!(note.payload().contains("\"title\":\"Build\""), "{}", note.payload());
+        assert!(note.payload().contains("\"body\":\"done\""), "{}", note.payload());
+
+        let exited = Event::PaneExited {
+            tab: 2,
+            pane: "7".to_string(),
+        };
+        assert_eq!(exited.name(), "paneExited");
+        assert!(
+            exited.payload().contains("\"tab\":2") && exited.payload().contains("\"pane\":\"7\""),
+            "{}",
+            exited.payload()
+        );
+
+        let split = Event::PaneSplit {
+            tab: 0,
+            pane: "8".to_string(),
+        };
+        assert_eq!(split.name(), "paneSplit");
+        assert!(
+            split.payload().contains("\"tab\":0") && split.payload().contains("\"pane\":\"8\""),
+            "{}",
+            split.payload()
+        );
+    }
+
+    #[test]
+    fn a_handler_is_called_for_the_bell_and_pane_events() {
+        let (_temp, dir) = extension(
+            r#"
+            winter.events.on("bell", () => winter.app.log("bell"));
+            winter.events.on("paneSplit", (event) => winter.app.log("split " + event.pane));
+            "#,
+            &[],
+        );
+        let (mut engine, _logs) = load(&dir);
+        let mut host = Recorder::default();
+        engine.emit(&mut host, &Event::Bell);
+        engine.emit(
+            &mut host,
+            &Event::PaneSplit {
+                tab: 0,
+                pane: "8".to_string(),
+            },
+        );
+        assert_eq!(engine.take_logs(), ["test.fixture: bell", "test.fixture: split 8"]);
     }
 
     #[test]

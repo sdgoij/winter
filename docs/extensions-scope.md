@@ -45,7 +45,7 @@ That choice is the one both reference projects made:
 Winter differs from Goats in one place: the entry is an ES module rather than a
 wrapped script, so a multi-file extension needs neither a bundler nor a global
 wrapper. Goats parked module syntax as a possible v2; Slag already has source
-text module records, so the cost here is one flat resolver rather than a syntax
+text module records, so the cost here is one host resolver rather than a syntax
 design.
 
 ## The ergonomic difference
@@ -55,7 +55,7 @@ The Goat and Noctis globals are flat bags of members. The Winter global is
 than like a dump of functions:
 
 ```js
-import { summarize } from "./util.js";   // a sibling file, resolved flat
+import { summarize } from "./util.js";   // a sibling file, resolved from this file
 
 winter.events.on("commandFinished", (event) => { ... });
 winter.commands.add("git.status", "Git status", () => { ... });
@@ -67,6 +67,8 @@ winter.panes.history(5000, (text) => { ... });   // the whole scrollback, contin
 winter.panes.send("ls\n")     // into the focused pty
 winter.tabs.list()            // [{ index, title, active, panes }]
 winter.tabs.select(2)
+winter.tabs.open()
+winter.tabs.close(2)
 
 winter.app.notify("Winter", "done");   // a desktop notification
 winter.app.clipboard.write(text);
@@ -81,7 +83,7 @@ winter.assets.bytes("icon")            // its bytes, as a fresh Uint8Array
 | `winter.events` | `on(name, handler)` → unsubscribe; the names are the table below |
 | `winter.commands` | `add(id, label, handler)` → a command palette row; `run(id)` |
 | `winter.panes` | the focused pane's identity, text, scrollback and pty writes |
-| `winter.tabs` | the tab list, selection, and open/close |
+| `winter.tabs` | the tab list, selection, and opening or closing a tab |
 | `winter.app` | notifications, clipboard, URLs and logging |
 | `winter.assets` | a manifest-declared asset's opaque name |
 | `winter.extension` | this extension's `{ id, name, version }`; `winter.api` |
@@ -93,11 +95,16 @@ so a new one is an additive change within an `api` major.
 
 | Source | Event |
 |---|---|
-| `Control::take_events` (`TerminalEvent`) | `Bell`, `notification`, `paneExited` |
+| `Control::take_events` (`TerminalEvent`) | `bell`, `notification { title, body }`, `paneExited { tab, pane }` |
 | `Control::scroll_facts` / `MarkTick` (ADR 059) | `commandFinished { row, error }` when a new mark appears |
 | `Control::title` | `titleChanged { title }` |
-| The shell's tab/pane commands | `tabOpened`, `tabClosed`, `paneFocused`, `paneSplit` |
+| The shell's tab/pane commands | `tabOpened { index }`, `tabClosed { index }`, `paneFocused`, `paneSplit { tab, pane }` |
 | `Shell::poll_settings` | `settingsReloaded` |
+
+`paneExited` and `paneSplit` name the pane with the same identifier
+`panes.focused()` reports; `paneSplit`'s is the new pane. An extension cannot
+close the last tab — that is the window — so `tabs.close` answers by leaving it
+alone and logging the refusal.
 
 Events are **observations**: handlers run after the shell has acted, so a slow or
 broken extension cannot change the terminal's own behaviour. The parked "bugs"
@@ -220,10 +227,11 @@ structured data — `.json` files register as JSON modules — and binary assets
 stay opaque `winter.assets` names.
 
 The identity is `winter.extension` (`{ id, name, version }`) plus `winter.api`,
-not `import.meta`. Slag's `initialize_import_meta_object` hook hands the host the
-engine's internal value types, which the embedding surface does not export, so a
-host cannot fill `import.meta` from outside; if a typed hook arrives,
-`import.meta.extension` is an additive addition rather than a rename.
+and `import.meta` is still empty. Slag's hook now hands the host its embed types
+(`JsModule`, `JsObject`) and a property setter, so flat properties such as
+`import.meta.url` could be filled; a nested identity object would need an
+allocator the hook does not receive. If that lands, `import.meta.extension` is an
+additive addition rather than a rename.
 
 Top-level `await` is legal. The host drains the job queue after evaluation and
 installs no timers, so a module can only await promises that are already
@@ -284,7 +292,7 @@ refuses invalid UTF-8, so a module cannot make it read out of bounds, and a
 module that answers a non-zero status is reported like a throwing handler.
 
 **A compiled module reads the same picture a script handler is handed.**
-`snapshot` writes the JSON of `{ tabs, focused, text }` — the exact payload
+`snapshot` writes the JSON of `{ tabs, focused, text, history }` — the exact payload
 `winter.panes`, `winter.tabs.list` and the event handlers see — and answers the
 length it needs rather than the length it wrote, so a module asks with an empty
 buffer, calls `winter_alloc(len)`, and asks again: the `snprintf` convention, and
@@ -301,9 +309,9 @@ for a name the manifest does not declare, so an empty asset and a missing one
 are different answers. The host reads the bytes once at load rather than inside a
 callback, capped per asset and in total, so a file that grows or vanishes later
 is an extension that does not load rather than a trap in a handler. A script
-extension still sees only the opaque name from `winter.assets`: it has no use for
-the bytes yet, and the name is what keeps a path — and so the filesystem — out of
-extension code.
+extension reads the same bytes with `winter.assets.bytes(name)` (a fresh copy)
+and names an asset with `winter.assets.get(name)`; neither ever carries a path,
+and so the filesystem stays out of extension code.
 
 Failure isolation: `HostCallbacks` reports `console` output and unhandled
 rejections against the extension's id; a throw inside a handler is caught by the
@@ -373,9 +381,10 @@ copyable enum.
 2. Its `host` feature — the `winter` global, the module loader (registration,
    specifier validation), event and command dispatch, and a headless suite
    driving multi-file fixture extensions through Slag.
-3. macOS — `Host for Shell`, the palette arm, `commandFinished`,
-   `titleChanged`, `paneFocused`, `tabOpened`, `tabClosed` and
-   `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
+3. macOS — `Host for Shell` (including opening and closing tabs from a handler),
+   the palette arm, `commandFinished`, `titleChanged`, `paneFocused`,
+   `tabOpened`, `tabClosed`, `bell`, `notification`, `paneExited`, `paneSplit`
+   and `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
    script notifier and a compiled one.
 4. The extensions window (`⌘⇧E`): every extension on disk with a switch, the
    master switch that turns the engine on, and the reason a row is not running.

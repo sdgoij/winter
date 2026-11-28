@@ -72,6 +72,12 @@ pub trait Host {
     fn history(&mut self, lines: usize) -> String;
     /// Select the tab at `index`, if it exists.
     fn select_tab(&mut self, index: usize);
+    /// Open a new tab on the shell's default profile, made active. `false` when
+    /// the shell could not start one.
+    fn open_tab(&mut self) -> bool;
+    /// Close the tab at `index`, if it exists and is not the last one. `false`
+    /// when nothing was closed; an extension cannot end the window.
+    fn close_tab(&mut self, index: usize) -> bool;
     /// Write `text` into the focused pane's pty.
     fn send_text(&mut self, text: &str);
     /// Put `text` on the clipboard.

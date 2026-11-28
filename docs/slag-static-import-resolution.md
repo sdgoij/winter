@@ -263,33 +263,23 @@ file once to report an unregistered import at load rather than at first
 evaluation. A bare specifier and one that climbs out of the root are refused at
 load with the rule spelled out, and importing the entry is refused by name.
 
-## Two smaller asks, from the same integration
+## What the engine adopted
 
-1. **`initialize_import_meta_object` is unreachable from the embed surface.** The
-   hook receives `crate::api::Module` and `crux::value::Value`, and neither
-   `crux` nor a property setter on a raw `Value` is exported. A host therefore
-   cannot fill `import.meta` at all. Handing the hook the embed types
-   (`&JsModule`, `&JsObject`) — or re-exporting a typed setter — would make
-   `import.meta.extension` possible.
-2. **`Agent::add_module` is documented as a test/CLI hook** while being the only
-   way to register a module, reached through `Context::agent_mut()`. A
-   `Context::add_module_source(specifier, bytes)` (with the module kind, for JSON
-   and text) would make that a supported embedding API rather than a dependency on
-   an internal hook.
-3. **`JsModule` has no `stalled_top_level_await_modules`**, which `api::Module`
-   does. A host judges a module's evaluation by its promise today; exposing the
-   same question on `JsModule` would let it ask directly.
+All three smaller asks from this integration landed:
 
-## Open questions for the engine author
+1. **`initialize_import_meta_object` takes the embed types.** The hook receives
+   `&JsModule` and `&JsObject`, and `JsObject::set` is public, so a host can fill
+   `import.meta`. A nested identity object would need an allocator the hook does
+   not receive, so Winter leaves `import.meta` empty and carries the identity on
+   `winter.extension`.
+2. **`Context::add_module_source(specifier, bytes, kind)`** replaced
+   `Agent::add_module` in the loader; `ModuleSourceKind` selects JS, JSON, text or
+   bytes.
+3. **`JsModule::stalled_top_level_await_modules`** exists, and Winter uses it to
+   name the modules a stuck evaluation waits on instead of reporting only that
+   the promise never settled.
 
-- Name: `resolve_imported_specifier` (proposal) against
-  `host_resolve_specifier` or `resolve_module_name`.
-- Should the hook also see the import attributes and phase, for a host that maps
-  `./data` differently by `with { type: "json" }`? Proposal A says no, so that a
-  resolver stays a pure name mapping; adding the parameters later is additive for
-  the trait's default method.
-- Should `Context::register_module` (the embed surface's eager registration) also
-  be consulted after resolution? Today it writes `realm.loaded_modules` directly;
-  with the hook, a host could register under resolved keys and never need it.
-- Whether to keep `Agent::add_module`'s name or fold it into the `Context` API
-  once (2) exists.
+The questions this proposal left open were settled as proposed:
+`resolve_imported_specifier` kept its name, the hook maps names only (it does not
+see attributes or phase), `Context::register_module` is unchanged, and
+`Agent::add_module` stays while `add_module_source` is the supported path.
