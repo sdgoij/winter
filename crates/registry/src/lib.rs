@@ -1,11 +1,13 @@
-//! The extension registry: schema, validation, fetching and the rows a shell
-//! searches.
+//! The extension registry: schema, validation, fetching, installation and the
+//! rows a shell searches.
 //!
 //! A registry is one static TOML document at an HTTPS URL (ADR 088). The schema
 //! and its validation are pure; [`fetch`] is the only part that names a network
 //! transport, and [`Job`] moves it off the UI thread with a channel polled from
-//! the tick. The crate names no window and no engine, so an embedding can use
-//! the schema without a registry view.
+//! the tick. [`install`] verifies an archive against the registry and places it
+//! beside the settings file, and [`provenance`] says where a directory came
+//! from. The crate names no window and no engine, so an embedding can use the
+//! schema without a registry view.
 //!
 //! The schema is strict — an unknown key is an error — so a typo is reported
 //! instead of silently ignored, exactly as the extension manifest is. A source
@@ -16,11 +18,16 @@ use std::collections::HashSet;
 
 mod fetch;
 mod index;
+mod install;
 mod job;
 mod schema;
 
 pub use fetch::{DEFAULT_URL, Error as FetchError, Fetched, Fetcher, Network, cache_path, cached_at, load};
 pub use index::{Index, Loaded, Row};
+pub use install::{
+    ARCHIVE_MAX, Error as InstallError, Installed, PROVENANCE, Provenance, install, provenance, uninstall,
+    uninstall_any,
+};
 pub use job::{Job, State};
 pub use schema::{
     Archive, DEPENDENCIES_MAX, DESCRIPTION_MAX, EXTENSIONS_MAX, Error, Extension, FILE_MAX, HOMEPAGE_MAX, LICENSE_MAX,

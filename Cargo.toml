@@ -82,6 +82,10 @@ serde_json = "1"
 semver = { version = "1", features = ["serde"] }
 sha2 = "0.10"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Archive extraction for a registry install. Stored and deflate only, so no
+# bzip2, lzma, zstd or AES and their licence surface (ADR 088). The zlib-rs
+# backend keeps deflate pure Rust, so no platform needs a C toolchain.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # The engine the extension host runs on. `docs/extensions-scope.md` records the
 # choice; the revision is pinned and `Cargo.lock` is the lock, as for any git
 # dependency.

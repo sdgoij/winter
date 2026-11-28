@@ -410,8 +410,18 @@ copyable enum.
    one worker per URL and is polled from the tick; a failed or malformed fetch
    answers the cached copy with the reason attached. Nothing fetches until the
    Search panel is opened.
+7. Archive installation — a release's `.zip` is fetched under a 64 MiB cap and
+   hashed against the registry's checksum, then unpacked into a hidden
+   `extensions/.staging/` tree with `..`, absolute names and symlinks refused
+   and the unpacked bytes capped. The staged manifest must repeat the row's id,
+   version and `api`; only then is the tree renamed into `extensions/<id>/`, with
+   a `winter-installed.toml` beside the manifest recording the registry,
+   release, archive and checksum. An update moves the old copy aside first; a
+   directory with no provenance file, or one from another registry, is refused
+   rather than replaced. `uninstall` removes only what a registry wrote, and
+   `uninstall_any` is the explicit override.
 
-What is not here: archive installation, the Search/Installed screens and the
+What is not here: the Search/Installed screens and the
 live engine reload ADR 088 calls for; and a continuation form for a compiled
 module's history — it reads the bounded walk through its typed accessor instead. `cargo test -p extensions --features host`,
 `cargo test -p registry`, `cargo test -p winter-cocoa`, `cargo test -p
