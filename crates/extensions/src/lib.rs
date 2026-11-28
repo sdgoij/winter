@@ -4,8 +4,9 @@
 //! `docs/extensions-scope.md` is the working record of the surface. In short:
 //! an extension is a directory with an `extension.toml` and an ES module entry,
 //! evaluated in its own `slag::Context` with a `winter` global built from host
-//! functions. This crate is the loader half (`manifest`, `discover`) and it sees
-//! no workspace crate and no window, so it can be unit-tested with neither.
+//! functions. This crate is the loader half (`manifest`, `discover`, `watch`) and
+//! it sees no workspace crate and no window, so it can be unit-tested with
+//! neither.
 //!
 //! The shell implements [`Host`]. That trait is the *internal* half of the
 //! contract — never exposed to extensions — and it is what keeps the core
@@ -15,11 +16,13 @@ pub mod discover;
 #[cfg(feature = "host")]
 pub mod host;
 pub mod manifest;
+pub mod watch;
 
 pub use discover::{Loaded, Options, Report, Skipped, Source, discover};
 #[cfg(feature = "host")]
 pub use host::{Command, Engine, Event};
 pub use manifest::Manifest;
+pub use watch::Stamps;
 
 /// A tab as an extension sees it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

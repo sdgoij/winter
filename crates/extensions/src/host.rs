@@ -21,7 +21,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use slag::{Context, HostCallbacks, JsError, JsValue, PromiseState};
 
-use crate::{Host, Loaded, manifest};
+use crate::{Host, Loaded, Report, manifest};
 
 /// How many queued command runs (across extensions) one dispatch may perform.
 const HOPS_MAX: usize = 8;
@@ -391,6 +391,23 @@ impl Engine {
             commands: Vec::new(),
         });
         Ok(())
+    }
+
+    /// Loads every extension in `report` and freezes the result.
+    ///
+    /// Returns the engine and the extensions that failed to load. A failure
+    /// skips that extension and leaves the rest running, which is what a reload
+    /// owes a user who broke one file (ADR 088).
+    pub fn load_all(report: &Report) -> (Self, Vec<Error>) {
+        let mut engine = Self::default();
+        let mut failures = Vec::new();
+        for loaded in &report.loaded {
+            if let Err(error) = engine.load(loaded) {
+                failures.push(error);
+            }
+        }
+        engine.freeze();
+        (engine, failures)
     }
 
     /// Close registration in every extension and read what each one added.
@@ -1698,6 +1715,44 @@ mod tests {
         engine.freeze();
         let logs = engine.take_logs();
         (engine, logs)
+    }
+
+    #[test]
+    fn a_broken_extension_is_reported_and_the_rest_load() {
+        let temp = tempfile::tempdir().expect("temp");
+        let broken = temp.path().join("a.broken");
+        std::fs::create_dir_all(&broken).expect("dir");
+        write(
+            &broken,
+            "extension.toml",
+            "id = \"a.broken\"\nname = \"Broken\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n",
+        );
+        write(&broken, "main.js", "this is not javascript");
+
+        let good = temp.path().join("b.good");
+        std::fs::create_dir_all(&good).expect("dir");
+        write(
+            &good,
+            "extension.toml",
+            "id = \"b.good\"\nname = \"Good\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n",
+        );
+        write(
+            &good,
+            "main.js",
+            "winter.commands.add(\"greet\", \"Greet\", () => {});\n",
+        );
+
+        let report = discover(&Options {
+            roots: vec![temp.path().to_path_buf()],
+            disabled: Vec::new(),
+        });
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+
+        let (engine, failures) = Engine::load_all(&report);
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].id, "a.broken");
+        assert_eq!(engine.commands().len(), 1);
     }
 
     #[test]

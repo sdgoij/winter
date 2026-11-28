@@ -1507,6 +1507,7 @@ impl Shell {
         if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
             self.settings_at = now;
             settings_reloaded = self.poll_settings();
+            self.watch_extensions();
         }
 
         if !exited.is_empty() {
@@ -1577,6 +1578,7 @@ impl Shell {
             return;
         }
 
+        let previous = self.document.extensions.clone();
         self.document = loaded.settings;
         self.settings_path = loaded.path;
         self.settings_error = None;
@@ -1605,6 +1607,12 @@ impl Shell {
                     pane.control.apply_scheme(scheme.as_ref());
                 }
             }
+        }
+        // A changed `[extensions]` table rebuilds the engine without a restart
+        // (ADR 088). A refused table never reaches here, so a half-written file
+        // leaves the running engine alone.
+        if self.document.extensions != previous {
+            self.reload_extensions();
         }
         self.after_select();
     }

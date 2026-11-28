@@ -6,6 +6,11 @@
 //! set it to `0` to keep the engine off, to anything else to force it on.
 //! `WINTER_EXTENSIONS` adds a discovery root beside the standard ones.
 //!
+//! The engine is rebuilt without a restart when the `[extensions]` table
+//! changes, when the switches are saved, and when a screen installs or removes a
+//! directory. `[extensions] watch = true` (or `WINTER_WATCH` for one run) also
+//! rebuilds when a file the loader read changes (ADR 088).
+//!
 //! Reads go through [`Host`] before a handler runs; writes are queued by the
 //! engine and applied when it returns. The shell therefore never lets an
 //! extension re-enter it mid-frame, and the engine is moved out of the field
@@ -97,6 +102,9 @@ pub(crate) fn installed(roots: Vec<PathBuf>, disabled: &[String], failures: &[(S
 pub(crate) struct Extensions {
     engine: extensions::Engine,
     /// How many marks each pane had at its last report.
+    ///
+    /// A reload keeps this, so `commandFinished` history is not replayed to an
+    /// extension that was already told about it (ADR 088).
     marks: HashMap<u64, usize>,
     /// The pane whose focus was last reported.
     focused: Option<PaneId>,
@@ -104,6 +112,10 @@ pub(crate) struct Extensions {
     title: Option<String>,
     /// The extensions that did not load, and why, for the window.
     failures: Vec<(String, String)>,
+    /// Whether the opt-in file watcher runs.
+    watch: bool,
+    /// When each file the engine was built from last changed.
+    stamps: extensions::Stamps,
 }
 
 impl Extensions {
@@ -115,32 +127,33 @@ impl Extensions {
         if !enabled(settings.enabled) {
             return None;
         }
-        let report = extensions::discover(&extensions::Options {
-            roots: roots(),
-            disabled: settings.disabled.clone(),
-        });
-        let mut engine = extensions::Engine::default();
-        let mut failures = Vec::new();
-        for loaded in &report.loaded {
-            if let Err(error) = engine.load(loaded) {
-                eprintln!("winter: extension {error}");
-                failures.push((error.id.clone(), error.message.clone()));
-            }
-        }
-        engine.freeze();
-        for line in engine.take_logs() {
-            eprintln!("winter: {line}");
-        }
-        for skipped in &report.skipped {
-            eprintln!("winter: skipped {}: {}", skipped.path.display(), skipped.reason);
-        }
+        let (engine, failures, stamps) = build(settings);
         Some(Self {
             engine,
             marks: HashMap::new(),
             focused: None,
             title: None,
             failures,
+            watch: watching(settings.watch),
+            stamps,
         })
+    }
+
+    /// Rebuilds the engine from `settings` without a restart (ADR 088).
+    ///
+    /// The marks the shell already reported survive; the focus and title are
+    /// forgotten so the new engine observes the current pane once. An extension
+    /// that no longer loads is logged and skipped, and the rest keep running.
+    fn rebuild(&mut self, settings: &settings::Extensions) {
+        // Drop the old realms before the tree is read again.
+        self.engine = extensions::Engine::default();
+        let (engine, failures, stamps) = build(settings);
+        self.engine = engine;
+        self.failures = failures;
+        self.watch = watching(settings.watch);
+        self.stamps = stamps;
+        self.focused = None;
+        self.title = None;
     }
 
     /// Every command the loaded extensions registered.
@@ -193,6 +206,33 @@ impl Shell {
         if self.extensions.is_none() {
             let settings = self.settings().extensions.clone();
             self.extensions = Extensions::start(&settings);
+        }
+    }
+
+    /// Rebuilds the live engine from the settings the shell currently holds.
+    ///
+    /// Called when the `[extensions]` table changes, after the switches are
+    /// saved, and by a screen that installed or removed a directory (ADR 088).
+    pub(crate) fn reload_extensions(&mut self) {
+        let settings = self.settings().extensions.clone();
+        if !enabled(settings.enabled) {
+            self.extensions = None;
+            return;
+        }
+        match &mut self.extensions {
+            Some(holder) => holder.rebuild(&settings),
+            None => self.extensions = Extensions::start(&settings),
+        }
+    }
+
+    /// Rebuilds when a watched file changed. A no-op unless the table asked.
+    pub(crate) fn watch_extensions(&mut self) {
+        let changed = self
+            .extensions
+            .as_mut()
+            .is_some_and(|holder| holder.watch && holder.stamps.changed());
+        if changed {
+            self.reload_extensions();
         }
     }
 
@@ -365,6 +405,42 @@ fn enabled(configured: bool) -> bool {
         Some(_) => true,
         None => configured,
     }
+}
+
+/// Whether the opt-in file watcher runs: `WINTER_WATCH` forces it on or off for
+/// one run, otherwise the file decides (ADR 088).
+fn watching(configured: bool) -> bool {
+    match std::env::var_os("WINTER_WATCH") {
+        Some(value) if value == "0" => false,
+        Some(_) => true,
+        None => configured,
+    }
+}
+
+/// Builds a frozen engine from `settings`, logging what it read.
+///
+/// A broken extension is logged and skipped: the window opens either way,
+/// because an extension must never be able to stop the terminal.
+fn build(settings: &settings::Extensions) -> (extensions::Engine, Vec<(String, String)>, extensions::Stamps) {
+    let roots = roots();
+    let report = extensions::discover(&extensions::Options {
+        roots: roots.clone(),
+        disabled: settings.disabled.clone(),
+    });
+    let (mut engine, errors) = extensions::Engine::load_all(&report);
+    let mut failures = Vec::new();
+    for error in errors {
+        eprintln!("winter: extension {error}");
+        failures.push((error.id, error.message));
+    }
+    for line in engine.take_logs() {
+        eprintln!("winter: {line}");
+    }
+    for skipped in &report.skipped {
+        eprintln!("winter: skipped {}: {}", skipped.path.display(), skipped.reason);
+    }
+    let stamps = extensions::Stamps::of(&report, &roots);
+    (engine, failures, stamps)
 }
 
 /// The roots discovery reads, in priority order: the explicit list, the user's

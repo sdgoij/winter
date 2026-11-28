@@ -756,6 +756,7 @@ impl Shell {
         if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
             self.settings_at = now;
             settings_reloaded = self.poll_settings();
+            self.watch_extensions();
         }
 
         // Extensions observe the window after it has acted: the marks this
@@ -879,6 +880,7 @@ impl Shell {
             return;
         }
 
+        let previous = self.settings.extensions.clone();
         self.settings = loaded.settings;
         self.profiles = self.settings.profiles.clone();
         self.settings_path = loaded.path;
@@ -902,6 +904,12 @@ impl Shell {
                 }
             }
         }
+        // A changed `[extensions]` table rebuilds the engine without a restart
+        // (ADR 088). A refused table never reaches here, so a half-written file
+        // leaves the running engine alone.
+        if self.settings.extensions != previous {
+            self.reload_extensions();
+        }
     }
 
     /// Writes a document and reloads it, returning the writer's error.
@@ -919,16 +927,15 @@ impl Shell {
         }
     }
 
-    /// Writes the `[extensions]` table, then re-reads the file.
-    ///
-    /// Loading itself does not change: an extension is switched by the next
-    /// start, because dropping a live realm is not a reload.
+    /// Writes the `[extensions]` table, re-reads the file, and rebuilds the
+    /// engine now (ADR 088).
     pub(crate) fn save_extensions(&mut self, enabled: bool, disabled: Vec<String>) -> Result<(), String> {
         self.settings.extensions.enabled = enabled;
         self.settings.extensions.disabled = disabled;
         match settings::save(&self.settings) {
             Ok(()) => {
                 self.reload_settings();
+                self.reload_extensions();
                 Ok(())
             }
             Err(error) => {

@@ -397,8 +397,7 @@ copyable enum.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
-   the `[extensions]` table; until ADR 088's live reload lands, loading changes
-   on the next start.
+   the `[extensions]` table and rebuilds the engine at once.
 5. `crates/registry` — the strict registry schema: semver releases, a tagged
    source union whose one implemented adapter is a checksummed archive, the
    per-release `api`, and the caps; the merged search index that keeps the same
@@ -420,12 +419,22 @@ copyable enum.
    directory with no provenance file, or one from another registry, is refused
    rather than replaced. `uninstall` removes only what a registry wrote, and
    `uninstall_any` is the explicit override.
+8. Live reload — the engine is rebuilt (old realms dropped, discovery re-run, a
+   frozen engine swapped in) when the `[extensions]` table changes, when a
+   switch is saved, when a screen installs or removes a directory, and — with
+   `[extensions] watch = true` or `WINTER_WATCH` for one run — when a file the
+   loader read changes. `Stamps` in `crates/extensions` is that opt-in watcher:
+   a per-second metadata poll over the roots and the loaded manifests, entries,
+   modules and assets. A reload keeps the marks the shell already reported, so
+   `commandFinished` is not replayed, resets the focus and title so the new
+   engine sees the current pane once, and logs and skips an extension that no
+   longer loads while the rest keep running.
 
-What is not here: the Search/Installed screens and the
-live engine reload ADR 088 calls for; and a continuation form for a compiled
-module's history — it reads the bounded walk through its typed accessor instead. `cargo test -p extensions --features host`,
-`cargo test -p registry`, `cargo test -p winter-cocoa`, `cargo test -p
-winter-winui` and `cargo test -p winter-gtk4` are the suites.
+What is not here: the Search/Installed screens; and a continuation form for a
+compiled module's history — it reads the bounded walk through its typed accessor
+instead. `cargo test -p extensions --features host`, `cargo test -p registry`,
+`cargo test -p winter-cocoa`, `cargo test -p winter-winui` and `cargo test -p
+winter-gtk4` are the suites.
 
 ## Open questions
 

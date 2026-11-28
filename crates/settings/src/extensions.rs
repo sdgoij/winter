@@ -9,16 +9,21 @@ use serde::{Deserialize, Serialize};
 /// may have been uninstalled — so nothing here is checked against what is on
 /// disk; discovery reports an identifier that matched nothing it found.
 ///
-/// Both switches are read when the window opens, so a change takes effect on the
-/// next start, not the next settings reload: unloading code that holds
-/// registrations is a different operation from re-reading a document. The
-/// chords are read with the rest of the file and take effect immediately.
+/// Both switches are read when the window opens and again whenever a running
+/// shell sees the file change; a change rebuilds the engine without a restart
+/// (ADR 088). The chords are read with the rest of the file and take effect
+/// immediately.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Extensions {
     /// Whether the shell loads extensions at all. Off by default: the feature
     /// is new, and `WINTER_EXT` overrides this for one run either way.
     pub enabled: bool,
+    /// Whether a running shell re-reads extension files when they change on
+    /// disk. Off by default: an install and a switch rebuild without it, and a
+    /// watcher costs a metadata poll per second. `WINTER_WATCH` overrides this
+    /// for one run.
+    pub watch: bool,
     /// Identifiers the shell skips.
     pub disabled: Vec<String>,
     /// Chords that run an extension command directly.
@@ -61,6 +66,7 @@ mod tests {
     fn an_absent_table_disables_nothing() {
         let extensions = Extensions::default();
         assert!(!extensions.enabled);
+        assert!(!extensions.watch);
         assert!(extensions.disabled.is_empty());
         assert!(!extensions.is_disabled("com.example.x"));
     }
@@ -71,6 +77,7 @@ mod tests {
             r#"
             [extensions]
             enabled = true
+            watch = true
             disabled = ["com.example.noisy", "org.example.chatty"]
 
             [[extensions.commands]]
@@ -80,6 +87,7 @@ mod tests {
         )
         .expect("settings");
         assert!(parsed.extensions.enabled);
+        assert!(parsed.extensions.watch);
         assert_eq!(parsed.extensions.disabled, ["com.example.noisy", "org.example.chatty"]);
         assert!(parsed.extensions.is_disabled("org.example.chatty"));
         assert!(!parsed.extensions.is_disabled("com.example.quiet"));
@@ -121,6 +129,7 @@ mod tests {
         assert!(text.contains("[extensions]"), "{text}");
         let written = crate::parse(&text).expect("reads back");
         assert!(!written.extensions.enabled);
+        assert!(!written.extensions.watch);
         assert!(written.extensions.disabled.is_empty());
         assert!(written.extensions.registries.is_none());
     }
