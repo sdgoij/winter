@@ -1,10 +1,12 @@
 # Extensions — scope and shape
 
 Status: the loader (`crates/extensions`: `manifest`, `discover`), the `host`
-feature, and a `Host` plus extensions screen in each native shell — macOS, WinUI
-and GTK — are implemented, behind `WINTER_EXT=1`. This records the exploration
-of the Goat and Noctis systems and the surface this repository offers; ADR 086
-is the decision.
+feature, a `Host` plus extensions screen in each native shell — macOS, WinUI
+and GTK — and the registry schema and search index (`crates/registry`) are
+implemented, behind `WINTER_EXT=1`. Fetching a registry, installing an archive
+and the Search/Installed screens are the next slice (ADR 088). This records the
+exploration of the Goat and Noctis systems and the surface this repository
+offers; ADR 086 is the host decision and ADR 088 the registry and install one.
 Related: ADRs 038 and 080 (the shell split), ADR 082 (the embedding surface), ADR
 083 (the frame server) and ADR 084 (the Node addon) for the host boundary;
 `docs/plan.md`'s parked chaos layer for the "bugs", which are a separate surface
@@ -181,15 +183,17 @@ icon = "assets/icon.png"
 ```
 
 An extension may have `entry`, `module`, both, or neither (a data-only extension
-of assets). There is no script/module switch: `entry` is always an ES module,
+of assets). `version` is semver — `major.minor.patch`, with optional prerelease
+and build metadata — and a registry release must repeat it exactly. There is no
+script/module switch: `entry` is always an ES module,
 and every other `.js` or `.json` file under the directory is importable beside
 it, at any depth. Discovery, in order, is the union of: an explicit
 directory (CLI or `$WINTER_EXTENSIONS`), the user's config directory, and
 `extensions/` beside the executable or in the working directory. Enablement is
 the settings file's `[extensions]` table: `enabled` turns the engine on at all,
 and `disabled` lists the identifiers to skip. The table is read when the window
-opens, so a change applies on the next start, and the extensions window writes
-it. The loader validates ids and paths, caps the manifest,
+opens; until ADR 088's live reload lands, a change applies on the next start,
+and the extensions window writes it. The loader validates ids and paths, caps the manifest,
 each JavaScript file and their total, the wasm module and the assets, and
 refuses a path that escapes the extension's directory; a broken extension is
 reported and skipped, never fatal.
@@ -392,12 +396,20 @@ copyable enum.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
-   the `[extensions]` table; loading changes on the next start.
+   the `[extensions]` table; until ADR 088's live reload lands, loading changes
+   on the next start.
+5. `crates/registry` — the strict registry schema: semver releases, a tagged
+   source union whose one implemented adapter is a checksummed archive, the
+   per-release `api`, and the caps; plus the merged search index that keeps the
+   same identifier from two registries as two rows. Pure Rust, no network, no
+   engine.
 
-What is not here: a continuation form for a compiled module's history — it
-reads the bounded walk through its typed accessor instead. ADR 086 records the
-surface; `cargo test -p extensions --features host`, `cargo test -p winter-cocoa`,
-`cargo test -p winter-winui` and `cargo test -p winter-gtk4` are the suites.
+What is not here: fetching a registry, its cache, archive installation, the
+Search/Installed screens and the live engine reload ADR 088 calls for; and a
+continuation form for a compiled module's history — it reads the bounded walk
+through its typed accessor instead. `cargo test -p extensions --features host`,
+`cargo test -p registry`, `cargo test -p winter-cocoa`, `cargo test -p
+winter-winui` and `cargo test -p winter-gtk4` are the suites.
 
 ## Open questions
 

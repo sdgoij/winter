@@ -1676,7 +1676,7 @@ mod tests {
         write(
             &dir,
             "extension.toml",
-            "id = \"test.fixture\"\nname = \"Fixture\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n",
+            "id = \"test.fixture\"\nname = \"Fixture\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n",
         );
         write(&dir, "main.js", entry);
         for (name, text) in files {
@@ -1918,7 +1918,7 @@ mod tests {
             write(
                 &path,
                 "extension.toml",
-                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n"),
+                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n"),
             );
             write(&path, "main.js", body);
         }
@@ -2101,7 +2101,7 @@ mod tests {
             write(
                 &path,
                 "extension.toml",
-                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n"),
+                &format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n"),
             );
             write(&path, "main.js", body);
         }
@@ -2146,7 +2146,7 @@ mod tests {
         );
         let (_engine, logs) = load(&dir);
         assert!(
-            logs.iter().any(|line| line.ends_with("test.fixture@1 api 1")),
+            logs.iter().any(|line| line.ends_with("test.fixture@1.0.0 api 1")),
             "{logs:?}"
         );
     }
@@ -2162,7 +2162,7 @@ mod tests {
         write(
             &dir,
             "extension.toml",
-            "id = \"test.wasm\"\nname = \"Wasm\"\nversion = \"1\"\napi = 1\nmodule = \"extension.wasm\"\n",
+            "id = \"test.wasm\"\nname = \"Wasm\"\nversion = \"1.0.0\"\napi = 1\nmodule = \"extension.wasm\"\n",
         );
         std::fs::write(dir.join("extension.wasm"), wasm).expect("wasm");
         (temp, dir)
@@ -2265,7 +2265,7 @@ mod tests {
         write(
             &dir,
             "extension.toml",
-            "id = \"test.asset\"\nname = \"Asset\"\nversion = \"1\"\napi = 1\nmodule = \"extension.wasm\"\n\n[assets]\ngreeting = \"greeting.txt\"\n",
+            "id = \"test.asset\"\nname = \"Asset\"\nversion = \"1.0.0\"\napi = 1\nmodule = \"extension.wasm\"\n\n[assets]\ngreeting = \"greeting.txt\"\n",
         );
         std::fs::write(dir.join("extension.wasm"), &wasm).expect("wasm");
         std::fs::write(dir.join("greeting.txt"), "hello from an asset\n").expect("asset");

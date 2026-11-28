@@ -1,0 +1,24 @@
+# The shape of a published registry (ADR 088). The live default lives at
+# https://sdgoij.github.io/winter/extensions/registry.toml and is this file's
+# schema; the checksums here are placeholders until the archives are published.
+schema = 1
+name = "Winter extensions"
+updated = "2026-11-28"
+
+[[extensions]]
+id = "winter.failed-command"
+name = "Failed command"
+description = "Notifies when a command above the prompt exits non-zero."
+homepage = "https://github.com/sdgoij/winter"
+license = "MIT"
+tags = ["shell-integration", "notification"]
+
+  [[extensions.versions]]
+  version = "0.1.0"
+  api = 1
+  source = { type = "archive", url = "https://sdgoij.github.io/winter/extensions/winter.failed-command-0.1.0.zip", sha256 = "0000000000000000000000000000000000000000000000000000000000000000" }
+
+  [[extensions.versions]]
+  version = "0.2.0"
+  api = 1
+  source = { type = "archive", url = "https://sdgoij.github.io/winter/extensions/winter.failed-command-0.2.0.zip", sha256 = "1111111111111111111111111111111111111111111111111111111111111111", path = "failed-command" }

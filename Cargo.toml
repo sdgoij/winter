@@ -14,6 +14,7 @@ members = [
     "crates/audio",
     "crates/icon",
     "crates/extensions",
+    "crates/registry",
     "crates/winter",
     "crates/gtk4",
     "crates/cocoa",
@@ -42,7 +43,9 @@ publish = false
 # device and sees no workspace crate either (ADR 033). `extensions` is the
 # extension loader and, behind its `host` feature, the Slag host; it sees no
 # workspace crate, because a shell implements its `Host` trait and the core
-# never learns that extensions exist. `winter` is the
+# never learns that extensions exist. `registry` sits above `extensions` and
+# owns the static registry schema and the rows a shell searches; it names no
+# engine, no window and no network transport (ADR 088). `winter` is the
 # shell-independent core: it sees everything and is the only crate allowed to
 # (ADR 018). `gtk4`, `cocoa` and `winui` are the shells on top of it, one per
 # platform, `demo` is the embedding demo's host, and `app` is the binary that
@@ -62,6 +65,7 @@ server = { path = "crates/server" }
 settings = { path = "crates/settings" }
 audio = { path = "crates/audio" }
 extensions = { path = "crates/extensions" }
+registry = { path = "crates/registry" }
 winter = { path = "crates/winter" }
 
 arboard = "3"
@@ -75,6 +79,7 @@ notify-rust = "4"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = { version = "1", features = ["serde"] }
 # The engine the extension host runs on. `docs/extensions-scope.md` records the
 # choice; the revision is pinned and `Cargo.lock` is the lock, as for any git
 # dependency.

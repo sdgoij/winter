@@ -68,7 +68,7 @@ pub struct Manifest {
     pub id: String,
     /// The name a user sees.
     pub name: String,
-    /// The extension's own version, free-form.
+    /// The extension's own version, semver (`major.minor.patch`).
     pub version: String,
     /// The API major the extension was written for.
     pub api: u32,
@@ -119,6 +119,7 @@ impl Manifest {
         if self.version.trim().is_empty() {
             return Err(Error::Version);
         }
+        self.semver()?;
         if self.api == 0 {
             return Err(Error::ApiZero);
         }
@@ -166,6 +167,16 @@ impl Manifest {
             return Err(Error::Empty);
         }
         Ok(())
+    }
+
+    /// The manifest's version as semver, for a registry or an update check.
+    ///
+    /// [`validate`](Self::validate) already refuses anything else; this is the
+    /// same parse for a caller that holds a manifest built by hand.
+    pub fn semver(&self) -> Result<semver::Version, Error> {
+        semver::Version::parse(&self.version).map_err(|_| Error::NotSemver {
+            version: self.version.clone(),
+        })
     }
 }
 
@@ -280,6 +291,12 @@ pub enum Error {
     /// The version is empty.
     #[error("`version` is empty")]
     Version,
+    /// The version is not semver (`major.minor.patch`).
+    #[error("`version` {version:?} is not semver")]
+    NotSemver {
+        /// The version as written.
+        version: String,
+    },
     /// The extension asks for a major that does not exist.
     #[error("`api` is 0; the first major is 1")]
     ApiZero,
@@ -368,11 +385,21 @@ mod tests {
     }
 
     #[test]
+    fn the_version_is_semver() {
+        let short = FULL.replace("version = \"0.1.0\"", "version = \"1\"");
+        assert!(matches!(Manifest::parse(&short), Err(Error::NotSemver { .. })));
+
+        let prerelease = FULL.replace("version = \"0.1.0\"", "version = \"1.0.0-rc.1+build\"");
+        let manifest = Manifest::parse(&prerelease).expect("semver with a prerelease and build metadata");
+        assert_eq!(manifest.semver().expect("parsed").to_string(), "1.0.0-rc.1+build");
+    }
+
+    #[test]
     fn a_data_only_extension_needs_an_asset() {
         let no_assets = r#"
             id = "a.b"
             name = "B"
-            version = "1"
+            version = "1.0.0"
             api = 1
         "#;
         assert!(matches!(Manifest::parse(no_assets), Err(Error::Empty)));
@@ -380,7 +407,7 @@ mod tests {
         let data = r#"
             id = "a.b"
             name = "B"
-            version = "1"
+            version = "1.0.0"
             api = 1
 
             [assets]

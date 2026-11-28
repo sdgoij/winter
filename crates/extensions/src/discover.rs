@@ -505,7 +505,7 @@ mod tests {
     }
 
     fn manifest(id: &str, extra: &str) -> String {
-        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\nentry = \"main.js\"\n{extra}")
+        format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = 1\nentry = \"main.js\"\n{extra}")
     }
 
     /// An extension directory named after its id, with a one-line entry.

@@ -608,7 +608,7 @@ mod tests {
     fn extension(root: &Path, id: &str, entry: Option<&str>, module: Option<&str>) {
         let dir = root.join(id);
         std::fs::create_dir_all(&dir).expect("dir");
-        let mut manifest = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\n");
+        let mut manifest = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = 1\n");
         if let Some(entry) = entry {
             manifest.push_str(&format!("entry = \"{entry}\"\n"));
             write(&dir, entry, "export {};\n");
