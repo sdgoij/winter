@@ -19,6 +19,7 @@ change it without rediscovering the traps.
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
 | `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
+| `command_palette.rs` | The command palette's overlay card over `winter::palette` |
 | `../find.rs` | The query, matches and screen spans, shared with the other shells |
 | `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
 | `lib.rs` | Module boundary and `run()` |
@@ -292,6 +293,27 @@ PowerShell profile through `shell_integration::attach`, which appends
 - `start_prompt` and `start_command` make one mark per row and never merge into
   an adjacent one (ADR 060). Merged marks were a real bug: every tick reported
   the last command's status. `D` must reach exactly one command mark.
+
+## Command palette
+
+Ctrl+Shift+P toggles it (`WINTER_OPEN_PALETTE=1` opens it for the live check).
+The state is shared `winter::palette::Palette`; `command_palette.rs` draws the
+card, its filter field and the surviving rows. The rows are `Border`s with a
+press handler, not `Button`s, so the selected fill and the chord column stay
+together.
+
+- The card is an overlay in the pane's `Grid`, declared after the find bar and
+  menu so it paints above the terminal. It is centred horizontally with a
+  40-DIP top margin.
+- While it is open the pane's preview handler consumes Escape and returns false
+  for every other key, so the field types normally; the card's own preview
+  handles Enter and the arrows. The pane sends no key or character to the
+  terminal.
+- The field is an `ElementRef<TextBox>`; `Palette::focus` is retried in `tick`
+  because the card mounts a frame after it opens. Clicking outside the card
+  closes it.
+- `palette_rows` uses the merged profile list (file plus WSL), unlike
+  `palette::entries` on the file alone, so the palette matches the drop-down.
 
 ## Find bar
 

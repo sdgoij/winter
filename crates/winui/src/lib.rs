@@ -26,6 +26,7 @@ mod profile_icon;
 mod scrollbar;
 
 mod app;
+mod command_palette;
 mod menu;
 mod png;
 mod settings;

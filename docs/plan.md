@@ -1324,10 +1324,10 @@ profile by name. The rest of `src/cascadia` remains.
     the same rules as a toolkit-free module: a row per profile and per action
     the shell performs, each carrying the chord the file binds to it. The filter
     matches a label in any case, the arrows wrap the selection, Enter runs it
-    and Escape closes it. The GTK and macOS shells draw it as a card over the
-    pane (`WINTER_OPEN_PALETTE=1` for the live check); WinUI still declines the
-    action, which is its row. **Tests:** the rows and their chords, the filter,
-    the wrap and the open/close reset.
+    and Escape closes it. All three native shells draw it as a card over the
+    pane (`WINTER_OPEN_PALETTE=1` for the live check); WinUI's card is the
+    overlay beside the profile menu. **Tests:** the rows and their chords, the
+    filter, the wrap and the open/close reset.
 - [x] ~~`crates/winter/src/settings_editor.rs`~~ — Settings editor
   - Landed in `config.rs`: the settings window edits everything the schema
     holds — font size, the default profile and scheme, the profile list, the

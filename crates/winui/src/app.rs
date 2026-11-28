@@ -29,6 +29,7 @@ use windows_reactor::*;
 use winter::about;
 use winter::find::FindBar;
 use winter::input;
+use winter::palette::{self, Palette};
 use winter::scrollbar;
 use winter::session::Session;
 use winter::tabs::Tabs;
@@ -38,6 +39,7 @@ use winter::term_settings::TerminalSettings;
 use winter::terminal_render::TerminalData;
 use winter::view::View as ViewState;
 
+use super::command_palette;
 use super::gpu::GpuBackend;
 use super::icon;
 use super::menu::{self, MenuEntry};
@@ -176,6 +178,8 @@ struct Shell {
     settings_window: SettingsWindow,
     /// Whether the profile drop-down is showing.
     menu_open: bool,
+    /// The command palette's entries, filter and selection.
+    commands: Palette,
     /// Whether the About dialog is showing.
     about_open: bool,
     /// The title bar header's measured width in DIPs, so the menu hangs under
@@ -195,6 +199,7 @@ struct Shell {
     panel: ElementRef<SwapChainPanel>,
     focus: ElementRef<Border>,
     find_field: ElementRef<TextBox>,
+    palette_field: ElementRef<TextBox>,
     surface: Rc<RefCell<Option<Surface>>>,
     _observation: ElementObservation,
     timer: Option<ComponentTimer>,
@@ -298,6 +303,16 @@ pub(super) enum Message {
     MenuToggle,
     /// Hides the profile drop-down without acting on a row.
     MenuClose,
+    /// The command palette's filter changed.
+    PaletteQuery(String),
+    /// Moves the palette's selection.
+    PaletteStep(bool),
+    /// Runs the palette's selected row.
+    PaletteRun,
+    /// Runs the palette row at this filtered index.
+    PaletteChoose(usize),
+    /// Closes the palette.
+    PaletteClose,
     /// Opens a tab on the named profile.
     MenuProfile(String),
     /// Opens the settings dialog from the drop-down.
@@ -412,7 +427,7 @@ impl Component for Shell {
             f64::from(cell.1) * f64::from(INITIAL_ROWS as u16),
         );
 
-        Self {
+        let mut shell = Self {
             tabs: Tabs::new(tab),
             next_tab: 1,
             template,
@@ -421,6 +436,7 @@ impl Component for Shell {
             profiles,
             settings_window,
             menu_open: false,
+            commands: Palette::default(),
             about_open: false,
             header_width: 0.0,
             header,
@@ -433,6 +449,7 @@ impl Component for Shell {
             panel,
             focus: ElementRef::<Border>::new(),
             find_field: ElementRef::<TextBox>::new(),
+            palette_field: ElementRef::<TextBox>::new(),
             surface,
             _observation: observation,
             timer,
@@ -461,7 +478,12 @@ impl Component for Shell {
             panel_scale: (1.0, 1.0),
             grid,
             initial_client,
+        };
+
+        if std::env::var_os("WINTER_OPEN_PALETTE").is_some() {
+            shell.open_palette();
         }
+        shell
     }
 
     fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
@@ -662,6 +684,7 @@ impl Component for Shell {
 
         let find_open = self.tabs.active().is_some_and(|tab| tab.find.open);
         let menu_open = self.menu_open;
+        let palette_open = self.commands.open;
 
         let mut pane_children: Vec<View> = vec![SwapChainPanel::new().element_ref(&self.panel).into()];
         if let Some(tab) = self.tabs.active() {
@@ -680,6 +703,16 @@ impl Component for Shell {
         if menu_open {
             pane_children.push(profile_menu(&self.profiles, &dialog, menu_left(self)));
         }
+        if palette_open {
+            let rows = self.palette_rows();
+            pane_children.push(command_palette::card(
+                &self.commands.filter,
+                &rows,
+                self.commands.selected,
+                &self.palette_field,
+                &dialog,
+            ));
+        }
         let pane_content = Grid::new().children(pane_children);
 
         let pane = Border::new()
@@ -694,6 +727,9 @@ impl Component for Shell {
             .padding(Thickness::new(PANE_PADDING_LEFT, 0.0, 0.0, 0.0))
             .content(pane_content)
             .on_key_up(RoutedCallback::new(move |info: KeyEventInfo| {
+                if palette_open {
+                    return true;
+                }
                 if find_open || menu_open {
                     return false;
                 }
@@ -748,6 +784,17 @@ impl Component for Shell {
                     return true;
                 }
 
+                if palette_open {
+                    // The palette's field owns the keyboard. Escape closes it
+                    // from the pane, because the pane's preview runs before the
+                    // card's; every other key reaches the field so it can type.
+                    if pressed && matches!(key_of(info.key), Some(Key::Escape)) {
+                        let _ = keys.send(Message::PaletteClose);
+                        return true;
+                    }
+                    return false;
+                }
+
                 // A bound chord is the window's, so the toolkit must not also
                 // type it. A printable key with no binding still has to raise
                 // `CharacterReceived`, which is the text path; the keys the
@@ -759,7 +806,7 @@ impl Component for Shell {
                 bound || !matches!(key_of(info.key), Some(Key::Char(_)))
             }))
             .on_character_received(RoutedCallback::new(move |info: CharacterEventInfo| {
-                if find_open || menu_open {
+                if find_open || menu_open || palette_open {
                     return false;
                 }
                 let _ = characters.send(Message::Char(info));
@@ -946,6 +993,11 @@ impl Component for Shell {
             Message::FindClose => self.close_find(),
             Message::MenuToggle => self.menu_open = !self.menu_open,
             Message::MenuClose => self.close_menu(),
+            Message::PaletteQuery(text) => self.palette_query(text),
+            Message::PaletteStep(forward) => self.palette_step(forward),
+            Message::PaletteRun => self.run_selected_palette(context),
+            Message::PaletteChoose(index) => self.choose_palette(index, context),
+            Message::PaletteClose => self.close_palette(),
             Message::MenuProfile(name) => self.open_profile_tab(&name),
             Message::MenuSettings => {
                 self.close_menu();
@@ -1016,7 +1068,11 @@ impl Shell {
         }
 
         // The find field mounts a frame after the bar opens, so the request is
-        // retried until the element exists.
+        // retried until the element exists. The palette's field is the same.
+        let palette_focus = self.commands.open && self.commands.focus;
+        if palette_focus && self.palette_field.request_focus() && self.commands.open {
+            self.commands.focus = false;
+        }
         let find_focus = self.tabs.active().is_some_and(|tab| tab.find.open && tab.find.focus);
         if find_focus
             && self.find_field.request_focus()
@@ -1299,6 +1355,81 @@ impl Shell {
         let _ = self.focus.request_focus();
     }
 
+    /// Shows or hides the command palette.
+    fn toggle_palette(&mut self) {
+        if self.commands.open {
+            self.close_palette();
+        } else {
+            self.open_palette();
+        }
+    }
+
+    /// Opens the palette with an empty filter and the first row selected.
+    fn open_palette(&mut self) {
+        // Only one overlay owns the keyboard at a time.
+        self.menu_open = false;
+        if let Some(tab) = self.tabs.active_mut() {
+            tab.find.hide();
+        }
+        self.commands.show();
+    }
+
+    /// Closes the palette and gives the keyboard back to the pane.
+    fn close_palette(&mut self) {
+        self.commands.hide();
+        let _ = self.focus.request_focus();
+    }
+
+    /// Narrows the palette to what the field holds.
+    fn palette_query(&mut self, text: String) {
+        self.commands.filter = text;
+        self.commands.selected = 0;
+        let rows = self.palette_rows().len();
+        self.commands.clamp(rows);
+    }
+
+    /// Moves the palette's selection one row, wrapping at both ends.
+    fn palette_step(&mut self, forward: bool) {
+        let rows = self.palette_rows().len();
+        self.commands.step(rows, forward);
+    }
+
+    /// Runs the filtered row a pointer pressed.
+    fn choose_palette(&mut self, index: usize, context: &ComponentContext<Self>) {
+        self.commands.selected = index;
+        self.run_selected_palette(context);
+    }
+
+    /// Closes the palette and runs the row Enter chose.
+    fn run_selected_palette(&mut self, context: &ComponentContext<Self>) {
+        let rows = self.palette_rows();
+        let Some(entry) = rows.get(self.commands.selected).cloned() else {
+            return;
+        };
+        self.close_palette();
+        self.run_palette_command(entry.command, context);
+    }
+
+    /// Runs one palette row after the card has closed.
+    fn run_palette_command(&mut self, command: palette::Command, context: &ComponentContext<Self>) {
+        match command {
+            palette::Command::Action(action) => {
+                self.perform(action, context);
+            }
+            palette::Command::Profile(name) => self.open_profile_tab(&name),
+            // Extensions are not hosted on this shell yet.
+            palette::Command::Extension(_) => {}
+        }
+    }
+
+    /// The rows the current filter leaves, with the window's merged profiles.
+    fn palette_rows(&self) -> Vec<palette::Entry> {
+        let mut settings = self.settings.clone();
+        settings.profiles = self.profiles.clone();
+        let entries = palette::entries(&settings, palette_supports);
+        self.commands.rows(&entries).into_iter().cloned().collect()
+    }
+
     /// The title the window shows: the active tab's.
     fn title(&self) -> &str {
         self.tabs.active().map_or("Winter", |tab| tab.title.as_str())
@@ -1394,7 +1525,7 @@ impl Shell {
         // The find field owns the keyboard while its bar is open, and the
         // drop-down owns it while it shows; only a bound chord, handled above,
         // leaves either.
-        if self.menu_open || self.tabs.active().is_some_and(|tab| tab.find.open) {
+        if self.menu_open || self.commands.open || self.tabs.active().is_some_and(|tab| tab.find.open) {
             return;
         }
 
@@ -1457,7 +1588,7 @@ impl Shell {
 
     /// Hands composed text to the active terminal's text path.
     fn character(&mut self, info: CharacterEventInfo) {
-        if self.menu_open || self.tabs.active().is_some_and(|tab| tab.find.open) {
+        if self.menu_open || self.commands.open || self.tabs.active().is_some_and(|tab| tab.find.open) {
             return;
         }
 
@@ -1553,8 +1684,8 @@ impl Shell {
             settings::Action::ScrollToBottom => self.scroll_to_active(true),
             settings::Action::OpenSettings => self.toggle_settings(),
             settings::Action::Find => self.toggle_find(),
-            // Panes and the palette are not this shell's yet, so their chords
-            // fall through.
+            settings::Action::CommandPalette => self.toggle_palette(),
+            // Panes are not this shell's yet, so their chords fall through.
             _ => {}
         }
         true
@@ -1726,6 +1857,12 @@ impl Shell {
         // itself is not passed on (ADR 052).
         if self.menu_open {
             self.close_menu();
+            return;
+        }
+        // A press outside the palette's card dismisses it; a press on a row has
+        // already sent its command by the time this bubbles here.
+        if self.commands.open {
+            self.close_palette();
             return;
         }
 
@@ -1944,6 +2081,32 @@ impl Shell {
         }
         self.last_mouse_cell = None;
     }
+}
+
+/// The actions this shell performs, for the palette's row list.
+///
+/// `CommandPalette` is left out because `palette::entries` never offers the
+/// palette itself.
+fn palette_supports(action: settings::Action) -> bool {
+    use settings::Action;
+
+    matches!(
+        action,
+        Action::NewTab
+            | Action::CloseTab
+            | Action::NextTab
+            | Action::PrevTab
+            | Action::Copy
+            | Action::Paste
+            | Action::ScrollUp
+            | Action::ScrollDown
+            | Action::ScrollUpPage
+            | Action::ScrollDownPage
+            | Action::ScrollToTop
+            | Action::ScrollToBottom
+            | Action::Find
+            | Action::OpenSettings
+    )
 }
 
 /// Starts a shell, falling back to what every Windows install has.
@@ -2483,7 +2646,7 @@ fn about_dialog(sender: &LocalSender<Message>) -> ContentDialog {
 }
 
 /// Maps a Windows virtual-key code to the terminal's key identity.
-fn key_of(key: VirtualKey) -> Option<Key> {
+pub(super) fn key_of(key: VirtualKey) -> Option<Key> {
     Some(match key.0 {
         0x41..=0x5A => Key::Char((b'a' + (key.0 - 0x41) as u8) as char),
         0x30..=0x39 => Key::Char((b'0' + (key.0 - 0x30) as u8) as char),
