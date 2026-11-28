@@ -18,6 +18,9 @@ pub struct Draft {
     pub default_profile: Option<String>,
     pub default_scheme: Option<String>,
     pub theme: Option<String>,
+    /// The registry URLs, one per line; empty means the built-in default and
+    /// `off` means none.
+    pub registries: String,
     pub profiles: Vec<ProfileDraft>,
     pub keybindings: Vec<BindingDraft>,
     pub schemes: Vec<SchemeDraft>,
@@ -196,6 +199,36 @@ pub fn read(label: &str, text: &str) -> Result<Option<settings::Color>, String> 
         .map_err(|_| format!("{label}: `{text}` is not a colour"))
 }
 
+/// The registry list a text field describes.
+///
+/// Empty means the built-in default (`None`); `off` or `none` means no registry
+/// at all (`Some([])`); otherwise one URL per line (ADR 088).
+pub fn registries_from_text(text: &str) -> Option<Vec<String>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if matches!(text.to_ascii_lowercase().as_str(), "off" | "none") {
+        return Some(Vec::new());
+    }
+    Some(
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// A registry list as the text field shows it.
+pub fn registries_text(registries: Option<&[String]>) -> String {
+    match registries {
+        None => String::new(),
+        Some([]) => "off".to_string(),
+        Some(list) => list.join("\n"),
+    }
+}
+
 impl Draft {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
@@ -203,6 +236,7 @@ impl Draft {
             default_profile: settings.default_profile.clone(),
             default_scheme: settings.default_scheme.clone(),
             theme: settings.theme.clone(),
+            registries: registries_text(settings.extensions.registries.as_deref()),
             profiles: settings.profiles.iter().map(ProfileDraft::from_profile).collect(),
             keybindings: settings.keybindings.iter().map(BindingDraft::from_binding).collect(),
             schemes: settings.schemes.iter().map(SchemeDraft::from_scheme).collect(),
@@ -225,6 +259,7 @@ impl Draft {
         document.default_profile = self.default_profile.clone();
         document.default_scheme = self.default_scheme.clone();
         document.theme = self.theme.clone();
+        document.extensions.registries = registries_from_text(&self.registries);
         document.profiles = self.profiles.iter().map(ProfileDraft::to_profile).collect();
         document.keybindings = self
             .keybindings
@@ -315,6 +350,28 @@ mod tests {
         assert!(text.contains("the defaults are in force"));
         assert!(text.contains("The file was not used: bad TOML"));
         assert!(!text.contains("Every value"));
+    }
+
+    #[test]
+    fn the_registry_list_is_text_and_round_trips() {
+        let mut settings = Settings::default();
+        settings.extensions.registries = Some(vec!["https://one.example/r.toml".to_string()]);
+
+        let draft = Draft::from_settings(&settings);
+        assert_eq!(draft.registries, "https://one.example/r.toml");
+        assert_eq!(
+            draft.document(&settings).expect("document").extensions.registries,
+            settings.extensions.registries
+        );
+
+        settings.extensions.registries = Some(Vec::new());
+        assert_eq!(Draft::from_settings(&settings).registries, "off");
+        assert_eq!(registries_from_text("OFF"), Some(Vec::new()));
+        assert_eq!(registries_from_text(""), None);
+        assert_eq!(
+            registries_from_text(" https://a/r.toml \n\n https://b/r.toml "),
+            Some(vec!["https://a/r.toml".to_string(), "https://b/r.toml".to_string()])
+        );
     }
 
     #[test]

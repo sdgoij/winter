@@ -17,6 +17,7 @@ types.workspace = true
 utils.workspace = true
 arboard.workspace = true
 extensions = { workspace = true, features = ["host"] }
+registry.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

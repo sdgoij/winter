@@ -397,11 +397,18 @@ copyable enum.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
-   the `[extensions]` table and rebuilds the engine at once.
+   the `[extensions]` table and rebuilds the engine at once. WinUI's dialog adds
+   the `Installed` / `Search` tabs: Search lists each registry's rows (the same
+   identifier from two registries is two rows) with a version picker and an
+   Install button, and Installed shows a registry row's provenance and a Remove
+   button. The registry list is edited in WinUI's settings dialog; GTK and macOS
+   still leave it in the TOML or use the built-in default.
 5. `crates/registry` — the strict registry schema: semver releases, a tagged
    source union whose one implemented adapter is a checksummed archive, the
    per-release `api`, and the caps; the merged search index that keeps the same
-   identifier from two registries as two rows; and the fetcher and cache.
+   identifier from two registries as two rows; the fetcher and cache; and
+   `Screen`, the Search tab's state (a lazy open, the picked version per row,
+   and install/uninstall workers the tick polls).
 6. Registry fetching — `[extensions] registries` (`None` means the built-in
    default, `[]` means none; `WINTER_REGISTRY` overrides for one run), `https`
    through `ureq`/rustls and `file://` for a mirror, a 1 MiB cap, and a per-URL
@@ -430,8 +437,9 @@ copyable enum.
    engine sees the current pane once, and logs and skips an extension that no
    longer loads while the rest keep running.
 
-What is not here: the Search/Installed screens; and a continuation form for a
-compiled module's history — it reads the bounded walk through its typed accessor
+What is not here: the `Installed` / `Search` tabs on GTK and macOS (the shared
+`registry::Screen` is ready for them); and a continuation form for a compiled
+module's history — it reads the bounded walk through its typed accessor
 instead. `cargo test -p extensions --features host`, `cargo test -p registry`,
 `cargo test -p winter-cocoa`, `cargo test -p winter-winui` and `cargo test -p
 winter-gtk4` are the suites.

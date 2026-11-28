@@ -41,7 +41,7 @@ use winter::terminal_render::TerminalData;
 use winter::view::View as ViewState;
 
 use super::command_palette;
-use super::extension::{Extensions, Found};
+use super::extension::{Extensions, ExtensionsTab, Found};
 use super::gpu::GpuBackend;
 use super::icon;
 use super::menu::{self, MenuEntry};
@@ -324,6 +324,11 @@ pub(super) struct Shell {
     extensions_checked: Vec<bool>,
     /// The rows the open dialog lists.
     extensions_rows: Vec<Found>,
+    /// The Search tab's state, created when the dialog opens and dropped when
+    /// it closes.
+    registry: Option<registry::Screen>,
+    /// Which tab the extensions dialog shows.
+    extensions_tab: ExtensionsTab,
     /// The title bar header's measured width in DIPs, so the menu hangs under
     /// the drop-down button rather than at the pane's left edge.
     header_width: f64,
@@ -475,6 +480,16 @@ pub(super) enum Message {
     ExtensionsSave,
     /// Closes the extensions dialog without saving.
     ExtensionsClose,
+    /// Switches the extensions dialog's tab.
+    ExtensionsTab(ExtensionsTab),
+    /// The Search tab's query changed.
+    ExtensionsQuery(String),
+    /// The version picked for a Search row, by row and version index.
+    ExtensionsVersion(usize, usize),
+    /// Installs the Search row with its picked version.
+    ExtensionsInstall(usize),
+    /// Removes the extension with this id; `force` removes a hand-made one.
+    ExtensionsUninstall(String, bool),
     /// Opens the About dialog from the drop-down.
     MenuAbout,
     /// The About dialog closed.
@@ -596,6 +611,8 @@ impl Component for Shell {
             extensions_enabled: false,
             extensions_checked: Vec::new(),
             extensions_rows: Vec::new(),
+            registry: None,
+            extensions_tab: ExtensionsTab::Installed,
             header_width: 0.0,
             header,
             _header_observation: header_observation,
@@ -1239,6 +1256,8 @@ impl Component for Shell {
                 &self.extensions_rows,
                 self.extensions_enabled,
                 &self.extensions_checked,
+                self.extensions_tab,
+                self.registry.as_ref(),
                 &dialog,
             ))
         } else if self.about_open {
@@ -1313,6 +1332,34 @@ impl Component for Shell {
             Message::ExtensionsAll(on) => self.extensions_enabled = on,
             Message::ExtensionsSave => self.save_extensions_dialog(),
             Message::ExtensionsClose => self.close_extensions(),
+            Message::ExtensionsTab(tab) => {
+                self.extensions_tab = tab;
+                if tab == ExtensionsTab::Search
+                    && let Some(screen) = &mut self.registry
+                {
+                    screen.open();
+                }
+            }
+            Message::ExtensionsQuery(text) => {
+                if let Some(screen) = &mut self.registry {
+                    screen.set_query(text);
+                }
+            }
+            Message::ExtensionsVersion(row, version) => {
+                if let Some(screen) = &mut self.registry {
+                    screen.select_index(row, version);
+                }
+            }
+            Message::ExtensionsInstall(row) => {
+                if let Some(screen) = &mut self.registry {
+                    screen.install_index(row);
+                }
+            }
+            Message::ExtensionsUninstall(id, force) => {
+                if let Some(screen) = &mut self.registry {
+                    screen.uninstall(&id, force);
+                }
+            }
             Message::MenuAbout => {
                 self.close_menu();
                 self.about_open = true;
@@ -1330,6 +1377,16 @@ impl Shell {
     /// Pumps every pty, paints the active tab and re-arms the timer.
     fn tick(&mut self, context: &ComponentContext<Self>) {
         let now = Instant::now();
+        // A finished install or uninstall changes the tree, so the engine is
+        // rebuilt and the Installed rows are read again (ADR 088).
+        let tree = self.registry.as_mut().is_some_and(|screen| screen.poll().tree);
+        if tree {
+            self.reload_extensions();
+            if self.extensions_open {
+                self.extensions_rows = self.installed_extensions();
+                self.extensions_checked = self.extensions_rows.iter().map(|row| row.enabled).collect();
+            }
+        }
         let mut exited = Vec::new();
         // What the extensions observe: the pty events this tick saw, in order.
         let mut observed = Vec::new();
@@ -1743,6 +1800,8 @@ impl Shell {
         self.extensions_rows = self.installed_extensions();
         self.extensions_enabled = self.settings.extensions.enabled;
         self.extensions_checked = self.extensions_rows.iter().map(|row| row.enabled).collect();
+        self.extensions_tab = ExtensionsTab::Installed;
+        self.registry = Some(super::extension::registry_screen(&self.settings.extensions));
         self.extensions_open = true;
     }
 
@@ -1767,6 +1826,7 @@ impl Shell {
     /// Closes the extensions dialog without saving.
     fn close_extensions(&mut self) {
         self.extensions_open = false;
+        self.registry = None;
         let _ = self.focus.request_focus();
     }
 
@@ -3521,62 +3581,46 @@ fn menu_button(label: String, leading: Option<View>) -> Button {
         .width(232.0)
 }
 
-/// The extensions dialog: one switch per extension and one that loads the
-/// feature at all.
+/// The extensions dialog: the Installed switches and the registry Search tab.
 ///
-/// The switches are the dialog's whole state; Save writes the settings file's
-/// `[extensions]` table and nothing else, and says that loading changes on the
-/// next start: a live engine is not reloaded.
-fn extensions_dialog(rows: &[Found], enabled: bool, checked: &[bool], sender: &LocalSender<Message>) -> ContentDialog {
-    let mut children: Vec<View> = vec![
-        TextBlock::new()
-            .text(
-                "Anything under an `extensions` folder is listed here. A switch takes effect the next time Winter starts.",
-            )
-            .text_wrapping(TextWrapping::Wrap)
-            .into(),
-    ];
+/// The Search tab is the only place a registry is read, and only once the tab is
+/// first shown (ADR 088). Save writes the settings file's `[extensions]` table;
+/// a switch, install or uninstall rebuilds the live engine without a restart.
+fn extensions_dialog(
+    rows: &[Found],
+    enabled: bool,
+    checked: &[bool],
+    tab: ExtensionsTab,
+    screen: Option<&registry::Screen>,
+    sender: &LocalSender<Message>,
+) -> ContentDialog {
+    let mut children: Vec<View> = Vec::new();
 
-    let master_sender = sender.clone();
-    children.push(
-        ToggleSwitch::new()
-            .header("Load extensions")
-            .is_on(enabled)
-            .on_toggled(move |on: bool| {
-                let _ = master_sender.send(Message::ExtensionsAll(on));
-            })
-            .into(),
-    );
-
-    if rows.is_empty() {
-        children.push(TextBlock::new().text("No extensions were found.").into());
-    }
-    for (index, row) in rows.iter().enumerate() {
-        let on = checked.get(index).copied().unwrap_or(row.enabled);
-        let row_sender = sender.clone();
-        let toggle = ToggleSwitch::new()
-            .header(format!("{}  ({})", row.name, row.id))
-            .is_on(on)
-            .is_enabled(row.switchable)
-            .on_toggled(move |on: bool| {
-                let _ = row_sender.send(Message::ExtensionsToggle(index, on));
-            });
-
-        // A row that could not be read says why in red, as the macOS window
-        // does; a working one shows what it ships.
-        let detail = if row.note.is_empty() {
-            row.kind.to_string()
+    let mut tabs: Vec<View> = Vec::new();
+    for (label, wanted) in [
+        ("Installed", ExtensionsTab::Installed),
+        ("Search", ExtensionsTab::Search),
+    ] {
+        let label = if tab == wanted {
+            format!("• {label}")
         } else {
-            format!("{} · {}", row.kind, row.note)
+            label.to_string()
         };
-        let mut detail = TextBlock::new()
-            .text(detail)
-            .font_size(12.0)
-            .text_wrapping(TextWrapping::Wrap);
-        if !row.note.is_empty() {
-            detail = detail.foreground(Color::rgb(220, 170, 60));
-        }
-        children.push(StackPanel::new().spacing(2.0).children((toggle, detail)).into());
+        let sender = sender.clone();
+        tabs.push(
+            Button::new()
+                .content(label.as_str())
+                .on_click(move || {
+                    let _ = sender.send(Message::ExtensionsTab(wanted));
+                })
+                .into(),
+        );
+    }
+    children.push(dialog_row(tabs).into());
+
+    match tab {
+        ExtensionsTab::Installed => installed_tab(rows, enabled, checked, sender, &mut children),
+        ExtensionsTab::Search => search_tab(screen, sender, &mut children),
     }
 
     let content = ScrollViewer::new()
@@ -3601,6 +3645,259 @@ fn extensions_dialog(rows: &[Found], enabled: bool, checked: &[bool], sender: &L
                 }
             }
         })
+}
+
+/// The Installed tab: one switch per extension and one that loads the feature at
+/// all, plus a record and a Remove button for a registry install.
+fn installed_tab(
+    rows: &[Found],
+    enabled: bool,
+    checked: &[bool],
+    sender: &LocalSender<Message>,
+    children: &mut Vec<View>,
+) {
+    children.push(
+        TextBlock::new()
+            .text("Anything under an `extensions` folder is listed here. A switch takes effect at once.")
+            .text_wrapping(TextWrapping::Wrap)
+            .into(),
+    );
+
+    let master_sender = sender.clone();
+    children.push(
+        ToggleSwitch::new()
+            .header("Load extensions")
+            .is_on(enabled)
+            .on_toggled(move |on: bool| {
+                let _ = master_sender.send(Message::ExtensionsAll(on));
+            })
+            .into(),
+    );
+
+    if rows.is_empty() {
+        children.push(TextBlock::new().text("No extensions were found.").into());
+    }
+    for (index, entry) in rows.iter().enumerate() {
+        let on = checked.get(index).copied().unwrap_or(entry.enabled);
+        let row_sender = sender.clone();
+        let toggle = ToggleSwitch::new()
+            .header(format!("{}  ({})", entry.name, entry.id))
+            .is_on(on)
+            .is_enabled(entry.switchable)
+            .on_toggled(move |on: bool| {
+                let _ = row_sender.send(Message::ExtensionsToggle(index, on));
+            });
+
+        let mut lines: Vec<View> = vec![toggle.into()];
+        // A row that could not be read says why in amber, as the macOS window
+        // does; a working one shows what it ships.
+        let detail = if entry.note.is_empty() {
+            entry.kind.to_string()
+        } else {
+            format!("{} · {}", entry.kind, entry.note)
+        };
+        let mut detail = TextBlock::new()
+            .text(detail)
+            .font_size(12.0)
+            .text_wrapping(TextWrapping::Wrap);
+        if !entry.note.is_empty() {
+            detail = detail.foreground(Color::rgb(220, 170, 60));
+        }
+        lines.push(detail.into());
+
+        if let Some(source) = &entry.source {
+            let version = &source.version;
+            let registry = &source.registry;
+            lines.push(
+                TextBlock::new()
+                    .text(format!("Installed {version} from {registry}"))
+                    .font_size(12.0)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            );
+            let id = entry.id.clone();
+            let remove_sender = sender.clone();
+            lines.push(
+                Button::new()
+                    .content("Remove")
+                    .on_click(move || {
+                        let _ = remove_sender.send(Message::ExtensionsUninstall(id.clone(), false));
+                    })
+                    .into(),
+            );
+        }
+
+        children.push(StackPanel::new().spacing(2.0).children(lines).into());
+    }
+}
+
+/// The Search tab: the filter, what each registry answered, and one block per
+/// row with its releases and an install button.
+fn search_tab(screen: Option<&registry::Screen>, sender: &LocalSender<Message>, children: &mut Vec<View>) {
+    let Some(screen) = screen else {
+        children.push(TextBlock::new().text("Reopen the dialog to search.").into());
+        return;
+    };
+
+    let query_sender = sender.clone();
+    children.push(
+        TextBox::new()
+            .text(screen.query())
+            .placeholder_text("Search the registries")
+            .on_text_changed(move |text: Rc<str>| {
+                let _ = query_sender.send(Message::ExtensionsQuery(text.to_string()));
+            })
+            .into(),
+    );
+
+    if screen.urls().is_empty() {
+        children.push(
+            TextBlock::new()
+                .text("No registries are configured. Add one in Settings.")
+                .foreground(Color::rgb(220, 170, 60))
+                .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        );
+        return;
+    }
+
+    if screen.is_loading() {
+        children.push(TextBlock::new().text("Reading the registries…").into());
+    }
+    for (url, state) in screen.urls().iter().zip(screen.states()) {
+        match state {
+            registry::State::Loading | registry::State::Ready { cached: false, .. } => {}
+            registry::State::Ready { cached: true, note } => {
+                let note = note.as_deref().unwrap_or_default();
+                children.push(
+                    TextBlock::new()
+                        .text(format!("{url}: the last good copy is in use ({note})"))
+                        .font_size(12.0)
+                        .foreground(Color::rgb(220, 170, 60))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                );
+            }
+            registry::State::Failed(message) => {
+                children.push(
+                    TextBlock::new()
+                        .text(format!("{url}: {message}"))
+                        .font_size(12.0)
+                        .foreground(Color::rgb(220, 80, 80))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                );
+            }
+        }
+    }
+    if let Some(status) = screen.status() {
+        let text = match status {
+            registry::Status::Working => "Working…".to_string(),
+            registry::Status::Done(message) | registry::Status::Failed(message) => message.clone(),
+        };
+        let mut block = TextBlock::new().text(text).text_wrapping(TextWrapping::Wrap);
+        if matches!(status, registry::Status::Failed(_)) {
+            block = block.foreground(Color::rgb(220, 80, 80));
+        }
+        children.push(block.into());
+    }
+
+    let rows = screen.rows();
+    if rows.is_empty() {
+        if !screen.is_loading() {
+            children.push(TextBlock::new().text("No extension matches.").into());
+        }
+        return;
+    }
+
+    for (index, entry) in rows.iter().enumerate() {
+        let mut lines: Vec<View> = vec![
+            TextBlock::new()
+                .text(format!("{}  ({})", entry.name, entry.id))
+                .font_size(15.0)
+                .into(),
+        ];
+        if let Some(description) = &entry.description {
+            lines.push(
+                TextBlock::new()
+                    .text(description.as_str())
+                    .font_size(12.0)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            );
+        }
+
+        let mut provenance = format!("{} · {}", entry.registry_name, entry.registry);
+        match &entry.installed {
+            None => {}
+            Some(registry::Local::Manual) => provenance.push_str(" · installed by hand"),
+            Some(registry::Local::Registry(found)) => {
+                let version = &found.version;
+                provenance.push_str(&format!(" · installed {version}"));
+                if found.registry == entry.registry {
+                    provenance.push_str(" from this registry");
+                }
+            }
+        }
+        lines.push(
+            TextBlock::new()
+                .text(provenance)
+                .font_size(12.0)
+                .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        );
+
+        if !entry.dependencies.is_empty() {
+            lines.push(
+                TextBlock::new()
+                    .text(format!("Needs: {}", entry.dependencies.join(", ")))
+                    .font_size(12.0)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            );
+        }
+
+        if entry.installable() {
+            let versions: Vec<String> = entry.versions.iter().map(ToString::to_string).collect();
+            let picked = screen.version(entry).cloned();
+            let selected = picked.and_then(|picked| entry.versions.iter().position(|version| *version == picked));
+            let version_sender = sender.clone();
+            let combo = ComboBox::new()
+                .items_source(versions)
+                .selected_index(selected)
+                .width(130.0)
+                .on_selection_changed(move |slot: Option<usize>| {
+                    if let Some(slot) = slot {
+                        let _ = version_sender.send(Message::ExtensionsVersion(index, slot));
+                    }
+                });
+            let install_sender = sender.clone();
+            let label = if entry.installed.is_some() { "Update" } else { "Install" };
+            let install = Button::new().content(label).on_click(move || {
+                let _ = install_sender.send(Message::ExtensionsInstall(index));
+            });
+            lines.push(dialog_row((combo, install)).into());
+        } else {
+            lines.push(
+                TextBlock::new()
+                    .text("Another copy is already installed; remove it before installing this one.")
+                    .font_size(12.0)
+                    .foreground(Color::rgb(220, 170, 60))
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            );
+        }
+
+        children.push(StackPanel::new().spacing(3.0).children(lines).into());
+    }
+}
+
+/// A horizontal row of dialog children.
+fn dialog_row(children: impl IntoViews) -> StackPanel {
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(8.0)
+        .children(children)
 }
 
 /// The About dialog: the version this build was compiled as.

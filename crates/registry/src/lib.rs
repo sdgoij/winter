@@ -6,8 +6,10 @@
 //! transport, and [`Job`] moves it off the UI thread with a channel polled from
 //! the tick. [`install`] verifies an archive against the registry and places it
 //! beside the settings file, and [`provenance`] says where a directory came
-//! from. The crate names no window and no engine, so an embedding can use the
-//! schema without a registry view.
+//! from. [`Screen`] is the Search tab's state: it fetches on first open, keeps
+//! the picked version per row, and runs installs and uninstalls on workers. The
+//! crate names no window and no engine, so an embedding can use the schema
+//! without a registry view.
 //!
 //! The schema is strict — an unknown key is an error — so a typo is reported
 //! instead of silently ignored, exactly as the extension manifest is. A source
@@ -21,6 +23,7 @@ mod index;
 mod install;
 mod job;
 mod schema;
+mod screen;
 
 pub use fetch::{DEFAULT_URL, Error as FetchError, Fetched, Fetcher, Network, cache_path, cached_at, load};
 pub use index::{Index, Loaded, Row};
@@ -33,6 +36,7 @@ pub use schema::{
     Archive, DEPENDENCIES_MAX, DESCRIPTION_MAX, EXTENSIONS_MAX, Error, Extension, FILE_MAX, HOMEPAGE_MAX, LICENSE_MAX,
     RELEASES_MAX, Registry, Release, SCHEMA, Source, TAG_MAX, TAGS_MAX, URL_MAX,
 };
+pub use screen::{Changed, Local, Screen, SearchRow, Status};
 
 /// The registry URLs a run reads.
 ///

@@ -24,6 +24,8 @@ pub(super) enum SettingsMessage {
     DefaultProfile(Option<String>),
     DefaultScheme(Option<String>),
     Theme(Option<String>),
+    /// The extension registries, one URL per line (`off` for none).
+    Registries(String),
     ProfileField {
         index: usize,
         field: ProfileField,
@@ -254,6 +256,19 @@ impl SettingsWindow {
                         }),
                 ))
                 .into(),
+            );
+
+            children.push(heading("Registries").into());
+            children.push(
+                note("Extension registries, one URL per line. Leave empty for the built-in registry; `off` disables them.")
+                    .into(),
+            );
+            children.push(
+                text_box(&draft.registries, sender, SettingsMessage::Registries)
+                    .accepts_return(true)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .height(80.0)
+                    .into(),
             );
 
             let profiles: Vec<String> = draft.profiles.iter().map(|profile| profile.name.clone()).collect();
@@ -587,6 +602,7 @@ fn apply_to_draft(draft: &mut Draft, message: SettingsMessage) {
         SettingsMessage::DefaultProfile(name) => draft.default_profile = name,
         SettingsMessage::DefaultScheme(name) => draft.default_scheme = name,
         SettingsMessage::Theme(name) => draft.theme = name,
+        SettingsMessage::Registries(text) => draft.registries = text,
         SettingsMessage::ProfileField { index, field, text } => {
             if let Some(profile) = draft.profiles.get_mut(index) {
                 match field {
@@ -920,6 +936,24 @@ mod tests {
         assert!(matches!(window.apply(SettingsMessage::Close), SettingsCommand::Close));
         assert!(!window.is_open());
         assert!(window.draft().is_none());
+    }
+
+    #[test]
+    fn the_registry_list_is_edited_as_text() {
+        let settings = document();
+        let mut window = window(&settings);
+
+        window.apply(SettingsMessage::Registries(
+            "https://one.example/r.toml\nhttps://two.example/r.toml".to_string(),
+        ));
+        let document = window.document(&settings).expect("a document");
+        assert_eq!(
+            document.extensions.registries,
+            Some(vec![
+                "https://one.example/r.toml".to_string(),
+                "https://two.example/r.toml".to_string()
+            ])
+        );
     }
 
     #[test]
