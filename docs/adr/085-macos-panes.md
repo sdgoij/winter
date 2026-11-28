@@ -63,7 +63,7 @@ and the focus walk. It names no toolkit.
 - Mouse selection and forwarding stay inside the pane the press started in;
   a divider, a scrollbar and the tab strip take their presses first.
 - Panes remain absent from the WinUI and GTK shells; both adopt the same
-  `winter::layout` tree in ADR 086, with one viewport per pane in their one
+  `winter::layout` tree in ADR 087, with one viewport per pane in their one
   surface.
 
 ## Alternatives considered

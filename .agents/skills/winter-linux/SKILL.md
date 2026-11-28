@@ -24,7 +24,7 @@ One module owns:
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
 | icons | each tab's program icon from the desktop icon theme, rendered through GSK once and cached as a Cairo surface |
 | pane | the base `DrawingArea`: pane fills, the software blit, and the input controllers over the GL area |
-| chrome | the `DrawingArea` above the GL area: dividers, one scrollbar per pane, bells and the focused pane border (ADR 086) |
+| chrome | the `DrawingArea` above the GL area: dividers, one scrollbar per pane, bells and the focused pane border (ADR 087) |
 | gl | the OpenGL content path (ADR 076): one `GtkGLArea` drawing every pane into its own scissored viewport; the two pipelines, atlas, image textures, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
@@ -163,7 +163,7 @@ a neighbour's midpoint.
 
 ## Panes
 
-A tab is `winter::layout`'s tree plus a `Vec<Pane>` (ADR 086). Each pane owns its
+A tab is `winter::layout`'s tree plus a `Vec<Pane>` (ADR 087). Each pane owns its
 `Control`, `View`, `FindBar`, renderer, software pixels, `Gl` handle and grid.
 The one `GtkGLArea` spans the whole pane area; before each pane's
 `paint_frame`, `Gl::set_viewport` selects its grid rectangle (and the first pane
@@ -188,7 +188,7 @@ shared action's doc says so).
 
 - **The GL area is above the base widget and opaque.** Do not paint dividers,
   scrollbars or the focus border on the base `DrawingArea`; they belong on
-  `chrome_area` (ADR 086).
+  `chrome_area` (ADR 087).
 - **A claimed sequence stops everything in another group.** `GtkGestureClick`
   claims the sequence when the shell handles a press; GTK denies every other
   gesture group on the widget and stops propagating the sequence to the motion

@@ -1,4 +1,4 @@
-# 086 — WinUI and GTK panes: one surface, a viewport per pane
+# 087 — WinUI and GTK panes: one surface, a viewport per pane
 
 Status: Accepted.
 

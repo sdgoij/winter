@@ -26,7 +26,7 @@ change it without rediscovering the traps.
 
 `app.rs` owns the only `Surface` and swap chain. A tab is `winter::layout`'s
 tree plus a `Vec<Pane>`; the one swap chain composites a viewport per pane
-(ADR 086). Both shells share `input.rs`, `tabs.rs`, `view.rs`, `term_control.rs`
+(ADR 087). Both shells share `input.rs`, `tabs.rs`, `view.rs`, `term_control.rs`
 and `term_connection.rs`; a rule that is not Windows-specific belongs there,
 never in `winui`.
 

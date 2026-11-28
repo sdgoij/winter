@@ -108,7 +108,7 @@ One module, `crates/gtk4/src/lib.rs`, chosen in `main.rs` the way
 | entry | `run()`, the `gtk::Application`, the window and the `GtkWindowHandle` title bar |
 | strip | the tab strip's layout, hit testing, painting and drag-reorder over `crate::tabs` |
 | pane | the base `DrawingArea`: every pane's fill, and the software blit |
-| chrome | the `DrawingArea` above the GL area: the dividers, one scrollbar per pane with prompt marks, the bells and the focused pane's border (ADR 086) |
+| chrome | the `DrawingArea` above the GL area: the dividers, one scrollbar per pane with prompt marks, the bells and the focused pane's border (ADR 087) |
 | gl | the OpenGL content path (ADR 076): one `GtkGLArea` above the pane drawing every pane into its own scissored viewport, the two pipelines, the glyph atlas, image textures, and the software fallback |
 | input | `EventControllerKey`, the `IMContext`, `GestureClick`, `GestureDrag`, the scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
