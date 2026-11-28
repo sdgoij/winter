@@ -56,6 +56,12 @@ struct State {
     failed: bool,
     /// The bell's opacity, set by the shell before a frame.
     bell: Option<f32>,
+    /// The framebuffer rectangle this pane draws into, with the framebuffer's
+    /// own size: `(x, y, width, height, frame_width, frame_height)`.
+    viewport: Option<(i32, i32, i32, i32, i32, i32)>,
+    /// Whether the first pane clears the whole framebuffer before the panes
+    /// draw into their own rectangles.
+    clear_frame: bool,
 }
 
 impl Gl {
@@ -69,8 +75,23 @@ impl Gl {
                 rasterizer: None,
                 failed: false,
                 bell: None,
+                viewport: None,
+                clear_frame: false,
             })),
         })
+    }
+
+    /// Makes the next frame clear the whole framebuffer before any pane draws.
+    pub(crate) fn set_clear_frame(&self, clear: bool) {
+        self.inner.borrow_mut().clear_frame = clear;
+    }
+
+    /// Sets the framebuffer rectangle this pane draws into.
+    ///
+    /// The offsets and the frame size are physical pixels with the origin at
+    /// the framebuffer's top left, like the shell's other geometry.
+    pub(crate) fn set_viewport(&self, x: i32, y: i32, width: i32, height: i32, frame_width: i32, frame_height: i32) {
+        self.inner.borrow_mut().viewport = Some((x, y, width, height, frame_width, frame_height));
     }
 
     /// Whether the backend was tried and could not be created.
@@ -119,9 +140,15 @@ impl IBackend for Gl {
             }
         }
 
-        let State { backend, bell, .. } = &mut *state;
+        let State {
+            backend,
+            bell,
+            viewport,
+            clear_frame,
+            ..
+        } = &mut *state;
         if let Some(backend) = backend.as_mut() {
-            backend.render(payload, *bell);
+            backend.render(payload, *bell, *viewport, *clear_frame);
         }
     }
 
@@ -200,7 +227,13 @@ impl GlBackend {
     }
 
     /// Draws one payload into the framebuffer the GL area bound.
-    fn render(&mut self, payload: &mut RenderingPayload, bell: Option<f32>) {
+    fn render(
+        &mut self,
+        payload: &mut RenderingPayload,
+        bell: Option<f32>,
+        viewport: Option<(i32, i32, i32, i32, i32, i32)>,
+        clear_frame: bool,
+    ) {
         let (cell_width, cell_height) = cell_size(payload);
         let (columns, rows) = payload.settings.viewport_cell_count;
         let width = target_side(payload.settings.target_size.0, columns, cell_width);
@@ -217,7 +250,23 @@ impl GlBackend {
         // SAFETY: the GL area's context is current and its framebuffer is
         // bound; every call below touches only this backend's objects.
         unsafe {
-            self.gl.viewport(0, 0, width as i32, height as i32);
+            if clear_frame && let Some((_, _, _, _, frame_width, frame_height)) = viewport {
+                self.gl.disable(glow::SCISSOR_TEST);
+                self.gl.viewport(0, 0, frame_width, frame_height);
+                self.gl.clear_color(red, green, blue, 1.0);
+                self.gl.clear(glow::COLOR_BUFFER_BIT);
+            }
+            match viewport {
+                Some((x, y, width, height, _, frame_height)) => {
+                    // GTK's framebuffer origin is the bottom left, the shell's the
+                    // top left, so the rectangle is flipped before it is set.
+                    let y = (frame_height - y - height).max(0);
+                    self.gl.enable(glow::SCISSOR_TEST);
+                    self.gl.scissor(x, y, width, height);
+                    self.gl.viewport(x, y, width, height);
+                }
+                None => self.gl.viewport(0, 0, width as i32, height as i32),
+            }
             self.gl.clear_color(red, green, blue, 1.0);
             self.gl.clear(glow::COLOR_BUFFER_BIT);
             self.gl.disable(glow::DEPTH_TEST);
@@ -245,6 +294,12 @@ impl GlBackend {
         }
         self.texture.draw(&self.gl, &data.glyphs);
         self.solid.draw(&self.gl, &data.overlays);
+
+        // A scissor left on would clip the next pane's frame.
+        if viewport.is_some() {
+            // SAFETY: the context is current and scissoring was enabled above.
+            unsafe { self.gl.disable(glow::SCISSOR_TEST) };
+        }
 
         // A remaining image texture is not needed by this frame.
         let used: Vec<u64> = data.images.iter().map(|image| image.revision).collect();

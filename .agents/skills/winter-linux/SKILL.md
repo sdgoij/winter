@@ -23,8 +23,9 @@ One module owns:
 | chrome | the desktop's window palette (`kdeglobals`), the title-bar CSS and the strip's UI font |
 | strip | layout, hit testing, painting, drag-reorder over `crate::tabs` |
 | icons | each tab's program icon from the desktop icon theme, rendered through GSK once and cached as a Cairo surface |
-| pane | the base `DrawingArea`: pane fill, scrollbar, marks, and the input controllers over the GL area |
-| gl | the OpenGL content path (ADR 076): `GtkGLArea`, solid/glyph/image pipelines, atlas, fallback |
+| pane | the base `DrawingArea`: pane fills, the software blit, and the input controllers over the GL area |
+| chrome | the `DrawingArea` above the GL area: dividers, one scrollbar per pane, bells and the focused pane border (ADR 086) |
+| gl | the OpenGL content path (ADR 076): one `GtkGLArea` drawing every pane into its own scissored viewport; the two pipelines, atlas, image textures, fallback |
 | input | key, IME, click, drag, scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
 | palette | a card over the pane: a filter field and clickable rows over `palette::Palette` |
@@ -113,11 +114,10 @@ XDG_RUNTIME_DIR=/tmp/xdg-w WAYLAND_DISPLAY=winter-test \
 ```
 
 `WINTER_OPEN_SETTINGS=1` also writes `/tmp/shot-settings.png` (the sibling of
-the requested path with `-settings`), `WINTER_OPEN_FIND=1` opens the find bar and
-`WINTER_OPEN_PALETTE=1` opens the command palette. A correct first frame shows the strip with one tab, `+` and `▾`, the
-prompt and the cursor on a dark pane inset 8 px from the left, and the
-scrollbar's 10 px gutter on the right. A white pane means the drawing area got
-no height — see the traps. Do not leave the PNGs in the tree.
+the requested path with `-settings`), `WINTER_OPEN_FIND=1` opens the find bar,
+`WINTER_OPEN_PALETTE=1` opens the command palette and `WINTER_SPLIT=1` splits
+the first tab. A correct first frame with a split shows two prompts with a
+one-pixel divider, a focus border and one scrollbar gutter per pane.
 
 A HiDPI panel is the same run with `GDK_SCALE=2` in front of the command. The
 strip, the grid and the scrollbar must scale together and fill the window; a
@@ -161,8 +161,34 @@ capture is `import -window <id> /tmp/shot.png`. Select with a drag and check the
 highlight spans the rows it crossed; reorder by dragging a titled tab past
 a neighbour's midpoint.
 
+## Panes
+
+A tab is `winter::layout`'s tree plus a `Vec<Pane>` (ADR 086). Each pane owns its
+`Control`, `View`, `FindBar`, renderer, software pixels, `Gl` handle and grid.
+The one `GtkGLArea` spans the whole pane area; before each pane's
+`paint_frame`, `Gl::set_viewport` selects its grid rectangle (and the first pane
+clears the whole framebuffer). The chrome lives in a second `DrawingArea`
+above the GL area: painting it on the base widget would hide it under the
+opaque GL surface.
+
+- The pointer maps through `pane_at`, `cell_in` and `pane_scrollbar_rect`; a
+divider within three points is grabbed before a pane, and `held.left` must be
+set on the press (the divider and scrollbar branches run before the normal
+`hold`).
+- The focused pane owns keys, IME, find and the wheel; the wheel falls back to
+the focused pane, and selection stays in `press_pane`.
+- A split spawns its new pane at `pane_grid(split_second(rect, axis))`, so the
+new shell lays out its first prompt for the width it keeps.
+- Ctrl+Shift+W, or the palette's **Close pane** row, closes the focused pane;
+closing the last pane closes the tab. The strip's close box closes the whole
+tab. `closeTab` is the action name, but its rule is the focused pane (the
+shared action's doc says so).
+
 ## Traps
 
+- **The GL area is above the base widget and opaque.** Do not paint dividers,
+  scrollbars or the focus border on the base `DrawingArea`; they belong on
+  `chrome_area` (ADR 086).
 - **A claimed sequence stops everything in another group.** `GtkGestureClick`
   claims the sequence when the shell handles a press; GTK denies every other
   gesture group on the widget and stops propagating the sequence to the motion

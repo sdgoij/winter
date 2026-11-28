@@ -8,7 +8,7 @@
 //!
 //! Every `unsafe` call carries a `SAFETY:` note, as the rest of `winui` does.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -36,6 +36,8 @@ const IMAGE_CACHE_LIMIT: usize = 32;
 /// The GPU backend: the pane's D3D device, one brush and one font face.
 pub struct GpuBackend {
     surface: Rc<RefCell<Option<Surface>>>,
+    /// Where this pane's grid sits in the swap chain, in device pixels.
+    offset: Rc<Cell<(i32, i32)>>,
     face_path: PathBuf,
     face: Option<IDWriteFontFace>,
     brush: Option<ID2D1SolidColorBrush>,
@@ -44,9 +46,10 @@ pub struct GpuBackend {
 
 impl GpuBackend {
     /// Creates a backend that paints into `surface` once the panel has one.
-    pub fn new(surface: Rc<RefCell<Option<Surface>>>, face_path: &Path) -> Self {
+    pub fn new(surface: Rc<RefCell<Option<Surface>>>, offset: Rc<Cell<(i32, i32)>>, face_path: &Path) -> Self {
         Self {
             surface,
+            offset,
             face_path: face_path.to_path_buf(),
             face: None,
             brush: None,
@@ -67,6 +70,7 @@ impl GpuBackend {
     fn paint(&mut self, surface: &mut Surface, payload: &RenderingPayload) {
         let (cell_width, cell_height) = cell_size(payload);
         let (columns, rows) = payload.settings.viewport_cell_count;
+        let (offset_x, offset_y) = self.offset.get();
         let Some(brush) = self.brush.clone() else {
             return;
         };
@@ -77,12 +81,22 @@ impl GpuBackend {
                 let (background, _) = cell_colors(payload, column, row);
                 let (left, top, right, bottom) = cell_rect(column, row, cell_width, cell_height);
                 surface.set_brush_color(&brush, color_from_argb(background));
-                surface.fill_rect(&brush, rect_f(left, top, right, bottom));
+                surface.fill_rect(
+                    &brush,
+                    rect_f(left + offset_x, top + offset_y, right + offset_x, bottom + offset_y),
+                );
             }
         }
 
         // 2. Images, between the backgrounds and the text.
-        draw_images(surface, &mut self.images, payload, cell_width, cell_height);
+        draw_images(
+            surface,
+            &mut self.images,
+            payload,
+            cell_width,
+            cell_height,
+            (offset_x, offset_y),
+        );
 
         // 3. Text, one run per colour change so SGR colours stay on their cells.
         let Some(face) = self.face.as_ref() else {
@@ -115,8 +129,8 @@ impl GpuBackend {
                 }
 
                 let origin = windows_numerics::Vector2 {
-                    X: f32::from(row.glyph_columns[start]) * cell_width as f32,
-                    Y: origin_y,
+                    X: f32::from(row.glyph_columns[start]) * cell_width as f32 + offset_x as f32,
+                    Y: origin_y + offset_y as f32,
                 };
                 surface.set_brush_color(&brush, color_from_argb(colour));
                 let _ =
@@ -129,7 +143,15 @@ impl GpuBackend {
         for row_index in 0..payload.rows.len() as u16 {
             for rect in grid_line_rects(payload, row_index, cell_width, cell_height) {
                 surface.set_brush_color(&brush, color_from_argb(rect.color));
-                surface.fill_rect(&brush, rect_f(rect.left, rect.top, rect.right, rect.bottom));
+                surface.fill_rect(
+                    &brush,
+                    rect_f(
+                        rect.left + offset_x,
+                        rect.top + offset_y,
+                        rect.right + offset_x,
+                        rect.bottom + offset_y,
+                    ),
+                );
             }
         }
 
@@ -142,10 +164,10 @@ impl GpuBackend {
             surface.fill_rect(
                 &brush,
                 rect_f(
-                    left * cell_width as i32,
-                    top * cell_height as i32,
-                    right * cell_width as i32,
-                    bottom * cell_height as i32,
+                    left * cell_width as i32 + offset_x,
+                    top * cell_height as i32 + offset_y,
+                    right * cell_width as i32 + offset_x,
+                    bottom * cell_height as i32 + offset_y,
                 ),
             );
         }
@@ -169,12 +191,15 @@ impl IBackend for GpuBackend {
         };
 
         self.ensure_resources(surface);
-        if surface.begin_frame(payload.settings.misc.background_color).is_err() {
+        let composite = surface.is_composite();
+        if !composite && surface.begin_frame(payload.settings.misc.background_color).is_err() {
             return;
         }
         self.paint(surface, payload);
         // EndDraw pairs with `begin_frame` whatever `paint` decided to draw.
-        let _ = surface.end_frame();
+        if !composite {
+            let _ = surface.end_frame();
+        }
     }
 
     fn requires_continuous_redraw(&mut self) -> bool {
@@ -242,6 +267,7 @@ fn draw_images(
     payload: &RenderingPayload,
     cell_width: u32,
     cell_height: u32,
+    offset: (i32, i32),
 ) {
     let mut used = Vec::new();
     for (row_index, row) in payload.rows.iter().enumerate() {
@@ -274,8 +300,8 @@ fn draw_images(
             continue;
         };
 
-        let left = bitmap.target_offset.max(0) * cell_width as i32;
-        let top = row_index as i32 * cell_height as i32;
+        let left = bitmap.target_offset.max(0) * cell_width as i32 + offset.0;
+        let top = row_index as i32 * cell_height as i32 + offset.1;
         let right = left + bitmap.target_width * cell_width as i32;
         let bottom = top + cell_height as i32;
         let _ = surface.draw_bitmap(created, rect_f(left, top, right, bottom));

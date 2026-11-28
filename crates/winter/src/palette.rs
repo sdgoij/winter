@@ -150,7 +150,7 @@ pub fn extension_entries(commands: impl IntoIterator<Item = (String, String)>) -
 fn action_label(action: Action) -> &'static str {
     match action {
         Action::NewTab => "New tab",
-        Action::CloseTab => "Close tab",
+        Action::CloseTab => "Close pane",
         Action::NextTab => "Next tab",
         Action::PrevTab => "Previous tab",
         Action::SplitHorizontal => "Split pane right",
@@ -215,6 +215,18 @@ mod tests {
         assert_eq!(entries[2].label, "New tab");
         assert_eq!(entries[2].command, Command::Action(Action::NewTab));
         assert_eq!(entries[2].chord.as_deref(), Some("ctrl+shift+t"));
+    }
+
+    #[test]
+    fn the_close_row_names_the_pane_it_closes() {
+        let file = settings("");
+        let entries = entries(&file, |action| action == Action::CloseTab);
+        let close = entries
+            .iter()
+            .find(|entry| entry.command == Command::Action(Action::CloseTab))
+            .expect("the close row");
+
+        assert_eq!(close.label, "Close pane");
     }
 
     #[test]

@@ -14,7 +14,7 @@ change it without rediscovering the traps.
 
 | File | Owns |
 |---|---|
-| `app.rs` | `Shell` component, one `Control` and `View` per tab, the timer, chords, pointer and wheel dispatch |
+| `app.rs` | `Shell` component, one pane tree per tab, the timer, chords, pointer and wheel dispatch |
 | `surface.rs` | D3D11 device, composition swap chain, Direct2D blit (permitted `unsafe`) |
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
@@ -24,9 +24,35 @@ change it without rediscovering the traps.
 | `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
 | `lib.rs` | Module boundary and `run()` |
 
-`app.rs` owns the only `Renderer` and swap chain. Both shells share `input.rs`,
-`tabs.rs`, `view.rs`, `term_control.rs` and `term_connection.rs`; a rule that is
-not Windows-specific belongs there, never in `winui`.
+`app.rs` owns the only `Surface` and swap chain. A tab is `winter::layout`'s
+tree plus a `Vec<Pane>`; the one swap chain composites a viewport per pane
+(ADR 086). Both shells share `input.rs`, `tabs.rs`, `view.rs`, `term_control.rs`
+and `term_connection.rs`; a rule that is not Windows-specific belongs there,
+never in `winui`.
+
+## Panes
+
+Each `Pane` owns its `Control`, `ViewState`, `FindBar`, title, program, renderer,
+software pixels and grid. `paint_panes` calls `Surface::begin_composite`, lets
+each pane's backend draw at its device-pixel offset (or blits the software
+pixels), and ends the composite once, so one `Present` covers the window. The
+scrollbars, dividers and focused border are XAML elements placed by the layout
+fractions; the find bar is wrapped at the focused pane's rectangle.
+
+- Pointer positions are pane-relative after subtracting `PANE_PADDING_LEFT`;
+  `cell_in`, `pane_at` and the scrollbar use the pane's own grid.
+- A divider within three DIPs is grabbed before a pane; dragging updates the
+  tree's ratio and resizes the tab.
+- Split, focus and resize are performed from the settings actions; the focused
+  pane supplies the tab title and icon. `WINTER_SPLIT=1` splits the first tab.
+- Ctrl+Shift+W, or the palette's **Close pane** row, closes the focused pane;
+  closing the last pane closes the tab. The strip's close button closes the
+  whole tab. The settings name is still `closeTab`, but its rule is the focused
+  pane.
+- The surface is a `RefCell`: borrow it only around `begin_composite`,
+  `end_composite` and a software `blit_at`. Holding the borrow across a pane's
+  `paint_frame` makes `GpuBackend` borrow the same cell again and aborts —
+  release builds exit with `0xc0000409`.
 
 ## Before a build or a live check
 

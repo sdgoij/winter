@@ -1293,7 +1293,7 @@ impl Shell {
     fn perform(&mut self, action: settings::Action) -> bool {
         match action {
             settings::Action::NewTab => self.open_tab(),
-            settings::Action::CloseTab => self.close_active_tab(),
+            settings::Action::CloseTab => self.close_pane(),
             settings::Action::NextTab => self.step_tab(1),
             settings::Action::PrevTab => self.step_tab(-1),
             settings::Action::SplitHorizontal => self.split_pane(Axis::Horizontal),

@@ -124,7 +124,8 @@ the focused pane's border. A crash before the capture is the construction
 failure. Do not leave the PNGs in the tree.
 
 On a machine with a display, check: click focuses the pane and typing reaches the
-shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; ⌘D and ⇧⌘D split, ⇧⌘W closes a pane, ⌘⌥arrows move
+shell; ⌘T/⌘W/⌘F/⌘,/⌘Q; ⌘D and ⇧⌘D split, ⇧⌘W or the palette's **Close
+pane** row closes a pane, ⌘⌥arrows move
 focus and a divider drags; Escape closes the find field; ⌘⇧P opens the palette,
 typing narrows it, the arrows move and Enter runs; ⇧wheel scrolls history
 while a tracking program still gets the wheel; ⌘C copies a selection and plain

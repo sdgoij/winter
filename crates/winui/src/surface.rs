@@ -46,6 +46,9 @@ pub struct Surface {
     _target: Option<ID2D1Bitmap1>,
     width: u32,
     height: u32,
+    /// Whether a composite frame is open, so a pane's backend must not begin or
+    /// present one of its own.
+    composite: bool,
 }
 
 // The target is held so the context's target stays alive; nothing reads it.
@@ -113,6 +116,7 @@ impl Surface {
             _target: Some(target),
             width,
             height,
+            composite: false,
         })
     }
 
@@ -179,6 +183,113 @@ impl Surface {
             )
         };
         borrowed.to_owned()
+    }
+
+    /// Whether a composite frame is open.
+    pub fn is_composite(&self) -> bool {
+        self.composite
+    }
+
+    /// Begins one frame that several panes draw into.
+    ///
+    /// The whole target is cleared to `background` once; each pane then draws
+    /// its own grid at its own offset until [`Self::end_composite`].
+    pub fn begin_composite(&mut self, background: u32) -> Result<()> {
+        if self.composite {
+            return Ok(());
+        }
+
+        // SAFETY: the context is live and the swap chain is a composition swap
+        // chain, so buffer zero is the current back buffer.
+        unsafe { self.context.SetTarget(None::<&ID2D1Image>) };
+        self._target = Some(create_target(&self.context, &self.swap_chain)?);
+
+        let clear = D2D1_COLOR_F {
+            r: f32::from((background & 0xFF) as u8) / 255.0,
+            g: f32::from(((background >> 8) & 0xFF) as u8) / 255.0,
+            b: f32::from(((background >> 16) & 0xFF) as u8) / 255.0,
+            a: 1.0,
+        };
+
+        // SAFETY: BeginDraw pairs with `end_composite`'s EndDraw on every path.
+        unsafe {
+            self.context.BeginDraw();
+            self.context.Clear(Some(&clear as *const _));
+        }
+        self.composite = true;
+        Ok(())
+    }
+
+    /// Ends a composite frame and presents it.
+    pub fn end_composite(&mut self) -> Result<()> {
+        if !self.composite {
+            return Ok(());
+        }
+        self.composite = false;
+
+        // SAFETY: `begin_composite` called BeginDraw on this context, and the
+        // swap chain is live.
+        unsafe {
+            if let Err(error) = self.context.EndDraw(None, None) {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| eprintln!("winter gpu: EndDraw: {error}"));
+                return Err(error);
+            }
+            let hr = self.swap_chain.Present(1, DXGI_PRESENT(0));
+            if hr.is_err() {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| eprintln!("winter gpu: Present: {hr:?}"));
+                return hr.ok();
+            }
+        }
+        Ok(())
+    }
+
+    /// Draws a pane's software pixels at `(x, y)` inside a composite frame.
+    pub fn blit_at(&mut self, pixels: &[u32], width: u32, height: u32, x: i32, y: i32) -> Result<()> {
+        if !self.composite || width == 0 || height == 0 || pixels.len() < (width as usize) * (height as usize) {
+            return Ok(());
+        }
+
+        let properties = D2D1_BITMAP_PROPERTIES1 {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_IGNORE,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            bitmapOptions: D2D1_BITMAP_OPTIONS(0),
+            colorContext: ManuallyDrop::new(None),
+        };
+        let size = D2D_SIZE_U { width, height };
+
+        // SAFETY: the pixel buffer is `width * height` `u32`s, the pitch matches
+        // the row length, and the properties describe that layout.
+        let bitmap: ID2D1Bitmap1 = unsafe {
+            self.context
+                .CreateBitmap(size, Some(pixels.as_ptr().cast()), width * 4, &properties as *const _)?
+        };
+        let bitmap: ID2D1Bitmap = bitmap.into();
+        let destination = D2D_RECT_F {
+            left: x as f32,
+            top: y as f32,
+            right: (x + width as i32) as f32,
+            bottom: (y + height as i32) as f32,
+        };
+
+        // SAFETY: a composite frame is open, and the bitmap belongs to this
+        // context's device.
+        unsafe {
+            self.context.DrawBitmap(
+                &bitmap,
+                Some(&destination),
+                1.0,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                None,
+                None,
+            );
+        }
+        Ok(())
     }
 
     /// Begins a frame: re-acquires the back buffer, begins drawing and clears.

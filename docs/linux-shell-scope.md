@@ -29,7 +29,7 @@ primary selection and IME.
 | 2. Toolchain | ✅ `gtk4-devel` 4.22.5 and `libadwaita-devel` 1.9.4 installed in the guest |
 | 3. Skeleton | ✅ `crates/gtk4/src/` behind the `gtk` feature: a window, a drawing area, and a frame painted from `renderer` |
 | 4. Live terminal | ✅ `Session` + `Control` over the profile's shell, keys through the shared `input` rules, resize on every frame, the wheel into history |
-| 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the command palette (±`WINTER_OPEN_PALETTE`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, and the pane inset |
+| 5. Host chrome | ✅ tabs and the profile menu, the find bar (`GtkSearchBar` + `GtkSearchEntry`), the command palette (±`WINTER_OPEN_PALETTE`), the settings editor (±`WINTER_OPEN_SETTINGS`), drag-reorder, the scrollbar with prompt marks, the pane inset, and splittable panes whose dividers drag (±`WINTER_SPLIT`) |
 | 6. Linux extras | ✅ IME preedit with the candidate anchor, the screen as the pane's accessible description, bell flash and OSC 777 notifications; ⏳ primary selection |
 | 7. Cut-over | ✅ The GTK 4 shell is the Linux build and CI installs `libgtk-4-dev` (ADRs 075, 079) |
 
@@ -107,8 +107,9 @@ One module, `crates/gtk4/src/lib.rs`, chosen in `main.rs` the way
 |---|---|
 | entry | `run()`, the `gtk::Application`, the window and the `GtkWindowHandle` title bar |
 | strip | the tab strip's layout, hit testing, painting and drag-reorder over `crate::tabs` |
-| pane | the base `DrawingArea`: the pane fill, the scrollbar with prompt marks and the input controllers over the GL area |
-| gl | the OpenGL content path (ADR 076): one `GtkGLArea` above the pane, the two pipelines, the glyph atlas, image textures, and the software fallback |
+| pane | the base `DrawingArea`: every pane's fill, and the software blit |
+| chrome | the `DrawingArea` above the GL area: the dividers, one scrollbar per pane with prompt marks, the bells and the focused pane's border (ADR 086) |
+| gl | the OpenGL content path (ADR 076): one `GtkGLArea` above the pane drawing every pane into its own scissored viewport, the two pipelines, the glyph atlas, image textures, and the software fallback |
 | input | `EventControllerKey`, the `IMContext`, `GestureClick`, `GestureDrag`, the scroll and motion controllers → `crate::input` |
 | find | `GtkSearchBar` + `GtkSearchEntry` over the shared `find::FindBar` |
 | settings | a `GtkTextView` over the whole TOML document, beside the profile `GtkPopoverMenu` |
@@ -119,13 +120,15 @@ The module is about 3.5k lines. Splitting it along those rows is the next
 cleanup, once the shell has been exercised interactively; the WinUI and macOS
 shells are the shape to follow.
 
-Rendering path: the engine produces one `RenderingPayload`. The GL backend (ADR
-075) draws it into the GL area's framebuffer — solid quads for backgrounds,
-grid lines and the cursor, a one-channel glyph atlas for text, RGBA textures for
-images — and GTK composites the area into the window. The software backend is
-the fallback: it rasterises the same payload, the pane copies the pixels into a
-Cairo `ImageSurface`, and the same capture path reads the window. The strip,
-scrollbar and margins are always Cairo.
+Rendering path: the engine produces one `RenderingPayload` per pane. The GL
+backend (ADR 075) draws each payload into the one GL area's framebuffer at that
+pane's grid rectangle, with a viewport and scissor switch between panes — solid
+quads for backgrounds, grid lines and the cursor, a one-channel glyph atlas for
+text, RGBA textures for images — and GTK composites the area into the window.
+The software backend is the fallback: it rasterises the same payload, the pane
+copies the pixels into a Cairo `ImageSurface`, and the same capture path reads the
+window. The strip, scrollbars, dividers and margins are always Cairo, painted
+above the content.
 
 ## Wayland rules that will bite
 
