@@ -60,6 +60,11 @@ allow = [
     # linked binary needs; the font itself is not modified.
     "OFL-1.1",
     "Ubuntu-font-1.0",
+    # Mozilla's root-certificate data, reached through ureq's rustls. It is a
+    # permissive data licence: redistribution is allowed and the data is not
+    # modified. The alternative is the platform verifier, which is a larger
+    # decision than a registry fetch needs (ADR 088).
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

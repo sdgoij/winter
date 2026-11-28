@@ -24,6 +24,11 @@ pub struct Extensions {
     /// Chords that run an extension command directly.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<ExtensionCommand>,
+    /// The registry URLs this installation reads. `None` means the built-in
+    /// default (ADR 088); `Some([])` means none. Nothing is fetched until the
+    /// Search panel is opened.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registries: Option<Vec<String>>,
 }
 
 /// One chord bound to an extension command.
@@ -117,5 +122,49 @@ mod tests {
         let written = crate::parse(&text).expect("reads back");
         assert!(!written.extensions.enabled);
         assert!(written.extensions.disabled.is_empty());
+        assert!(written.extensions.registries.is_none());
+    }
+
+    #[test]
+    fn an_absent_registry_list_means_the_built_in_default() {
+        assert!(Extensions::default().registries.is_none());
+        let parsed: crate::Settings = toml::from_str("[extensions]\nenabled = true\n").expect("settings");
+        assert!(parsed.extensions.registries.is_none());
+    }
+
+    #[test]
+    fn a_registry_list_round_trips() {
+        let parsed: crate::Settings = toml::from_str(
+            r#"
+            [extensions]
+            registries = ["https://one.example/registry.toml", "file:///tmp/registry.toml"]
+            "#,
+        )
+        .expect("settings");
+        assert_eq!(
+            parsed.extensions.registries.as_deref(),
+            Some(
+                &[
+                    "https://one.example/registry.toml".to_string(),
+                    "file:///tmp/registry.toml".to_string()
+                ][..]
+            )
+        );
+
+        let written = crate::to_toml(&parsed);
+        assert!(written.contains("registries"), "{written}");
+        assert_eq!(
+            crate::parse(&written).expect("reads back").extensions.registries,
+            parsed.extensions.registries
+        );
+    }
+
+    #[test]
+    fn an_empty_registry_list_is_an_explicit_none() {
+        let parsed: crate::Settings = toml::from_str("[extensions]\nregistries = []\n").expect("settings");
+        assert_eq!(parsed.extensions.registries.as_deref(), Some(&[][..]));
+
+        let written = crate::to_toml(&parsed);
+        assert!(written.contains("registries = []"), "{written}");
     }
 }

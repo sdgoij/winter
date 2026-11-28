@@ -11,8 +11,10 @@ description = "The extension registry: schema, validation and the rows a shell s
 extensions.workspace = true
 semver.workspace = true
 serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+ureq.workspace = true
 
 [lints]
 workspace = true

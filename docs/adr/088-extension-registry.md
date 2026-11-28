@@ -55,11 +55,15 @@ acceptable once the screen can install one.
    registry URL, version, archive URL, checksum and the install time. A
    directory without one is a manual install, whatever its name.
 9. **The network is lazy and outside `crates/extensions`.** The default registry
-   (`https://sdgoij.github.io/winter/extensions/registry.toml`) is on in a new
-   `[extensions] registries` list, but nothing is fetched until the Search panel
-   is opened. The last good copy is cached beside the settings file; the
-   Installed panel does not fetch and therefore does not check for updates until
-   Search has.
+   (`https://sdgoij.github.io/winter/extensions/registry.toml`) is on when the
+   settings file's `[extensions] registries` is absent; `registries = []` means
+   none, a list replaces the default, and `WINTER_REGISTRY` overrides the list
+   for one run (`0`/`off` or an empty value means none). Nothing is fetched
+   until the Search panel is opened. The last good copy is cached under
+   `registry-cache/<sha256(url)>.toml` beside the settings file, and a failed or
+   malformed fetch answers that copy with the reason attached; the Installed
+   panel does not fetch and therefore does not check for updates until Search
+   has.
 10. **Extensions reload without a restart.** The engine is rebuilt — holder
     taken, engine dropped, discovery re-run, a fresh engine frozen and swapped in
     — after an install, uninstall or update, after an enable/disable switch,
@@ -90,6 +94,10 @@ acceptable once the screen can install one.
   and test moved from `"1"` to `"1.0.0"`. This is a manifest-validation
   tightening, not an `api` bump: `api` describes the host contract, not the
   file's spelling.
+- `[extensions] registries` is additive for this build; an older build refuses a
+  settings file that carries it, because the table is strict. That is the usual
+  cost of a new key in a `deny_unknown_fields` table and is recorded rather than
+  worked around.
 - A reload re-evaluates every loaded extension, not one. `Loaded` is
   self-contained, so a rebuild re-registers entries, modules and assets together;
   a per-extension reload, as Goats does, would leave asset changes needing a

@@ -2,11 +2,12 @@
 
 Status: the loader (`crates/extensions`: `manifest`, `discover`), the `host`
 feature, a `Host` plus extensions screen in each native shell — macOS, WinUI
-and GTK — and the registry schema and search index (`crates/registry`) are
-implemented, behind `WINTER_EXT=1`. Fetching a registry, installing an archive
-and the Search/Installed screens are the next slice (ADR 088). This records the
-exploration of the Goat and Noctis systems and the surface this repository
-offers; ADR 086 is the host decision and ADR 088 the registry and install one.
+and GTK — and the registry schema, search index, fetcher and cache
+(`crates/registry`) are implemented, behind `WINTER_EXT=1`. Archive installation,
+the Search/Installed screens and the live engine reload are the next slices
+(ADR 088). This records the exploration of the Goat and Noctis systems and the
+surface this repository offers; ADR 086 is the host decision and ADR 088 the
+registry and install one.
 Related: ADRs 038 and 080 (the shell split), ADR 082 (the embedding surface), ADR
 083 (the frame server) and ADR 084 (the Node addon) for the host boundary;
 `docs/plan.md`'s parked chaos layer for the "bugs", which are a separate surface
@@ -400,14 +401,19 @@ copyable enum.
    on the next start.
 5. `crates/registry` — the strict registry schema: semver releases, a tagged
    source union whose one implemented adapter is a checksummed archive, the
-   per-release `api`, and the caps; plus the merged search index that keeps the
-   same identifier from two registries as two rows. Pure Rust, no network, no
-   engine.
+   per-release `api`, and the caps; the merged search index that keeps the same
+   identifier from two registries as two rows; and the fetcher and cache.
+6. Registry fetching — `[extensions] registries` (`None` means the built-in
+   default, `[]` means none; `WINTER_REGISTRY` overrides for one run), `https`
+   through `ureq`/rustls and `file://` for a mirror, a 1 MiB cap, and a per-URL
+   last-good cache under `registry-cache/` beside `settings.toml`. A `Job` runs
+   one worker per URL and is polled from the tick; a failed or malformed fetch
+   answers the cached copy with the reason attached. Nothing fetches until the
+   Search panel is opened.
 
-What is not here: fetching a registry, its cache, archive installation, the
-Search/Installed screens and the live engine reload ADR 088 calls for; and a
-continuation form for a compiled module's history — it reads the bounded walk
-through its typed accessor instead. `cargo test -p extensions --features host`,
+What is not here: archive installation, the Search/Installed screens and the
+live engine reload ADR 088 calls for; and a continuation form for a compiled
+module's history — it reads the bounded walk through its typed accessor instead. `cargo test -p extensions --features host`,
 `cargo test -p registry`, `cargo test -p winter-cocoa`, `cargo test -p
 winter-winui` and `cargo test -p winter-gtk4` are the suites.
 
