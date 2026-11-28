@@ -437,6 +437,11 @@ copyable enum.
    `commandFinished` is not replayed, resets the focus and title so the new
    engine sees the current pane once, and logs and skips an extension that no
    longer loads while the rest keep running.
+9. Publishing — `extensions/registry.toml` in the repository is the default
+   registry's source, with its archives beside it. `cargo test -p registry
+   --test published` rejects a malformed document and an archive whose checksum
+   disagrees, and the `pages` job in CI stages the directory to
+   `https://sdgoij.github.io/winter/extensions/` on every push to `main`.
 
 What is not here: the `Installed` / `Search` tabs on macOS (the shared
 `registry::Screen` is ready for them); and a continuation form for a compiled

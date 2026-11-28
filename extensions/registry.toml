@@ -1,0 +1,24 @@
+# The registry Winter reads by default (ADR 088), served from GitHub Pages at
+# https://sdgoij.github.io/winter/extensions/registry.toml.
+#
+# Each `[[extensions]]` block names an extension; every release's archive lives
+# beside this file, and its `sha256` is that archive's digest. The schema, the
+# caps and the rules are in `crates/registry/src/schema.rs`;
+# `cargo test -p registry --test published` validates this file and checks each
+# archive against its digest.
+schema = 1
+name = "Winter extensions"
+updated = "2026-11-28T09:43:00Z"
+
+[[extensions]]
+id = "winter.failed-command"
+name = "Failed command"
+description = "Notifies when a command above the prompt exits non-zero, and adds a palette row that reads the focused pane."
+homepage = "https://github.com/sdgoij/winter"
+license = "MIT"
+tags = ["shell-integration", "notification"]
+
+  [[extensions.versions]]
+  version = "0.1.0"
+  api = 1
+  source = { type = "archive", url = "https://sdgoij.github.io/winter/extensions/winter.failed-command-0.1.0.zip", sha256 = "bbeb9218b04bb9a28bcd56db1c25e506eed8857d658f9815097ec9a8b5b860d3" }

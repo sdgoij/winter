@@ -109,6 +109,41 @@ jobs:
       - name: Run the release suite, ignored cases included
         run: just test-long
 
+  # The default extension registry is a static document served from Pages
+  # (ADR 088). The gate already validates it with
+  # `cargo test -p registry --test published`; this job stages the `extensions`
+  # directory under the site root, so `registry.toml` and its archives land at
+  # https://sdgoij.github.io/winter/extensions/ on every push to `main`.
+  #
+  # Pages must be set to "GitHub Actions" as its source in the repository's
+  # settings; a workflow cannot enable that itself.
+  pages:
+    name: Publish the extension registry
+    needs: [gate]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Stage the extensions directory
+        run: |
+          set -eu
+          mkdir -p _site
+          cp -R extensions _site/extensions
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
   # Everything below is a release, and a release is a tag. `if` on every job
   # keeps a push to `main` from spending four more runners.
   #

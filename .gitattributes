@@ -14,3 +14,6 @@
 *.ttf binary
 *.otf binary
 *.woff2 binary
+# A published extension archive is served byte-for-byte; its checksum is in the
+# registry beside it, so normalisation must never touch it.
+*.zip binary
