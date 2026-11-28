@@ -15,6 +15,7 @@ settings.workspace = true
 term.workspace = true
 utils.workspace = true
 extensions = { workspace = true, features = ["host"] }
+registry.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # The shell's host toolkit (ADRs 061, 075). GTK 4.10 is the floor the

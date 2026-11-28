@@ -444,6 +444,7 @@ fn activate(app: &Application) {
         screenshot,
         settings_window: None,
         extensions_window: None,
+        registry: None,
         extensions_requested: false,
         extensions: None,
     }));
@@ -1441,6 +1442,8 @@ struct Shell {
     settings_window: Option<gtk::Window>,
     /// The extensions screen, kept so a capture can include it.
     extensions_window: Option<gtk::Window>,
+    /// The registry Search screen, while the extensions window is open.
+    registry: Option<registry::Screen>,
     /// Whether the timer should open the extensions screen.
     extensions_requested: bool,
     /// The extension engine, when the settings or the environment asked for it.

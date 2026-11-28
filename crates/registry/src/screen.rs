@@ -157,6 +157,11 @@ impl Screen {
         true
     }
 
+    /// Whether the fetch has started.
+    pub fn opened(&self) -> bool {
+        self.job.is_some()
+    }
+
     /// Whether any registry is still being read.
     pub fn is_loading(&self) -> bool {
         self.job.as_ref().is_some_and(Job::is_loading)

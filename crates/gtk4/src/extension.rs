@@ -21,6 +21,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk4 as gtk;
@@ -46,6 +47,8 @@ pub(crate) struct Found {
     pub(crate) enabled: bool,
     /// Why it is not running, when it is not.
     pub(crate) note: String,
+    /// The registry record beside the manifest, when a registry installed it.
+    pub(crate) source: Option<registry::Provenance>,
 }
 
 /// Every extension on disk, as the extensions screen lists it.
@@ -80,6 +83,7 @@ pub(crate) fn installed(roots: Vec<PathBuf>, disabled: &[String], failures: &[(S
             id,
             name: loaded.manifest.name.clone(),
             kind,
+            source: registry::provenance(&loaded.dir),
         });
     }
     for skipped in &report.skipped {
@@ -95,6 +99,7 @@ pub(crate) fn installed(roots: Vec<PathBuf>, disabled: &[String], failures: &[(S
             name,
             kind: "broken",
             note: skipped.reason.clone(),
+            source: None,
         });
     }
     rows.sort_by(|a, b| a.id.cmp(&b.id));
@@ -469,6 +474,27 @@ fn build(settings: &settings::Extensions) -> (extensions::Engine, Vec<(String, S
     (engine, failures, stamps)
 }
 
+/// The Search screen for `settings`, without reading the network.
+///
+/// It is created when the extensions window opens; the Search tab's first
+/// showing is what calls `open` and starts the only fetch (ADR 088).
+fn registry_screen(settings: &settings::Extensions) -> registry::Screen {
+    let root = settings::settings_path().and_then(|path| path.parent().map(PathBuf::from));
+    let cache = root.as_ref().map_or_else(
+        || std::env::temp_dir().join("winter-registry-cache"),
+        |dir| dir.join("registry-cache"),
+    );
+    let extensions = root.map_or_else(
+        || std::env::current_dir().unwrap_or_default().join("extensions"),
+        |dir| dir.join("extensions"),
+    );
+    registry::Screen::new(
+        registry::configured_urls(settings.registries.as_deref()),
+        cache,
+        extensions,
+    )
+}
+
 /// The roots discovery reads, in priority order: the explicit list, the user's
 /// config directory, then beside the executable and in the working directory.
 fn roots() -> Vec<PathBuf> {
@@ -503,22 +529,35 @@ pub(crate) fn show_extensions(shell: &Rc<RefCell<Shell>>, parent: &gtk::Applicat
     shell.borrow_mut().extensions_window = Some(opened);
 }
 
-/// Builds the extensions screen: a switch per extension and one that loads the
-/// feature at all.
+/// The notebook page that holds the registry rows.
+const SEARCH_PAGE: u32 = 1;
+
+/// One Installed row's switch, so Save reads what the window shows after a
+/// rebuild.
+struct SwitchRow {
+    id: String,
+    switchable: bool,
+    switch: gtk::Switch,
+}
+
+/// Builds the extensions window: the Installed switches and the Search tab.
 ///
-/// Saving writes the settings file's `[extensions]` table and nothing else, and
-/// says that loading changes on the next start: a live engine is not reloaded.
+/// The Search tab is the only place a registry is read, and only once the tab is
+/// first shown (ADR 088). The tick polls the screen; a finished install or
+/// uninstall rebuilds the engine and both lists without a restart.
 fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationWindow) -> gtk::Window {
-    let (enabled, rows) = {
-        let shell = shell.borrow();
-        (shell.document.extensions.enabled, shell.installed_extensions())
+    let enabled = {
+        let mut shell = shell.borrow_mut();
+        let settings = shell.document.extensions.clone();
+        shell.registry = Some(registry_screen(&settings));
+        settings.enabled
     };
 
     let mut builder = gtk::Window::builder()
         .title("Extensions")
         .transient_for(parent)
-        .default_width(560)
-        .default_height(480);
+        .default_width(620)
+        .default_height(540);
     if let Some(application) = parent.application() {
         builder = builder.application(&application);
     }
@@ -530,8 +569,12 @@ fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationW
     root.set_margin_start(12);
     root.set_margin_end(12);
 
+    let notebook = gtk::Notebook::new();
+    notebook.set_vexpand(true);
+
+    let installed_page = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let hint = gtk::Label::new(Some(
-        "Anything under an `extensions/` folder is listed here. A switch takes effect the next time Winter starts.",
+        "Anything under an `extensions` folder is listed here. A switch takes effect at once.",
     ));
     hint.set_xalign(0.0);
     hint.set_wrap(true);
@@ -543,56 +586,35 @@ fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationW
     master_row.append(&master);
     master_row.append(&gtk::Label::new(Some("Load extensions")));
 
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let mut switches: Vec<(String, bool, gtk::Switch)> = Vec::new();
-    if rows.is_empty() {
-        let empty = gtk::Label::new(Some("No extensions were found."));
-        empty.set_xalign(0.0);
-        empty.add_css_class("dim-label");
-        list.append(&empty);
-    }
-    for row in &rows {
-        let entry = gtk::Box::new(gtk::Orientation::Vertical, 1);
-
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let switch = gtk::Switch::new();
-        switch.set_active(row.enabled);
-        switch.set_sensitive(row.switchable);
-        switch.set_valign(gtk::Align::Start);
-        switch.set_tooltip_text(Some(if row.switchable {
-            "Load this extension when Winter starts"
-        } else {
-            "This extension could not be read, so there is nothing to switch"
-        }));
-        let title = gtk::Label::new(None);
-        title.set_markup(&format!("<b>{}</b>", gtk::glib::markup_escape_text(&row.name)));
-        title.set_xalign(0.0);
-        line.append(&switch);
-        line.append(&title);
-        entry.append(&line);
-
-        let detail = format!("{} · {}", row.id, row.kind);
-        let detail = if row.note.is_empty() {
-            detail
-        } else {
-            format!("{detail} · {}", row.note)
-        };
-        let detail = gtk::Label::new(Some(&detail));
-        detail.set_xalign(0.0);
-        detail.set_wrap(true);
-        detail.set_margin_start(52);
-        detail.add_css_class("dim-label");
-        entry.append(&detail);
-
-        list.append(&entry);
-        switches.push((row.id.clone(), row.switchable, switch));
-    }
-
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&list)
+    let installed_list = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let installed_scroll = gtk::ScrolledWindow::builder()
+        .child(&installed_list)
         .vexpand(true)
         .has_frame(true)
         .build();
+
+    installed_page.append(&hint);
+    installed_page.append(&master_row);
+    installed_page.append(&installed_scroll);
+    notebook.append_page(&installed_page, Some(&gtk::Label::new(Some("Installed"))));
+
+    let search_page = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let entry = gtk::SearchEntry::new();
+    entry.set_placeholder_text(Some("Search the registries"));
+    let search_status = gtk::Label::new(None);
+    search_status.set_xalign(0.0);
+    search_status.set_wrap(true);
+    search_status.add_css_class("dim-label");
+    let search_list = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let search_scroll = gtk::ScrolledWindow::builder()
+        .child(&search_list)
+        .vexpand(true)
+        .has_frame(true)
+        .build();
+    search_page.append(&entry);
+    search_page.append(&search_status);
+    search_page.append(&search_scroll);
+    notebook.append_page(&search_page, Some(&gtk::Label::new(Some("Search"))));
 
     let status = gtk::Label::new(None);
     status.set_xalign(0.0);
@@ -607,27 +629,96 @@ fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationW
     buttons.append(&close);
     buttons.append(&save);
 
-    root.append(&hint);
-    root.append(&master_row);
-    root.append(&scroll);
+    root.append(&notebook);
     root.append(&status);
     root.append(&buttons);
     window.set_child(Some(&root));
 
+    let switches: Rc<RefCell<Vec<SwitchRow>>> = Rc::new(RefCell::new(Vec::new()));
+    rebuild_installed(shell, &installed_list, &switches);
+    rebuild_search(shell, &search_list, &search_status);
+
+    {
+        let shell = Rc::clone(shell);
+        let search = search_list.clone();
+        let search_status = search_status.clone();
+        notebook.connect_switch_page(move |_, _, page| {
+            if page != SEARCH_PAGE {
+                return;
+            }
+            {
+                if let Some(screen) = &mut shell.borrow_mut().registry {
+                    screen.open();
+                }
+            }
+            rebuild_search(&shell, &search, &search_status);
+        });
+    }
+
+    {
+        let shell = Rc::clone(shell);
+        let search = search_list.clone();
+        let search_status = search_status.clone();
+        entry.connect_search_changed(move |entry| {
+            {
+                if let Some(screen) = &mut shell.borrow_mut().registry {
+                    screen.set_query(entry.text().to_string());
+                }
+            }
+            rebuild_search(&shell, &search, &search_status);
+        });
+    }
+
     {
         let shell = Rc::clone(shell);
         let master = master.clone();
+        let switches = Rc::clone(&switches);
         let status = status.clone();
+        let installed = installed_list.clone();
         save.connect_clicked(move |_| {
             let disabled: Vec<String> = switches
+                .borrow()
                 .iter()
-                .filter(|(_, switchable, switch)| *switchable && !switch.is_active())
-                .map(|(id, _, _)| id.clone())
+                .filter(|row| row.switchable && !row.switch.is_active())
+                .map(|row| row.id.clone())
                 .collect();
             match shell.borrow_mut().save_extensions(master.is_active(), disabled) {
-                Ok(()) => status.set_text("Saved. Extensions load when Winter next starts."),
+                Ok(()) => {
+                    status.set_text("Saved. The engine was rebuilt.");
+                    rebuild_installed(&shell, &installed, &switches);
+                }
                 Err(error) => status.set_text(&error),
             }
+        });
+    }
+
+    {
+        let shell = Rc::clone(shell);
+        let installed = installed_list.clone();
+        let search = search_list.clone();
+        let switches = Rc::clone(&switches);
+        let search_status = search_status.clone();
+        gtk::glib::timeout_add_local(Duration::from_millis(200), move || {
+            let changed = {
+                let Ok(mut shell) = shell.try_borrow_mut() else {
+                    return gtk::glib::ControlFlow::Continue;
+                };
+                let Some(screen) = &mut shell.registry else {
+                    return gtk::glib::ControlFlow::Break;
+                };
+                let changed = screen.poll();
+                if changed.tree {
+                    shell.reload_extensions();
+                }
+                changed
+            };
+            if changed.display || changed.tree {
+                rebuild_search(&shell, &search, &search_status);
+            }
+            if changed.tree {
+                rebuild_installed(&shell, &installed, &switches);
+            }
+            gtk::glib::ControlFlow::Continue
         });
     }
 
@@ -651,12 +742,11 @@ fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationW
     }
 
     {
-        // Closing leaves no window behind, so the next request reads the disk
-        // again instead of presenting a disposed one.
         let cleared = Rc::clone(shell);
         window.connect_close_request(move |_window| {
             if let Ok(mut shell) = cleared.try_borrow_mut() {
                 shell.extensions_window = None;
+                shell.registry = None;
             }
             gtk::glib::Propagation::Proceed
         });
@@ -664,6 +754,239 @@ fn open_extensions_window(shell: &Rc<RefCell<Shell>>, parent: &gtk::ApplicationW
 
     window.present();
     window
+}
+
+/// Rebuilds the Installed list from what is on disk.
+fn rebuild_installed(shell: &Rc<RefCell<Shell>>, list: &gtk::Box, switches: &Rc<RefCell<Vec<SwitchRow>>>) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    let rows = shell.borrow().installed_extensions();
+    switches.borrow_mut().clear();
+
+    if rows.is_empty() {
+        let empty = gtk::Label::new(Some("No extensions were found."));
+        empty.set_xalign(0.0);
+        empty.add_css_class("dim-label");
+        list.append(&empty);
+        return;
+    }
+
+    for row in rows {
+        let entry = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let switch = gtk::Switch::new();
+        switch.set_active(row.enabled);
+        switch.set_sensitive(row.switchable);
+        switch.set_valign(gtk::Align::Start);
+        switch.set_tooltip_text(Some(if row.switchable {
+            "Load this extension"
+        } else {
+            "This extension could not be read, so there is nothing to switch"
+        }));
+        let title = gtk::Label::new(None);
+        title.set_markup(&format!("<b>{}</b>", gtk::glib::markup_escape_text(&row.name)));
+        title.set_xalign(0.0);
+        line.append(&switch);
+        line.append(&title);
+        entry.append(&line);
+
+        let detail = if row.note.is_empty() {
+            format!("{} · {}", row.id, row.kind)
+        } else {
+            format!("{} · {} · {}", row.id, row.kind, row.note)
+        };
+        let detail = gtk::Label::new(Some(&detail));
+        detail.set_xalign(0.0);
+        detail.set_wrap(true);
+        detail.set_margin_start(52);
+        detail.add_css_class("dim-label");
+        entry.append(&detail);
+
+        if let Some(source) = &row.source {
+            let provenance = gtk::Label::new(Some(&format!("Installed {} from {}", source.version, source.registry)));
+            provenance.set_xalign(0.0);
+            provenance.set_wrap(true);
+            provenance.set_margin_start(52);
+            provenance.add_css_class("dim-label");
+            entry.append(&provenance);
+
+            let remove = gtk::Button::with_label("Remove");
+            remove.set_halign(gtk::Align::Start);
+            remove.set_margin_start(52);
+            {
+                let shell = Rc::clone(shell);
+                let id = row.id.clone();
+                remove.connect_clicked(move |_| {
+                    if let Some(screen) = &mut shell.borrow_mut().registry {
+                        screen.uninstall(&id, false);
+                    }
+                });
+            }
+            entry.append(&remove);
+        }
+
+        list.append(&entry);
+        switches.borrow_mut().push(SwitchRow {
+            id: row.id,
+            switchable: row.switchable,
+            switch,
+        });
+    }
+}
+
+/// Rebuilds the Search list from the live screen.
+fn rebuild_search(shell: &Rc<RefCell<Shell>>, list: &gtk::Box, status: &gtk::Label) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
+    let (rows, text, opened, loading) = {
+        let shell = shell.borrow();
+        let Some(screen) = &shell.registry else {
+            return;
+        };
+        let rows: Vec<(registry::SearchRow, Option<usize>)> = screen
+            .rows()
+            .into_iter()
+            .map(|row| {
+                let picked = screen.version(&row).cloned();
+                let slot = picked.and_then(|picked| row.versions.iter().position(|version| *version == picked));
+                (row, slot)
+            })
+            .collect();
+        (rows, status_for(screen), screen.opened(), screen.is_loading())
+    };
+    status.set_text(&text);
+
+    if rows.is_empty() {
+        if opened && !loading {
+            let empty = gtk::Label::new(Some("No extension matches."));
+            empty.set_xalign(0.0);
+            empty.add_css_class("dim-label");
+            list.append(&empty);
+        }
+        return;
+    }
+
+    for (index, (row, slot)) in rows.into_iter().enumerate() {
+        let entry = gtk::Box::new(gtk::Orientation::Vertical, 2);
+
+        let title = gtk::Label::new(None);
+        title.set_markup(&format!(
+            "<b>{}</b>  <span alpha=\"60%\">{}</span>",
+            gtk::glib::markup_escape_text(&row.name),
+            gtk::glib::markup_escape_text(&row.id)
+        ));
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        entry.append(&title);
+
+        if let Some(description) = &row.description {
+            let label = gtk::Label::new(Some(description));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("dim-label");
+            entry.append(&label);
+        }
+
+        let mut provenance = format!("{} · {}", row.registry_name, row.registry);
+        match &row.installed {
+            None => {}
+            Some(registry::Local::Manual) => provenance.push_str(" · installed by hand"),
+            Some(registry::Local::Registry(found)) => {
+                provenance.push_str(&format!(" · installed {}", found.version));
+                if found.registry == row.registry {
+                    provenance.push_str(" from this registry");
+                }
+            }
+        }
+        let label = gtk::Label::new(Some(&provenance));
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.add_css_class("dim-label");
+        entry.append(&label);
+
+        if !row.dependencies.is_empty() {
+            let label = gtk::Label::new(Some(&format!("Needs: {}", row.dependencies.join(", "))));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("dim-label");
+            entry.append(&label);
+        }
+
+        if row.installable() {
+            let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let labels: Vec<String> = row.versions.iter().map(ToString::to_string).collect();
+            let strings: Vec<&str> = labels.iter().map(String::as_str).collect();
+            let versions = gtk::DropDown::from_strings(&strings);
+            versions.set_selected(slot.unwrap_or(0) as u32);
+            {
+                let shell = Rc::clone(shell);
+                versions.connect_selected_notify(move |versions| {
+                    if let Some(screen) = &mut shell.borrow_mut().registry {
+                        screen.select_index(index, versions.selected() as usize);
+                    }
+                });
+            }
+            let install = gtk::Button::with_label(if row.installed.is_some() { "Update" } else { "Install" });
+            {
+                let shell = Rc::clone(shell);
+                let status = status.clone();
+                install.connect_clicked(move |_| {
+                    if let Some(screen) = &mut shell.borrow_mut().registry {
+                        screen.install_index(index);
+                    }
+                    status.set_text("Working…");
+                });
+            }
+            controls.append(&versions);
+            controls.append(&install);
+            entry.append(&controls);
+        } else {
+            let label = gtk::Label::new(Some(
+                "Another copy is already installed; remove it before installing this one.",
+            ));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("dim-label");
+            entry.append(&label);
+        }
+
+        list.append(&entry);
+    }
+}
+
+/// The status line above the Search rows: what each registry answered and what
+/// the last action did.
+fn status_for(screen: &registry::Screen) -> String {
+    if screen.urls().is_empty() {
+        return "No registries are configured. Add one in the settings file.".to_string();
+    }
+    if !screen.opened() {
+        return "Open this tab to read the registries.".to_string();
+    }
+    let mut lines = Vec::new();
+    if screen.is_loading() {
+        lines.push("Reading the registries…".to_string());
+    }
+    for (url, state) in screen.urls().iter().zip(screen.states()) {
+        match state {
+            registry::State::Loading | registry::State::Ready { cached: false, .. } => {}
+            registry::State::Ready { cached: true, note } => {
+                let note = note.as_deref().unwrap_or_default();
+                lines.push(format!("{url}: the last good copy is in use ({note})"));
+            }
+            registry::State::Failed(message) => lines.push(format!("{url}: {message}")),
+        }
+    }
+    if let Some(status) = screen.status() {
+        lines.push(match status {
+            registry::Status::Working => "Working…".to_string(),
+            registry::Status::Done(message) | registry::Status::Failed(message) => message.clone(),
+        });
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -747,6 +1070,21 @@ mod tests {
         assert!(!rows[0].switchable);
         assert!(!rows[0].enabled);
         assert!(!rows[0].note.is_empty());
+    }
+
+    #[test]
+    fn a_registry_install_carries_its_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        extension(temp.path(), "a.one", Some("main.js"), None);
+        write(
+            &temp.path().join("a.one"),
+            "winter-installed.toml",
+            "registry = \"https://one.example/r.toml\"\nversion = \"0.1.0\"\narchive = \"https://x/y.zip\"\nsha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ninstalled = 1\n",
+        );
+
+        let rows = installed(vec![temp.path().to_path_buf()], &[], &[]);
+        let source = rows[0].source.as_ref().expect("provenance");
+        assert_eq!(source.registry, "https://one.example/r.toml");
     }
 
     #[test]

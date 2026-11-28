@@ -3456,6 +3456,7 @@ dependencies = [
  "glow",
  "gtk4",
  "libloading 0.8.9",
+ "registry",
  "renderer",
  "server",
  "settings",

@@ -397,12 +397,13 @@ copyable enum.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
-   the `[extensions]` table and rebuilds the engine at once. WinUI's dialog adds
-   the `Installed` / `Search` tabs: Search lists each registry's rows (the same
-   identifier from two registries is two rows) with a version picker and an
-   Install button, and Installed shows a registry row's provenance and a Remove
-   button. The registry list is edited in WinUI's settings dialog; GTK and macOS
-   still leave it in the TOML or use the built-in default.
+   the `[extensions]` table and rebuilds the engine at once. WinUI's dialog and
+   GTK's window add the `Installed` / `Search` tabs: Search lists each
+   registry's rows (the same identifier from two registries is two rows) with a
+   version picker and an Install button, and Installed shows a registry row's
+   provenance and a Remove button. The registry list is edited in WinUI's
+   settings dialog and in GTK's settings file; macOS still leaves the built-in
+   default.
 5. `crates/registry` — the strict registry schema: semver releases, a tagged
    source union whose one implemented adapter is a checksummed archive, the
    per-release `api`, and the caps; the merged search index that keeps the same
@@ -437,7 +438,7 @@ copyable enum.
    engine sees the current pane once, and logs and skips an extension that no
    longer loads while the rest keep running.
 
-What is not here: the `Installed` / `Search` tabs on GTK and macOS (the shared
+What is not here: the `Installed` / `Search` tabs on macOS (the shared
 `registry::Screen` is ready for them); and a continuation form for a compiled
 module's history — it reads the bounded walk through its typed accessor
 instead. `cargo test -p extensions --features host`, `cargo test -p registry`,
