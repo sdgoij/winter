@@ -3,7 +3,7 @@
 # schema; the checksums here are placeholders until the archives are published.
 schema = 1
 name = "Winter extensions"
-updated = "2026-11-28"
+updated = "2026-11-28T12:00:00Z"
 
 [[extensions]]
 id = "winter.failed-command"

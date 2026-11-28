@@ -20,7 +20,10 @@ acceptable once the screen can install one.
 ## Decision
 
 1. **A registry is one static TOML document at an HTTPS URL.** `schema = 1`,
-   `name`, an optional `updated`, and one row per extension. The schema is
+   `name`, an optional `updated` publication time in RFC 3339 UTC with whole
+   seconds (`YYYY-MM-DDTHH:MM:SSZ`), and one row per extension. The time is
+   informational: a client detects a changed document from its fetch, but two
+   publishes in one day must still be distinguishable to a reader. The schema is
    strict: an unknown key is an error, exactly as the manifest is.
 2. **A row lists releases, not a single version.** Each `versions` entry carries
    `version` (semver), `api` (the host major it needs) and a `source`. A user

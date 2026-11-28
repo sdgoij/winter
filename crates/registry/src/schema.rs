@@ -55,7 +55,9 @@ pub struct Registry {
     pub schema: u32,
     /// The name a shell shows beside the URL.
     pub name: String,
-    /// When the document was published, for the reader's benefit.
+    /// When the document was published, as an RFC 3339 UTC timestamp with
+    /// whole seconds (`YYYY-MM-DDTHH:MM:SSZ`). It is informational: a client
+    /// detects a changed document from its fetch, not by comparing this field.
     #[serde(default)]
     pub updated: Option<String>,
     /// The extensions the registry lists.
@@ -222,6 +224,11 @@ impl Registry {
         if self.name.trim().is_empty() {
             return Err(Error::Name);
         }
+        if let Some(updated) = &self.updated
+            && !is_timestamp(updated)
+        {
+            return Err(Error::Updated { value: updated.clone() });
+        }
         if self.extensions.len() > EXTENSIONS_MAX {
             return Err(Error::TooManyExtensions {
                 count: self.extensions.len(),
@@ -380,6 +387,69 @@ impl Archive {
     }
 }
 
+/// Whether `text` is an RFC 3339 UTC timestamp with whole seconds:
+/// `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// The canonical spelling is required so two publishes in one day sort and
+/// compare without a parser; a lowercase `t`/`z`, a numeric offset or a
+/// fractional second is refused.
+fn is_timestamp(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 20 {
+        return false;
+    }
+    let digit = |index: usize| bytes[index].is_ascii_digit();
+    if !(0..4).all(digit)
+        || !digit(5)
+        || !digit(6)
+        || !digit(8)
+        || !digit(9)
+        || !digit(11)
+        || !digit(12)
+        || !digit(14)
+        || !digit(15)
+        || !digit(17)
+        || !digit(18)
+    {
+        return false;
+    }
+    if bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+    {
+        return false;
+    }
+
+    let number = |start: usize| u32::from(bytes[start] - b'0') * 10 + u32::from(bytes[start + 1] - b'0');
+    let year = u32::from(bytes[0] - b'0') * 1000
+        + u32::from(bytes[1] - b'0') * 100
+        + u32::from(bytes[2] - b'0') * 10
+        + u32::from(bytes[3] - b'0');
+    let (month, day) = (number(5), number(8));
+    let (hour, minute, second) = (number(11), number(14), number(17));
+
+    (1..=12).contains(&month)
+        && day >= 1
+        && day <= days_in_month(year, month)
+        && hour < 24
+        && minute < 60
+        && second < 60
+}
+
+/// How many days `month` has in `year`.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
 /// Whether `text` is 64 lowercase hexadecimal digits.
 fn is_sha256(text: &str) -> bool {
     text.len() == 64
@@ -430,6 +500,12 @@ pub enum Error {
     /// The registry has no display name.
     #[error("the registry has no `name`")]
     Name,
+    /// The publication time is not an RFC 3339 UTC timestamp.
+    #[error("`updated` {value:?} is not an RFC 3339 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`)")]
+    Updated {
+        /// The timestamp as written.
+        value: String,
+    },
     /// The registry lists more extensions than the cap allows.
     #[error("the registry lists {count} extensions, over the {max} cap")]
     TooManyExtensions {
@@ -655,6 +731,29 @@ mod tests {
             assert!(matches!(Registry::parse(&text), Err(Error::Schema { .. })), "{schema}");
         }
         assert!(Registry::parse("schema = 1\n").is_err(), "a name is required");
+    }
+
+    #[test]
+    fn the_updated_time_is_an_rfc_3339_utc_timestamp() {
+        let with = |updated: &str| format!("{}updated = \"{updated}\"\n", head());
+        assert!(Registry::parse(&with("2026-11-28T12:34:56Z")).is_ok());
+        assert!(Registry::parse(&with("2028-02-29T00:00:00Z")).is_ok());
+        for bad in [
+            "2026-11-28",
+            "2026-11-28T12:34:56",
+            "2026-11-28T12:34:56+00:00",
+            "2026-11-28t12:34:56z",
+            "2026-13-01T00:00:00Z",
+            "2026-02-30T00:00:00Z",
+            "2027-02-29T00:00:00Z",
+            "2026-11-28T24:00:00Z",
+            "2026-11-28T12:60:00Z",
+        ] {
+            assert!(
+                matches!(Registry::parse(&with(bad)), Err(Error::Updated { .. })),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
