@@ -392,8 +392,9 @@ copyable enum.
    opens a URL through its platform's opener (`NSWorkspace`, `gio::AppInfo`,
    `ShellExecuteW`), and reports `commandFinished`, `titleChanged`,
    `paneFocused`, `tabOpened`, `tabClosed`, `bell`, `notification`,
-   `paneExited`, `paneSplit` and `settingsReloaded`, with the fixtures in
-   `crates/extensions/fixtures`: a script notifier and a compiled one.
+   `paneExited`, `paneSplit` and `settingsReloaded`, with the compiled fixture
+   in `crates/extensions/fixtures`; the script notifier is the published
+   extension under `extensions/`.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
@@ -437,11 +438,13 @@ copyable enum.
    `commandFinished` is not replayed, resets the focus and title so the new
    engine sees the current pane once, and logs and skips an extension that no
    longer loads while the rest keep running.
-9. Publishing — `extensions/registry.toml` in the repository is the default
-   registry's source, with its archives beside it. `cargo test -p registry
-   --test published` rejects a malformed document and an archive whose checksum
-   disagrees, and the `pages` job in CI stages the directory to
-   `https://sdgoij.github.io/winter/extensions/` on every push to `main`.
+9. Publishing — `extensions/` holds each extension unpackaged under its id,
+   with one source `registry.toml` whose checksums are placeholders. The `pages`
+   job runs `registry-publish`, which zips each directory, hashes it, rewrites
+   the registry and stages the result to
+   `https://sdgoij.github.io/winter/extensions/`. `cargo test -p registry
+   --test published` runs the same packaging into a temporary directory, so a
+   directory whose manifest does not match its row fails the gate.
 
 What is not here: the `Installed` / `Search` tabs on macOS (the shared
 `registry::Screen` is ready for them); and a continuation form for a compiled

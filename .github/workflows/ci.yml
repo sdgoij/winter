@@ -109,10 +109,10 @@ jobs:
       - name: Run the release suite, ignored cases included
         run: just test-long
 
-  # The default extension registry is a static document served from Pages
-  # (ADR 088). The gate already validates it with
-  # `cargo test -p registry --test published`; this job stages the `extensions`
-  # directory under the site root, so `registry.toml` and its archives land at
+  # The default extension registry is served from Pages (ADR 088). The gate
+  # already runs the packaging in `cargo test -p registry --test published`;
+  # this job builds each archive from its directory, rewrites the registry's
+  # checksums, and stages the result at
   # https://sdgoij.github.io/winter/extensions/ on every push to `main`.
   #
   # Pages must be set to "GitHub Actions" as its source in the repository's
@@ -132,11 +132,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - name: Stage the extensions directory
-        run: |
-          set -eu
-          mkdir -p _site
-          cp -R extensions _site/extensions
+      - name: Install the pinned toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the archives and the published registry
+        run: cargo run -p registry --bin registry-publish -- extensions _site/extensions
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -22,6 +22,9 @@ Thumbs.db
 # Release packaging, generated per tag.
 /dist
 
+# The GitHub Pages staging directory `registry-publish` writes.
+/_site
+
 # The VS Code demo's installed packages and compiled JavaScript, and the addon
 # `npm run build:addon` copies in for it to load.
 /editors/vscode/node_modules

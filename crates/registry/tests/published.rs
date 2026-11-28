@@ -1,58 +1,56 @@
-//! The registry served from GitHub Pages, and the archives beside it, must be
-//! what the default URL promises (ADR 088).
+//! The published registry is packaged from the extension directories beside it,
+//! so the document and its archives must always agree (ADR 088).
 //!
-//! `extensions/registry.toml` is checked in rather than fetched, so this test is
-//! both the author's pre-flight and CI's validation of what the `pages` job
-//! publishes.
+//! `extensions/registry.toml` is checked in with placeholder checksums; this
+//! test runs the same packaging the Pages job runs, into a temporary directory,
+//! and checks the result.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use registry::Registry;
 use sha2::{Digest, Sha256};
 
-/// The prefix the Pages job serves the `extensions` directory under.
-const SITE: &str = "https://sdgoij.github.io/winter/extensions/";
-
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-fn published() -> Registry {
-    let path = repository().join("extensions/registry.toml");
-    Registry::load(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-}
-
 #[test]
-fn the_published_registry_is_valid() {
-    let registry = published();
+fn the_published_registry_packages() {
+    let source = repository().join("extensions");
+    let out = tempfile::tempdir().expect("temp");
+    let packaged = registry::package::build(&source, out.path()).expect("package the registry");
+    let registry = Registry::load(&packaged.registry).expect("the output registry parses");
     assert_eq!(registry.schema, registry::SCHEMA);
-    assert!(!registry.name.trim().is_empty());
-}
 
-#[test]
-fn every_archive_beside_the_registry_matches_its_checksum() {
-    for extension in &published().extensions {
+    for extension in &registry.extensions {
         for release in &extension.versions {
             let Some(archive) = release.archive() else {
                 continue;
             };
-            // An archive may live on any host; only the ones this job serves are
-            // checked against a file in the tree.
-            let Some(name) = archive.url.strip_prefix(SITE) else {
-                continue;
-            };
-            let path = repository().join("extensions").join(name);
-            let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let name = archive
+                .url
+                .strip_prefix(registry::package::SITE)
+                .expect("every published archive is served from the site");
+            let path = out.path().join(name);
+
+            let bytes = std::fs::read(&path).expect("archive");
             let digest: String = Sha256::digest(&bytes)
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect();
-            assert_eq!(
-                digest,
-                archive.sha256,
-                "{} does not match the registry's checksum",
-                path.display()
-            );
+            assert_eq!(digest, archive.sha256, "{}", path.display());
+
+            let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).expect("open")).expect("zip");
+            let mut text = String::new();
+            zip.by_name("extension.toml")
+                .expect("the archive's manifest")
+                .read_to_string(&mut text)
+                .expect("read");
+            let manifest = extensions::Manifest::parse(&text).expect("manifest");
+            assert_eq!(manifest.id, extension.id);
+            assert_eq!(manifest.version, release.version.to_string());
+            assert_eq!(manifest.api, release.api);
         }
     }
 }

@@ -7,9 +7,10 @@
 //! the tick. [`install`] verifies an archive against the registry and places it
 //! beside the settings file, and [`provenance`] says where a directory came
 //! from. [`Screen`] is the Search tab's state: it fetches on first open, keeps
-//! the picked version per row, and runs installs and uninstalls on workers. The
-//! crate names no window and no engine, so an embedding can use the schema
-//! without a registry view.
+//! the picked version per row, and runs installs and uninstalls on workers.
+//! [`package`] builds the published registry and its archives from the extension
+//! directories beside it. The crate names no window and no engine, so an
+//! embedding can use the schema without a registry view.
 //!
 //! The schema is strict — an unknown key is an error — so a typo is reported
 //! instead of silently ignored, exactly as the extension manifest is. A source
@@ -24,6 +25,8 @@ mod install;
 mod job;
 mod schema;
 mod screen;
+
+pub mod package;
 
 pub use fetch::{DEFAULT_URL, Error as FetchError, Fetched, Fetcher, Network, cache_path, cached_at, load};
 pub use index::{Index, Loaded, Row};

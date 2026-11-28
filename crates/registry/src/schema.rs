@@ -12,7 +12,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use extensions::manifest::{is_id, is_relative_path};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The registry schema this build reads.
 pub const SCHEMA: u32 = 1;
@@ -48,7 +48,7 @@ pub const DEPENDENCIES_MAX: usize = 32;
 pub const URL_MAX: usize = 2048;
 
 /// One published registry document.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registry {
     /// The schema this document was written for.
@@ -58,7 +58,7 @@ pub struct Registry {
     /// When the document was published, as an RFC 3339 UTC timestamp with
     /// whole seconds (`YYYY-MM-DDTHH:MM:SSZ`). It is informational: a client
     /// detects a changed document from its fetch, not by comparing this field.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated: Option<String>,
     /// The extensions the registry lists.
     #[serde(default)]
@@ -66,7 +66,7 @@ pub struct Registry {
 }
 
 /// One extension a registry offers, with every release it publishes.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Extension {
     /// The manifest identifier, so the row and the installed directory agree.
@@ -74,19 +74,19 @@ pub struct Extension {
     /// The name a user sees.
     pub name: String,
     /// One line for the search row.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// The project's page.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
     /// The declared license.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
     /// Words the search matches.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Identifiers this extension expects beside it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
     /// The published releases, newest first by convention but read in file
     /// order. An empty list is caught by validation with a clearer message than
@@ -96,7 +96,7 @@ pub struct Extension {
 }
 
 /// One release of an extension.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Release {
     /// The semver this release ships, which the manifest must repeat.
@@ -112,7 +112,7 @@ pub struct Release {
 /// A `type` this build does not know becomes [`Source::Unsupported`], so a
 /// registry published for a newer shell still parses here and the row says the
 /// release cannot be installed.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Source {
     /// A `.zip` at `url`, checked against `sha256`.
@@ -123,7 +123,7 @@ pub enum Source {
 }
 
 /// An archive a release is installed from.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Archive {
     /// The `.zip`'s URL: `https`, or `file` for a local mirror and tests.
@@ -132,7 +132,7 @@ pub struct Archive {
     pub sha256: String,
     /// The directory inside the archive that holds `extension.toml`; the root
     /// when absent or empty.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
 

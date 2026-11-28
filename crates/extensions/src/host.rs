@@ -2377,9 +2377,12 @@ mod tests {
 
     #[test]
     fn the_shipped_fixtures_load() {
+        // The compiled fixture lives with the crate; the published script one
+        // lives in the repository's `extensions/` directory.
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+        let published = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions");
         let report = discover(&Options {
-            roots: vec![fixtures],
+            roots: vec![fixtures, published],
             disabled: Vec::new(),
         });
         assert_eq!(report.loaded.len(), 2, "{:?}", report.skipped);

@@ -1,4 +1,4 @@
-# The fixture the live check runs. A manifest is TOML so a key can carry a note.
+# Published under `extensions/` and served with the default registry (ADR 088).
 id = "winter.failed-command"
 name = "Failed command"
 version = "0.1.0"

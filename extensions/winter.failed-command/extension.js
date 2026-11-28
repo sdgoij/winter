@@ -6,7 +6,7 @@
 //
 // Run it with:
 //
-//   WINTER_EXT=1 WINTER_EXTENSIONS=crates/extensions/fixtures \
+//   WINTER_EXT=1 WINTER_EXTENSIONS=extensions \\
 //     cargo run -p app
 
 // The bytes of a declared asset, read at load: the same bytes a compiled module
