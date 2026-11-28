@@ -15,6 +15,8 @@ pub(super) enum MenuEntry {
     Profile(String),
     /// Open the settings dialog.
     Settings,
+    /// Open the extensions dialog.
+    Extensions,
     /// Open the About dialog.
     About,
 }
@@ -28,7 +30,7 @@ pub(super) fn entries(profiles: &[Profile]) -> Vec<MenuEntry> {
     profiles
         .iter()
         .map(|profile| MenuEntry::Profile(profile.name.clone()))
-        .chain([MenuEntry::Settings, MenuEntry::About])
+        .chain([MenuEntry::Settings, MenuEntry::Extensions, MenuEntry::About])
         .collect()
 }
 
@@ -57,14 +59,18 @@ mod tests {
                 MenuEntry::Profile("Alpha".to_string()),
                 MenuEntry::Profile("Mu".to_string()),
                 MenuEntry::Settings,
+                MenuEntry::Extensions,
                 MenuEntry::About,
             ]
         );
     }
 
     #[test]
-    fn a_file_without_profiles_still_offers_settings_and_about() {
-        assert_eq!(entries(&[]), vec![MenuEntry::Settings, MenuEntry::About]);
+    fn a_file_without_profiles_still_offers_settings_extensions_and_about() {
+        assert_eq!(
+            entries(&[]),
+            vec![MenuEntry::Settings, MenuEntry::Extensions, MenuEntry::About]
+        );
     }
 
     #[test]

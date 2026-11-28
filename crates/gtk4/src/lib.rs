@@ -59,6 +59,7 @@ use winter::terminal_render::TerminalData;
 use winter::view::View;
 
 mod chrome;
+mod extension;
 mod gl;
 mod icons;
 
@@ -442,9 +443,13 @@ fn activate(app: &Application) {
         accessible_text: String::new(),
         screenshot,
         settings_window: None,
+        extensions_window: None,
+        extensions_requested: false,
+        extensions: None,
     }));
 
     shell.borrow_mut().palette_view.owner = Rc::downgrade(&shell);
+    shell.borrow_mut().start_extensions();
 
     {
         let action = gtk::gio::SimpleAction::new("open", Some(glib::VariantTy::STRING));
@@ -458,12 +463,18 @@ fn activate(app: &Application) {
         settings.connect_activate(move |_action, _parameter| {
             editor.borrow_mut().request_settings();
         });
+        let extensions = gtk::gio::SimpleAction::new("extensions", None);
+        let screen = Rc::clone(&shell);
+        extensions.connect_activate(move |_action, _parameter| {
+            screen.borrow_mut().request_extensions();
+        });
         let about = gtk::gio::SimpleAction::new("about", None);
         let parent = window.clone();
         about.connect_activate(move |_action, _parameter| show_about(&parent));
         let group = gtk::gio::SimpleActionGroup::new();
         group.add_action(&action);
         group.add_action(&settings);
+        group.add_action(&extensions);
         group.add_action(&about);
         strip.insert_action_group("profiles", Some(&group));
 
@@ -881,6 +892,7 @@ fn activate(app: &Application) {
             let paste = borrowed.take_paste_request();
             let seed = borrowed.take_find_seed();
             let settings = borrowed.take_settings_request();
+            let extensions = borrowed.take_extensions_request();
             let (open, query, current, total) = borrowed.find_state();
             drop(borrowed);
 
@@ -915,6 +927,9 @@ fn activate(app: &Application) {
             if settings {
                 show_settings(&shell, &parent);
             }
+            if extensions {
+                extension::show_extensions(&shell, &parent);
+            }
             glib::ControlFlow::Continue
         });
     }
@@ -928,6 +943,9 @@ fn activate(app: &Application) {
 
     if std::env::var_os("WINTER_OPEN_SETTINGS").is_some() {
         show_settings(&shell, &window);
+    }
+    if std::env::var_os("WINTER_OPEN_EXTENSIONS").is_some() {
+        extension::show_extensions(&shell, &window);
     }
     if std::env::var_os("WINTER_OPEN_FIND").is_some() {
         shell.borrow_mut().toggle_find();
@@ -1421,6 +1439,12 @@ struct Shell {
     screenshot: Option<PathBuf>,
     /// The settings editor, kept so a capture can include it.
     settings_window: Option<gtk::Window>,
+    /// The extensions screen, kept so a capture can include it.
+    extensions_window: Option<gtk::Window>,
+    /// Whether the timer should open the extensions screen.
+    extensions_requested: bool,
+    /// The extension engine, when the settings or the environment asked for it.
+    extensions: Option<extension::Extensions>,
 }
 
 impl Shell {
@@ -1434,6 +1458,9 @@ impl Shell {
         let mut exited = Vec::new();
         let mut titled = false;
         let mut announced = Vec::new();
+        // What the extensions observe: the pty events this tick saw, in order.
+        let mut observed = Vec::new();
+        let mut settings_reloaded = false;
 
         for index in 0..self.tabs.len() {
             let Some(tab) = self.tabs.get_mut(index) else {
@@ -1451,11 +1478,23 @@ impl Shell {
 
                 for event in pane.control.take_events(now) {
                     match event {
-                        TerminalEvent::Exited => exited.push((index, pane.id)),
-                        TerminalEvent::Notification { title, body } => announced.push((title, body)),
+                        TerminalEvent::Exited => {
+                            observed.push(extensions::Event::PaneExited {
+                                tab: index,
+                                pane: pane.id.0.to_string(),
+                            });
+                            exited.push((index, pane.id));
+                        }
+                        TerminalEvent::Notification { title, body } => {
+                            observed.push(extensions::Event::Notification {
+                                title: title.clone(),
+                                body: body.clone(),
+                            });
+                            announced.push((title, body));
+                        }
                         // The flash is read from the control while it paints, so a
                         // bell needs no state of its own here.
-                        TerminalEvent::Bell => {}
+                        TerminalEvent::Bell => observed.push(extensions::Event::Bell),
                     }
                 }
             }
@@ -1467,7 +1506,7 @@ impl Shell {
 
         if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
             self.settings_at = now;
-            self.poll_settings();
+            settings_reloaded = self.poll_settings();
         }
 
         if !exited.is_empty() {
@@ -1491,6 +1530,19 @@ impl Shell {
             self.blink_at = now;
         }
 
+        // Extensions observe the window after it has acted: the marks this
+        // tick left on the focused pane, and whatever the poll found.
+        let marks = self
+            .tabs
+            .active_mut()
+            .and_then(|tab| tab.focused_pane_mut())
+            .map(|pane| (pane.id, pane.control.scroll_facts().1));
+        self.pump_extensions(
+            marks.as_ref().map(|(id, marks)| (*id, marks.as_slice())),
+            observed,
+            settings_reloaded,
+        );
+
         if titled {
             self.after_select();
         } else {
@@ -1499,14 +1551,15 @@ impl Shell {
     }
 
     /// Reloads the settings file when a save changed its stamp.
-    fn poll_settings(&mut self) {
+    fn poll_settings(&mut self) -> bool {
         let Some(path) = &self.settings_path else {
-            return;
+            return false;
         };
         if settings::stamp(path) == self.settings_stamp {
-            return;
+            return false;
         }
         self.reload_settings();
+        true
     }
 
     /// Re-reads the settings and applies what a running session can.
@@ -1597,6 +1650,14 @@ impl Shell {
             && let Some(action) = input::chord_action(&self.bindings, named, modifiers)
             && self.command(action)
         {
+            return glib::Propagation::Stop;
+        }
+
+        // The window's own bindings are checked first, so an extension chord can
+        // never shadow one; this runs the command the file named.
+        if pressed && let Some(command) = input::extension_chord(&self.document.extensions.commands, named, modifiers) {
+            let command = command.to_string();
+            self.run_extension(&command);
             return glib::Propagation::Stop;
         }
 
@@ -1787,7 +1848,15 @@ impl Shell {
 
     /// The rows the current filter leaves.
     fn command_rows(&self) -> Vec<palette::Entry> {
-        let entries = palette::entries(&self.document, palette_supports);
+        let mut entries = palette::entries(&self.document, palette_supports);
+        if let Some(extensions) = &self.extensions {
+            entries.extend(palette::extension_entries(
+                extensions
+                    .commands()
+                    .into_iter()
+                    .map(|command| (command.key, command.label)),
+            ));
+        }
         self.commands.rows(&entries).into_iter().cloned().collect()
     }
 
@@ -1875,9 +1944,7 @@ impl Shell {
                 self.command(action);
             }
             palette::Command::Profile(name) => self.open_profile(Some(&name)),
-            // Extensions are not hosted on this shell yet; the row cannot be
-            // offered because no extension registers here.
-            palette::Command::Extension(_) => {}
+            palette::Command::Extension(key) => self.run_extension(&key),
         }
     }
 
@@ -2005,6 +2072,8 @@ impl Shell {
                     terminal: template,
                 });
                 self.focus_active();
+                let index = self.tabs.index();
+                self.report_extension(extensions::Event::TabOpened { index });
             }
             Err(error) => eprintln!("winter: cannot start the shell: {error}"),
         }
@@ -2041,6 +2110,10 @@ impl Shell {
         self.resize_tab(index);
         self.seed_find(false);
         self.after_select();
+        self.report_extension(extensions::Event::PaneSplit {
+            tab: index,
+            pane: id.0.to_string(),
+        });
     }
 
     /// Closes the focused pane, or the tab when it is the last one.
@@ -2151,6 +2224,7 @@ impl Shell {
         // The new tab's bar has its own query, or none showing.
         self.seed_find(false);
         self.after_select();
+        self.report_extension(extensions::Event::TabClosed { index });
     }
 
     /// Opens the named profile in a new tab, or the default one when the name
@@ -2753,6 +2827,16 @@ impl Shell {
     /// Takes the settings request, if one is waiting.
     fn take_settings_request(&mut self) -> bool {
         std::mem::take(&mut self.settings_requested)
+    }
+
+    /// Asks the timer to open the extensions screen.
+    fn request_extensions(&mut self) {
+        self.extensions_requested = true;
+    }
+
+    /// Takes the extensions request, if one is waiting.
+    fn take_extensions_request(&mut self) -> bool {
+        std::mem::take(&mut self.extensions_requested)
     }
 
     /// Writes a document and reloads it, returning the writer's error.
@@ -3603,6 +3687,9 @@ impl Shell {
         if let Some(settings) = &self.settings_window {
             capture_widget(settings, &with_suffix(path, "-settings"));
         }
+        if let Some(extensions) = &self.extensions_window {
+            capture_widget(extensions, &with_suffix(path, "-extensions"));
+        }
         app.quit();
     }
 }
@@ -3772,6 +3859,7 @@ fn profile_menu(document: &settings::Settings) -> gtk::gio::Menu {
 
     let trailing = gtk::gio::Menu::new();
     trailing.append(Some("Settings…"), Some("profiles.settings"));
+    trailing.append(Some("Extensions…"), Some("profiles.extensions"));
     trailing.append(Some("About Winter"), Some("profiles.about"));
     menu.append_section(None, &trailing);
     menu
@@ -4892,16 +4980,21 @@ mod tests {
             Some("two")
         );
 
-        // The settings editor and About sit after the profiles, inside a section
-        // so the popover draws a separator.
+        // The settings editor, the extensions screen and About sit after the
+        // profiles, inside a section so the popover draws a separator.
         let section = menu.item_link(2, "section").expect("a trailing section");
-        assert_eq!(section.n_items(), 2);
+        assert_eq!(section.n_items(), 3);
         let settings = section.item_attribute_value(0, "label", None);
         assert_eq!(
             settings.and_then(|value| value.str().map(str::to_string)).as_deref(),
             Some("Settings…")
         );
-        let about = section.item_attribute_value(1, "label", None);
+        let extensions = section.item_attribute_value(1, "label", None);
+        assert_eq!(
+            extensions.and_then(|value| value.str().map(str::to_string)).as_deref(),
+            Some("Extensions…")
+        );
+        let about = section.item_attribute_value(2, "label", None);
         assert_eq!(
             about.and_then(|value| value.str().map(str::to_string)).as_deref(),
             Some("About Winter")

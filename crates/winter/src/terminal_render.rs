@@ -147,7 +147,10 @@ impl TerminalData {
 
 /// What the shells that present an input method or an accessibility value
 /// share: the composition, the candidate window's anchor and the visible text.
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+///
+/// The WinUI shell reads the visible text for its extensions even though it has
+/// no input method of its own, so every native shell is included.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", test))]
 impl TerminalData {
     /// Places the input method's marked text at the cursor.
     ///

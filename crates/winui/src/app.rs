@@ -41,6 +41,7 @@ use winter::terminal_render::TerminalData;
 use winter::view::View as ViewState;
 
 use super::command_palette;
+use super::extension::{Extensions, Found};
 use super::gpu::GpuBackend;
 use super::icon;
 use super::menu::{self, MenuEntry};
@@ -115,9 +116,11 @@ const SYMBOL_FONT: &str = "Segoe Fluent Icons,Segoe MDL2 Assets";
 const PLUS_GLYPH: &str = "\u{e710}";
 const CHEVRON_GLYPH: &str = "\u{e70d}";
 const CLOSE_GLYPH: &str = "\u{e711}";
-/// The drop-down's own glyphs: a gear for `Settings` and a question mark for
-/// `About`, `U+E713` and `U+E897` in the same two faces.
+/// The drop-down's own glyphs: a gear for `Settings`, a puzzle piece for
+/// `Extensions` and a question mark for `About`, `U+E713`, `U+E8B9` and
+/// `U+E897` in the same two faces.
 const SETTINGS_GLYPH: &str = "\u{e713}";
+const EXTENSIONS_GLYPH: &str = "\u{e8b9}";
 const ABOUT_GLYPH: &str = "\u{e897}";
 /// The tab row's fill: behind an inactive tab, and between the last tab and
 /// the caption buttons.
@@ -138,30 +141,30 @@ pub fn run() -> windows_core::Result<()> {
 }
 
 /// One pane: its own terminal, selection, find bar and renderer.
-struct Pane {
-    id: PaneId,
-    control: Control,
-    view: ViewState,
+pub(super) struct Pane {
+    pub(super) id: PaneId,
+    pub(super) control: Control,
+    pub(super) view: ViewState,
     /// The program's OSC title while it names one.
-    title: Option<String>,
+    pub(super) title: Option<String>,
     /// The program the pane started, so the strip can show its icon.
-    program: String,
+    pub(super) program: String,
     /// The pane's own find bar, so switching panes keeps its query.
     find: FindBar,
-    renderer: Renderer<TerminalData>,
+    pub(super) renderer: Renderer<TerminalData>,
     /// The software fallback's pixels, when the CPU path paints.
     shared: Option<SharedBackend>,
     /// Where the pane's grid sits in the swap chain, in device pixels.
     offset: Rc<Cell<(i32, i32)>>,
     /// The pane's grid in cells.
-    grid: (i32, i32),
+    pub(super) grid: (i32, i32),
 }
 
 /// One tab: a pane tree, its focused pane and a title.
-struct Tab {
+pub(super) struct Tab {
     /// Stable across reorders, because the toolkit's close event names it.
     id: u64,
-    panes: Vec<Pane>,
+    pub(super) panes: Vec<Pane>,
     layout: Layout,
     focused: PaneId,
     /// The terminal settings a split starts from.
@@ -179,16 +182,16 @@ impl Tab {
         self.panes.iter_mut().find(|pane| pane.id == id)
     }
 
-    fn focused_pane(&self) -> Option<&Pane> {
+    pub(super) fn focused_pane(&self) -> Option<&Pane> {
         self.pane(self.focused)
     }
 
-    fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
+    pub(super) fn focused_pane_mut(&mut self) -> Option<&mut Pane> {
         self.pane_mut(self.focused)
     }
 
     /// The title the strip shows: the focused pane's OSC title, else the tab's.
-    fn label(&self) -> &str {
+    pub(super) fn label(&self) -> &str {
         self.focused_pane()
             .and_then(|pane| pane.title.as_deref())
             .unwrap_or(&self.title)
@@ -289,8 +292,8 @@ fn pane_grid(rect: PaneRect, cell: (u16, u16), scale_x: f32, scale_y: f32) -> (i
 }
 
 /// The application's state and its messages.
-struct Shell {
-    tabs: Tabs<Tab>,
+pub(super) struct Shell {
+    pub(super) tabs: Tabs<Tab>,
     /// The id the next tab is given.
     next_tab: u64,
     /// The profile a new tab starts from.
@@ -298,7 +301,7 @@ struct Shell {
     /// The window chords, matched before the terminal sees a key.
     bindings: Rc<[settings::Keybinding]>,
     /// The settings file in force, so a save can resolve its parts again.
-    settings: settings::Settings,
+    pub(super) settings: settings::Settings,
     /// The profiles the window offers: the file's, then one per WSL distro the
     /// file does not already name. The distros are the machine's, so they are
     /// merged here and never written back with a save (ADR 065).
@@ -311,6 +314,16 @@ struct Shell {
     commands: Palette,
     /// Whether the About dialog is showing.
     about_open: bool,
+    /// The extension engine, when the settings or the environment asked for it.
+    pub(super) extensions: Option<Extensions>,
+    /// Whether the extensions dialog is showing.
+    extensions_open: bool,
+    /// The master switch while the dialog is open.
+    extensions_enabled: bool,
+    /// One switch per row, in `extensions_rows` order.
+    extensions_checked: Vec<bool>,
+    /// The rows the open dialog lists.
+    extensions_rows: Vec<Found>,
     /// The title bar header's measured width in DIPs, so the menu hangs under
     /// the drop-down button rather than at the pane's left edge.
     header_width: f64,
@@ -326,7 +339,7 @@ struct Shell {
     /// The id the next pane is given, unique across tabs.
     next_pane: u64,
     panel: ElementRef<SwapChainPanel>,
-    focus: ElementRef<Border>,
+    pub(super) focus: ElementRef<Border>,
     find_field: ElementRef<TextBox>,
     palette_field: ElementRef<TextBox>,
     surface: Rc<RefCell<Option<Surface>>>,
@@ -452,6 +465,16 @@ pub(super) enum Message {
     MenuProfile(String),
     /// Opens the settings dialog from the drop-down.
     MenuSettings,
+    /// Opens the extensions dialog from the drop-down.
+    MenuExtensions,
+    /// One switch in the extensions dialog, by row index.
+    ExtensionsToggle(usize, bool),
+    /// The extensions dialog's master switch.
+    ExtensionsAll(bool),
+    /// Saves the extensions dialog's switches, then closes it.
+    ExtensionsSave,
+    /// Closes the extensions dialog without saving.
+    ExtensionsClose,
     /// Opens the About dialog from the drop-down.
     MenuAbout,
     /// The About dialog closed.
@@ -568,6 +591,11 @@ impl Component for Shell {
             menu_open: false,
             commands: Palette::default(),
             about_open: false,
+            extensions: None,
+            extensions_open: false,
+            extensions_enabled: false,
+            extensions_checked: Vec::new(),
+            extensions_rows: Vec::new(),
             header_width: 0.0,
             header,
             _header_observation: header_observation,
@@ -614,6 +642,10 @@ impl Component for Shell {
 
         if std::env::var_os("WINTER_OPEN_PALETTE").is_some() {
             shell.open_palette();
+        }
+        shell.start_extensions();
+        if std::env::var_os("WINTER_OPEN_EXTENSIONS").is_some() {
+            shell.open_extensions();
         }
         if std::env::var_os("WINTER_SPLIT").is_some() {
             shell.split_pane(Axis::Horizontal);
@@ -1202,6 +1234,13 @@ impl Component for Shell {
                 self.settings_window
                     .view(&self.settings, self.settings_path.as_deref(), &dialog),
             )
+        } else if self.extensions_open {
+            root.content_dialog(extensions_dialog(
+                &self.extensions_rows,
+                self.extensions_enabled,
+                &self.extensions_checked,
+                &dialog,
+            ))
         } else if self.about_open {
             root.content_dialog(about_dialog(&dialog))
         } else {
@@ -1262,6 +1301,18 @@ impl Component for Shell {
                     self.toggle_settings();
                 }
             }
+            Message::MenuExtensions => {
+                self.close_menu();
+                self.open_extensions();
+            }
+            Message::ExtensionsToggle(index, on) => {
+                if let Some(checked) = self.extensions_checked.get_mut(index) {
+                    *checked = on;
+                }
+            }
+            Message::ExtensionsAll(on) => self.extensions_enabled = on,
+            Message::ExtensionsSave => self.save_extensions_dialog(),
+            Message::ExtensionsClose => self.close_extensions(),
             Message::MenuAbout => {
                 self.close_menu();
                 self.about_open = true;
@@ -1280,6 +1331,9 @@ impl Shell {
     fn tick(&mut self, context: &ComponentContext<Self>) {
         let now = Instant::now();
         let mut exited = Vec::new();
+        // What the extensions observe: the pty events this tick saw, in order.
+        let mut observed = Vec::new();
+        let mut settings_reloaded = false;
         for index in 0..self.tabs.len() {
             let Some(tab) = self.tabs.get_mut(index) else {
                 continue;
@@ -1289,8 +1343,21 @@ impl Shell {
 
                 let mut done = false;
                 for event in pane.control.take_events(now) {
-                    if event == TerminalEvent::Exited {
-                        done = true;
+                    match event {
+                        TerminalEvent::Exited => {
+                            observed.push(extensions::Event::PaneExited {
+                                tab: index,
+                                pane: pane.id.0.to_string(),
+                            });
+                            done = true;
+                        }
+                        TerminalEvent::Notification { title, body } => {
+                            observed.push(extensions::Event::Notification {
+                                title: title.clone(),
+                                body: body.clone(),
+                            });
+                        }
+                        TerminalEvent::Bell => observed.push(extensions::Event::Bell),
                     }
                 }
 
@@ -1360,8 +1427,21 @@ impl Shell {
         // changed stamp means the file was saved and is read again.
         if now.duration_since(self.settings_at) >= Duration::from_secs(1) {
             self.settings_at = now;
-            self.poll_settings();
+            settings_reloaded = self.poll_settings();
         }
+
+        // Extensions observe the window after it has acted: the marks this
+        // tick left on the focused pane, and whatever the poll found.
+        let marks = self
+            .tabs
+            .active_mut()
+            .and_then(|tab| tab.focused_pane_mut())
+            .map(|pane| (pane.id, pane.control.scroll_facts().1));
+        self.pump_extensions(
+            marks.as_ref().map(|(id, marks)| (*id, marks.as_slice())),
+            observed,
+            settings_reloaded,
+        );
 
         let (painted, background) = self.paint_panes();
 
@@ -1560,12 +1640,12 @@ impl Shell {
     ///
     /// A dirty draft is not overwritten: the dialog says the file changed and
     /// lets Save win or Revert load it (ADR 025).
-    fn poll_settings(&mut self) {
+    fn poll_settings(&mut self) -> bool {
         let Some(path) = &self.settings_path else {
-            return;
+            return false;
         };
         if settings::stamp(path) == self.settings_stamp {
-            return;
+            return false;
         }
 
         let dirty = self
@@ -1574,8 +1654,10 @@ impl Shell {
             .is_some_and(|draft| draft.differs_from(&self.settings));
         if dirty {
             self.settings_window.set_conflict();
+            false
         } else {
             self.reload_settings();
+            true
         }
     }
 
@@ -1584,7 +1666,7 @@ impl Shell {
     /// Chords and the font size take effect at once, and a scheme repaints
     /// every tab. A changed profile affects the next tab, because a running
     /// shell keeps the command it started with.
-    fn reload_settings(&mut self) {
+    pub(super) fn reload_settings(&mut self) {
         let loaded = settings::load_with_report();
         self.settings_stamp = loaded.path.as_deref().and_then(settings::stamp);
         let warnings: Vec<String> = loaded.warnings.iter().map(ToString::to_string).collect();
@@ -1638,8 +1720,46 @@ impl Shell {
             self.settings_window.close();
             let _ = self.focus.request_focus();
         } else {
+            if self.extensions_open {
+                self.close_extensions();
+            }
             self.settings_window.open(&self.settings);
         }
+    }
+
+    /// Opens the extensions dialog on the current switches.
+    fn open_extensions(&mut self) {
+        if self.extensions_open || self.settings_window.is_open() || self.about_open {
+            return;
+        }
+        self.extensions_rows = self.installed_extensions();
+        self.extensions_enabled = self.settings.extensions.enabled;
+        self.extensions_checked = self.extensions_rows.iter().map(|row| row.enabled).collect();
+        self.extensions_open = true;
+    }
+
+    /// Writes the switches the dialog holds and closes it.
+    ///
+    /// Loading changes on the next start, not now: dropping a live realm is a
+    /// different operation from re-reading a document.
+    fn save_extensions_dialog(&mut self) {
+        let disabled: Vec<String> = self
+            .extensions_rows
+            .iter()
+            .enumerate()
+            .filter(|(index, row)| row.switchable && !self.extensions_checked.get(*index).copied().unwrap_or(true))
+            .map(|(_, row)| row.id.clone())
+            .collect();
+        if let Err(error) = self.save_extensions(self.extensions_enabled, disabled) {
+            eprintln!("winter: cannot save extensions: {error}");
+        }
+        self.close_extensions();
+    }
+
+    /// Closes the extensions dialog without saving.
+    fn close_extensions(&mut self) {
+        self.extensions_open = false;
+        let _ = self.focus.request_focus();
     }
 
     /// Applies one settings-dialog edit and runs the command it may ask for.
@@ -1775,8 +1895,7 @@ impl Shell {
                 self.perform(action, context);
             }
             palette::Command::Profile(name) => self.open_profile_tab(&name),
-            // Extensions are not hosted on this shell yet.
-            palette::Command::Extension(_) => {}
+            palette::Command::Extension(key) => self.run_extension(&key),
         }
     }
 
@@ -1784,7 +1903,15 @@ impl Shell {
     fn palette_rows(&self) -> Vec<palette::Entry> {
         let mut settings = self.settings.clone();
         settings.profiles = self.profiles.clone();
-        let entries = palette::entries(&settings, palette_supports);
+        let mut entries = palette::entries(&settings, palette_supports);
+        if let Some(extensions) = &self.extensions {
+            entries.extend(palette::extension_entries(
+                extensions
+                    .commands()
+                    .into_iter()
+                    .map(|command| (command.key, command.label)),
+            ));
+        }
         self.commands.rows(&entries).into_iter().cloned().collect()
     }
 
@@ -1794,7 +1921,7 @@ impl Shell {
     }
 
     /// Opens a tab on the same profile and activates it.
-    fn open_tab(&mut self) {
+    pub(super) fn open_tab(&mut self) {
         self.add_tab(self.template.clone());
     }
 
@@ -1843,6 +1970,7 @@ impl Shell {
         let index = self.tabs.index();
         self.resize_tab(index);
         let _ = self.focus.request_focus();
+        self.report_extension(extensions::Event::TabOpened { index });
     }
 
     /// Splits the focused pane, starting the new shell at the size it will hold.
@@ -1888,6 +2016,10 @@ impl Shell {
         let index = self.tabs.index();
         self.resize_tab(index);
         let _ = self.focus.request_focus();
+        self.report_extension(extensions::Event::PaneSplit {
+            tab: index,
+            pane: id.0.to_string(),
+        });
     }
 
     /// Closes the focused pane, or the tab when it is the last one.
@@ -1901,6 +2033,7 @@ impl Shell {
                 let _ = context.close_window();
             } else {
                 let _ = self.focus.request_focus();
+                self.report_extension(extensions::Event::TabClosed { index });
             }
         } else {
             self.remove_pane(index, focused);
@@ -2068,6 +2201,7 @@ impl Shell {
             let _ = context.close_window();
         } else {
             let _ = self.focus.request_focus();
+            self.report_extension(extensions::Event::TabClosed { index });
         }
     }
 
@@ -2085,6 +2219,12 @@ impl Shell {
             && let Some(action) = input::chord_action(&self.bindings, key, modifiers)
             && self.perform(action, context)
         {
+            return;
+        }
+
+        if pressed && let Some(command) = input::extension_chord(&self.settings.extensions.commands, key, modifiers) {
+            let command = command.to_string();
+            self.run_extension(&command);
             return;
         }
 
@@ -3257,6 +3397,7 @@ fn profile_menu(profiles: &[settings::Profile], sender: &LocalSender<Message>, l
                 .and_then(|profile| profile_icon::png_for(&profile.command))
                 .map(menu_image),
             MenuEntry::Settings => Some(menu_glyph(SETTINGS_GLYPH)),
+            MenuEntry::Extensions => Some(menu_glyph(EXTENSIONS_GLYPH)),
             MenuEntry::About => Some(menu_glyph(ABOUT_GLYPH)),
         };
         rows.push(menu_row(entry, sender, leading));
@@ -3333,6 +3474,12 @@ fn menu_row(entry: MenuEntry, sender: &LocalSender<Message>, leading: Option<Vie
                 let _ = sender.send(Message::MenuSettings);
             })
         }
+        MenuEntry::Extensions => {
+            let sender = sender.clone();
+            menu_button("Extensions".to_string(), leading).on_click(move || {
+                let _ = sender.send(Message::MenuExtensions);
+            })
+        }
         MenuEntry::About => {
             let sender = sender.clone();
             menu_button("About Winter".to_string(), leading).on_click(move || {
@@ -3364,6 +3511,88 @@ fn menu_button(label: String, leading: Option<View>) -> Button {
         .style(ButtonStyle::Subtle)
         .horizontal_content_alignment(HorizontalAlignment::Left)
         .width(232.0)
+}
+
+/// The extensions dialog: one switch per extension and one that loads the
+/// feature at all.
+///
+/// The switches are the dialog's whole state; Save writes the settings file's
+/// `[extensions]` table and nothing else, and says that loading changes on the
+/// next start: a live engine is not reloaded.
+fn extensions_dialog(rows: &[Found], enabled: bool, checked: &[bool], sender: &LocalSender<Message>) -> ContentDialog {
+    let mut children: Vec<View> = vec![
+        TextBlock::new()
+            .text(
+                "Anything under an `extensions` folder is listed here. A switch takes effect the next time Winter starts.",
+            )
+            .text_wrapping(TextWrapping::Wrap)
+            .into(),
+    ];
+
+    let master_sender = sender.clone();
+    children.push(
+        ToggleSwitch::new()
+            .header("Load extensions")
+            .is_on(enabled)
+            .on_toggled(move |on: bool| {
+                let _ = master_sender.send(Message::ExtensionsAll(on));
+            })
+            .into(),
+    );
+
+    if rows.is_empty() {
+        children.push(TextBlock::new().text("No extensions were found.").into());
+    }
+    for (index, row) in rows.iter().enumerate() {
+        let on = checked.get(index).copied().unwrap_or(row.enabled);
+        let row_sender = sender.clone();
+        let toggle = ToggleSwitch::new()
+            .header(format!("{}  ({})", row.name, row.id))
+            .is_on(on)
+            .is_enabled(row.switchable)
+            .on_toggled(move |on: bool| {
+                let _ = row_sender.send(Message::ExtensionsToggle(index, on));
+            });
+
+        // A row that could not be read says why in red, as the macOS window
+        // does; a working one shows what it ships.
+        let detail = if row.note.is_empty() {
+            row.kind.to_string()
+        } else {
+            format!("{} · {}", row.kind, row.note)
+        };
+        let mut detail = TextBlock::new()
+            .text(detail)
+            .font_size(12.0)
+            .text_wrapping(TextWrapping::Wrap);
+        if !row.note.is_empty() {
+            detail = detail.foreground(Color::rgb(220, 170, 60));
+        }
+        children.push(StackPanel::new().spacing(2.0).children((toggle, detail)).into());
+    }
+
+    let content = ScrollViewer::new()
+        .horizontal_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+        .vertical_scroll_bar_visibility(ScrollBarVisibility::Auto)
+        .max_height(420.0)
+        .content(StackPanel::new().spacing(10.0).children(children));
+
+    ContentDialog::new()
+        .title("Extensions")
+        .primary_button_text("Save")
+        .close_button_text("Close")
+        .is_open(true)
+        .content(content)
+        .on_closed({
+            let sender = sender.clone();
+            move |result: ContentDialogResult| {
+                if matches!(result, ContentDialogResult::Primary) {
+                    let _ = sender.send(Message::ExtensionsSave);
+                } else {
+                    let _ = sender.send(Message::ExtensionsClose);
+                }
+            }
+        })
 }
 
 /// The About dialog: the version this build was compiled as.

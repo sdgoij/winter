@@ -30,6 +30,7 @@ One module owns:
 | find | `GtkSearchBar` + `GtkSearchEntry` over `find::FindBar` |
 | palette | a card over the pane: a filter field and clickable rows over `palette::Palette` |
 | settings | a `GtkTextView` over the TOML document; Save/Revert/Close |
+| extensions | `extension.rs`: the `Host`, the event pump and the extensions window (ADR 086) |
 | clipboard | `gdk::Clipboard`; the read is asynchronous |
 | a11y | the visible screen as the pane's accessible description |
 
@@ -183,6 +184,34 @@ new shell lays out its first prompt for the width it keeps.
 closing the last pane closes the tab. The strip's close box closes the whole
 tab. `closeTab` is the action name, but its rule is the focused pane (the
 shared action's doc says so).
+
+## Extensions
+
+`extension.rs` owns `Found`, `installed`, the engine holder and the five `Shell`
+methods; `Host for Shell` is there too.
+
+- Settings live in `self.document`, not a `settings` field; `start_extensions`
+  clones `document.extensions`, and `save_extensions` writes that table through
+  `settings::save` then reloads the file.
+- Loading is off unless `[extensions] enabled` is true or `WINTER_EXT` is set
+  (`0` forces it off, anything else forces it on); `WINTER_EXTENSIONS` adds
+  discovery roots. A broken extension is logged, never fatal.
+- The engine is not `Send`: handlers run on the timer thread. **Take the holder
+  out of `self.extensions` and `mem::take` the engine before `emit(self, …)`**;
+  calling it while the engine is in the field double-borrows `Shell`.
+- `pump` reports the pty events it saw (`bell`, `notification`, `paneExited`),
+  the focused pane's new prompt marks (`commandFinished`), the focused pane and
+  title, and a settings reload. `open_tab`, `split_pane` and `close_tab` report
+  `tabOpened`, `paneSplit` and `tabClosed` directly.
+- Extension commands are palette rows (`palette::extension_entries`) and chords
+  from `[extensions.commands]`; check the chord **after** the window's own
+  bindings, via `input::extension_chord`.
+- The window opens from the profile menu (or `WINTER_OPEN_EXTENSIONS=1`) through
+  `extensions_requested`, which the timer turns into a window. Save writes the
+  same `[extensions]` table the other shells write; loading changes on the next
+  start. `WINTER_SCREENSHOT` also captures it as `<name>-extensions.png`.
+- `Host::open_url` uses `gio::AppInfo::launch_default_for_uri`, so an extension
+  can hand the user's browser a link without a new dependency.
 
 ## Traps
 

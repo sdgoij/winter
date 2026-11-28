@@ -18,7 +18,8 @@ change it without rediscovering the traps.
 | `surface.rs` | D3D11 device, composition swap chain, Direct2D blit (permitted `unsafe`) |
 | `wheel.rs` | `WH_MOUSE_LL` hook and Shift state (permitted `unsafe`) |
 | `settings.rs` | The settings `ContentDialog` over `config::Draft` |
-| `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings` and `About` |
+| `extension.rs` | The extensions `Host`, the event pump and what the extensions dialog lists (ADR 086) |
+| `menu.rs` | The profile drop-down's rows: profiles from the file, then `Settings`, `Extensions` and `About` |
 | `command_palette.rs` | The command palette's overlay card over `winter::palette` |
 | `../find.rs` | The query, matches and screen spans, shared with the other shells |
 | `wsl.rs` | The distro profiles, from `wsl.exe -l -q` (ADR 065) |
@@ -384,10 +385,36 @@ the dialog says the file changed and Save or Revert resolves it.
 While the dialog is open the wheel hook's copy is dropped: the dialog's
 `ScrollViewer` scrolls, not the terminal behind it.
 
+## Extensions
+
+`extension.rs` owns `Found`, `installed`, the engine holder and the five `Shell`
+methods; `Host for Shell` is there too.
+
+- Loading is off unless the settings file's `[extensions] enabled` is true or
+  `WINTER_EXT` is set (`0` forces it off, anything else forces it on), and
+  `WINTER_EXTENSIONS` adds discovery roots. A broken extension is logged, never
+  fatal.
+- The engine is not `Send`: handlers run on the UI thread in `tick`. **Take the
+  holder out of `self.extensions` and `mem::take` the engine before
+  `engine.emit(self, …)`**; calling it while the engine is still in the field
+  double-borrows `Shell`.
+- `tick` reports the pty events it saw (`bell`, `notification`, `paneExited`),
+  the focused pane's new prompt marks (`commandFinished`), the focused pane and
+  title, and a settings reload. `add_tab`, `split_pane` and `close_tab` report
+  `tabOpened`, `paneSplit` and `tabClosed` directly.
+- Extension commands are palette rows (`palette::extension_entries`) and chords
+  from `[extensions.commands]`; check the chord **after** the window's own
+  bindings, via `input::extension_chord`.
+- The dialog is opened from the profile menu (or `WINTER_OPEN_EXTENSIONS=1`): a
+  master `ToggleSwitch` plus one per row. Save writes the same `[extensions]`
+  table the other shells write; loading changes on the next start.
+- The shell has no URL opener: `Host::open_url` answers `false` and the engine
+  logs it. Do not call `ShellExecute` (ADR 070).
+
 ## Do not
 
 - Add a second renderer, swap chain or pty pump thread. The connection is not
   `Send`; the timer polls every pty on the UI thread.
-- Put `unsafe` outside `surface.rs` and `wheel.rs`; each call needs a `SAFETY:`
-  note.
+- Put `unsafe` outside `surface.rs`, `wheel.rs`, `icon.rs` and `profile_icon.rs`;
+  each call needs a `SAFETY:` note.
 - Put Windows-only logic in `input`, `view`, `tabs` or `term_control`.

@@ -100,8 +100,11 @@ parked "bugs" layer is the opposite shape and stays a separate surface.
 - WASM is a sandbox for the compiled half by construction: the import list is
 the capability list, and a module that asks for more does not link. A module's
 trap is reported like a throwing handler.
-- GTK and WinUI compile against the new palette variant and do not host
-  extensions; each needs its own `Host`, which is a per-shell change.
+- Every native shell hosts extensions: macOS, WinUI and GTK each implement
+  `Host`, offer the extension commands as palette rows and check their chords
+  after the window's own, and each has a screen that switches extensions. The
+  screens write the same `[extensions]` table, and a switch takes effect on the
+  next start because a live engine is not reloaded.
 
 ## Alternatives considered
 

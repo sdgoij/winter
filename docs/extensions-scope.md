@@ -1,10 +1,10 @@
 # Extensions — scope and shape
 
-Status: the loader (`crates/extensions`: `manifest`, `discover`) and the macOS
-host (the `host` feature and the AppKit `Host`) are implemented, behind
-`WINTER_EXT=1`; the WASM half, the extensions screen and the GTK and WinUI hosts
-are not. This records the exploration of the Goat and Noctis systems and the
-surface this repository offers; ADR 086 is the decision.
+Status: the loader (`crates/extensions`: `manifest`, `discover`), the `host`
+feature, and a `Host` plus extensions screen in each native shell — macOS, WinUI
+and GTK — are implemented, behind `WINTER_EXT=1`. This records the exploration
+of the Goat and Noctis systems and the surface this repository offers; ADR 086
+is the decision.
 Related: ADRs 038 and 080 (the shell split), ADR 082 (the embedding surface), ADR
 083 (the frame server) and ADR 084 (the Node addon) for the host boundary;
 `docs/plan.md`'s parked chaos layer for the "bugs", which are a separate surface
@@ -372,7 +372,7 @@ copyable enum.
   and modules are additive; a name that changes meaning is a new major.
 - **Enablement is remembered**, in the settings file's `[extensions]` table
   rather than in a session: `enabled` and `disabled` are read when the window
-  opens, and the extensions window edits them.
+  opens, and each shell's extensions screen edits them.
 
 ## What is here
 
@@ -381,20 +381,24 @@ copyable enum.
 2. Its `host` feature — the `winter` global, the module loader (registration,
    specifier validation), event and command dispatch, and a headless suite
    driving multi-file fixture extensions through Slag.
-3. macOS — `Host for Shell` (including opening and closing tabs from a handler),
-   the palette arm, `commandFinished`, `titleChanged`, `paneFocused`,
-   `tabOpened`, `tabClosed`, `bell`, `notification`, `paneExited`, `paneSplit`
-   and `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
+3. Each native shell — macOS, WinUI and GTK — implements `Host for Shell`
+   (including opening and closing tabs from a handler), offers the extension
+   commands as palette rows and matches their chords after the window's own,
+   and reports `commandFinished`, `titleChanged`, `paneFocused`, `tabOpened`,
+   `tabClosed`, `bell`, `notification`, `paneExited`, `paneSplit` and
+   `settingsReloaded`, with the fixtures in `crates/extensions/fixtures`: a
    script notifier and a compiled one.
-4. The extensions window (`⌘⇧E`): every extension on disk with a switch, the
-   master switch that turns the engine on, and the reason a row is not running.
-   Saving writes the `[extensions]` table; loading changes on the next start.
+4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
+   WinUI and GTK: every extension on disk with a switch, the master switch
+   that turns the engine on, and the reason a row is not running. Saving writes
+   the `[extensions]` table; loading changes on the next start.
 
-What is not here: the GTK and WinUI `Host`s and their screens, which are
-per-shell work, and a continuation form for a compiled module's history — it
-reads the bounded walk through its typed accessor instead. ADR 086 records the
-surface; `cargo test -p extensions --features host` and
-`cargo test -p winter-cocoa` are the suites.
+What is not here: a continuation form for a compiled module's history — it
+reads the bounded walk through its typed accessor instead. The WinUI shell has
+no URL opener, so `app.openUrl` answers `false` there and the engine logs it;
+ADR 070 keeps `ShellExecute` out of that shell. ADR 086 records the surface;
+`cargo test -p extensions --features host`, `cargo test -p winter-cocoa`,
+`cargo test -p winter-winui` and `cargo test -p winter-gtk4` are the suites.
 
 ## Open questions
 

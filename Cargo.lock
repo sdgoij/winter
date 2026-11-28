@@ -3110,12 +3110,14 @@ name = "winter-gtk4"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "extensions",
  "glow",
  "gtk4",
  "libloading 0.8.9",
  "renderer",
  "server",
  "settings",
+ "tempfile",
  "term",
  "utils",
  "winter",
@@ -3143,9 +3145,11 @@ name = "winter-winui"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "extensions",
  "renderer",
  "server",
  "settings",
+ "tempfile",
  "term",
  "types",
  "utils",

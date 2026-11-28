@@ -27,6 +27,7 @@ mod scrollbar;
 
 mod app;
 mod command_palette;
+mod extension;
 mod menu;
 mod png;
 mod settings;
