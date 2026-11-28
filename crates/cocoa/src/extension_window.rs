@@ -140,7 +140,13 @@ define_class!(
                     .collect();
                 (enabled, disabled)
             };
-            match self.ivars().shell.borrow_mut().save_extensions(enabled, disabled) {
+            // The borrow must end before `sync` reads the shell again: a `match`
+            // on the `borrow_mut()` temporary would keep it alive through the arm.
+            let result = {
+                let mut shell = self.ivars().shell.borrow_mut();
+                shell.save_extensions(enabled, disabled)
+            };
+            match result {
                 Ok(()) => {
                     self.sync();
                     self.set_status("Saved. The engine was rebuilt.");

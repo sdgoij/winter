@@ -62,7 +62,13 @@ define_class!(
                     return;
                 }
             };
-            match self.ivars().shell.borrow_mut().save_document(&document) {
+            // The borrow must end before `sync` reads the shell again: a `match`
+            // on the `borrow_mut()` temporary would keep it alive through the arm.
+            let saved = {
+                let mut shell = self.ivars().shell.borrow_mut();
+                shell.save_document(&document)
+            };
+            match saved {
                 Ok(()) => {
                     self.sync();
                     self.set_status("Saved.");
