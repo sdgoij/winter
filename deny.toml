@@ -72,3 +72,6 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# The extension engine is the one source outside crates.io, and `Cargo.toml`
+# pins it to a revision that `Cargo.lock` records.
+allow-git = ["https://github.com/sdgoij/slag"]
