@@ -117,7 +117,8 @@ Read `winter-shot.png`; a correct first frame shows the active tab in the pane's
 fill, the strip's `+` and `▾`, the prompt and a cursor. `WINTER_OPEN_SETTINGS=1`
 opens the settings window on the same run (written as
 `winter-shot-settings.png`), `WINTER_OPEN_EXTENSIONS=1` opens the extensions
-window (`winter-shot-extensions.png`), `WINTER_OPEN_FIND=1` opens the find bar
+window (`winter-shot-extensions.png`; `=search` opens it on the Search tab,
+which is the one that fetches), `WINTER_OPEN_FIND=1` opens the find bar
 over the pane and `WINTER_OPEN_PALETTE=1` opens the command palette. `WINTER_SPLIT=1`
 splits the first tab, so a frame shows two panes, their prompts, the divider and
 the focused pane's border. A crash before the capture is the construction

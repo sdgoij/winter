@@ -2,11 +2,11 @@
 
 Status: the loader (`crates/extensions`: `manifest`, `discover`), the `host`
 feature, a `Host` plus extensions screen in each native shell — macOS, WinUI
-and GTK — and the registry schema, search index, fetcher and cache
-(`crates/registry`) are implemented, behind `WINTER_EXT=1`. Archive installation,
-the Search/Installed screens and the live engine reload are the next slices
-(ADR 088). This records the exploration of the Goat and Noctis systems and the
-surface this repository offers; ADR 086 is the host decision and ADR 088 the
+and GTK — and the registry schema, search index, fetcher, cache and installer
+(`crates/registry`) are implemented, behind `WINTER_EXT=1`. The published
+registry, the Search/Installed screens and the live engine reload are in every
+shell (ADR 088). This records the exploration of the Goat and Noctis systems and
+the surface this repository offers; ADR 086 is the host decision and ADR 088 the
 registry and install one.
 Related: ADRs 038 and 080 (the shell split), ADR 082 (the embedding surface), ADR
 083 (the frame server) and ADR 084 (the Node addon) for the host boundary;
@@ -398,13 +398,13 @@ copyable enum.
 4. An extensions screen in each shell — `⌘⇧E` on macOS, the profile menu on
    WinUI and GTK: every extension on disk with a switch, the master switch
    that turns the engine on, and the reason a row is not running. Saving writes
-   the `[extensions]` table and rebuilds the engine at once. WinUI's dialog and
-   GTK's window add the `Installed` / `Search` tabs: Search lists each
-   registry's rows (the same identifier from two registries is two rows) with a
-   version picker and an Install button, and Installed shows a registry row's
-   provenance and a Remove button. The registry list is edited in WinUI's
-   settings dialog and in GTK's settings file; macOS still leaves the built-in
-   default.
+   the `[extensions]` table and rebuilds the engine at once. Each shell's window
+   also adds the `Installed` / `Search` tabs: Search lists each registry's rows
+   (the same identifier from two registries is two rows) with a version picker
+   and an Install button, and Installed shows a registry row's provenance and a
+   Remove button. The registry list is edited in WinUI's settings dialog and in
+   the settings file on macOS and GTK; an empty list uses the built-in default
+   and `off` disables registries.
 5. `crates/registry` — the strict registry schema: semver releases, a tagged
    source union whose one implemented adapter is a checksummed archive, the
    per-release `api`, and the caps; the merged search index that keeps the same
@@ -446,12 +446,10 @@ copyable enum.
    --test published` runs the same packaging into a temporary directory, so a
    directory whose manifest does not match its row fails the gate.
 
-What is not here: the `Installed` / `Search` tabs on macOS (the shared
-`registry::Screen` is ready for them); and a continuation form for a compiled
-module's history — it reads the bounded walk through its typed accessor
-instead. `cargo test -p extensions --features host`, `cargo test -p registry`,
-`cargo test -p winter-cocoa`, `cargo test -p winter-winui` and `cargo test -p
-winter-gtk4` are the suites.
+What is not here: a continuation form for a compiled module's history — it reads
+the bounded walk through its typed accessor instead. `cargo test -p extensions
+--features host`, `cargo test -p registry`, `cargo test -p winter-cocoa`,
+`cargo test -p winter-winui` and `cargo test -p winter-gtk4` are the suites.
 
 ## Open questions
 

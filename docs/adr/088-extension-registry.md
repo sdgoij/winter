@@ -85,11 +85,10 @@ acceptable once the screen can install one.
 
 ## Consequences
 
-- `crates/registry` owns the schema, validation and the merged search index. It
-  sits above `extensions` (it reuses `is_id`, `is_relative_path` and `API`) and
-  names no engine, window or transport. Fetching, cache and installation are the
-  next slice; they add `ureq` (rustls), `zip` and `sha2`, none of which
-  `crates/extensions` sees.
+- `crates/registry` owns the schema, validation, merged search index, fetcher,
+  cache and installer. It sits above `extensions` (it reuses `is_id`,
+  `is_relative_path` and `API`) and names no engine, window or transport; each
+  shell owns the Search/Installed UI over its `Screen`.
 - `Manifest::validate` now refuses a version that is not semver. Every fixture
   and test moved from `"1"` to `"1.0.0"`. This is a manifest-validation
   tightening, not an `api` bump: `api` describes the host contract, not the

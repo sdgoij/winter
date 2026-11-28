@@ -43,6 +43,8 @@ pub(crate) struct Found {
     pub(crate) enabled: bool,
     /// Why it is not running, when it is not.
     pub(crate) note: String,
+    /// The registry record beside the manifest, when a registry installed it.
+    pub(crate) source: Option<registry::Provenance>,
 }
 
 /// Every extension on disk, as the extensions window lists it.
@@ -77,6 +79,7 @@ pub(crate) fn installed(roots: Vec<PathBuf>, disabled: &[String], failures: &[(S
             id,
             name: loaded.manifest.name.clone(),
             kind,
+            source: registry::provenance(&loaded.dir),
         });
     }
     for skipped in &report.skipped {
@@ -92,6 +95,7 @@ pub(crate) fn installed(roots: Vec<PathBuf>, disabled: &[String], failures: &[(S
             name,
             kind: "broken",
             note: skipped.reason.clone(),
+            source: None,
         });
     }
     rows.sort_by(|a, b| a.id.cmp(&b.id));
@@ -443,6 +447,27 @@ fn build(settings: &settings::Extensions) -> (extensions::Engine, Vec<(String, S
     (engine, failures, stamps)
 }
 
+/// The Search screen for `settings`, without reading the network.
+///
+/// It is created when the extensions window opens; the Search tab's first
+/// showing is what calls `open` and starts the only fetch (ADR 088).
+pub(crate) fn registry_screen(settings: &settings::Extensions) -> registry::Screen {
+    let root = settings::settings_path().and_then(|path| path.parent().map(PathBuf::from));
+    let cache = root.as_ref().map_or_else(
+        || std::env::temp_dir().join("winter-registry-cache"),
+        |dir| dir.join("registry-cache"),
+    );
+    let extensions = root.map_or_else(
+        || std::env::current_dir().unwrap_or_default().join("extensions"),
+        |dir| dir.join("extensions"),
+    );
+    registry::Screen::new(
+        registry::configured_urls(settings.registries.as_deref()),
+        cache,
+        extensions,
+    )
+}
+
 /// The roots discovery reads, in priority order: the explicit list, the user's
 /// config directory, then beside the executable and in the working directory.
 fn roots() -> Vec<PathBuf> {
@@ -546,6 +571,31 @@ mod tests {
         assert!(!rows[0].switchable);
         assert!(!rows[0].enabled);
         assert!(!rows[0].note.is_empty());
+    }
+
+    #[test]
+    fn a_registry_install_carries_its_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        extension(temp.path(), "a.one", Some("main.js"), None);
+        write(
+            &temp.path().join("a.one"),
+            "winter-installed.toml",
+            "registry = \"https://one.example/r.toml\"\nversion = \"0.1.0\"\narchive = \"https://x/y.zip\"\nsha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ninstalled = 1\n",
+        );
+
+        let rows = installed(vec![temp.path().to_path_buf()], &[], &[]);
+        let source = rows[0].source.as_ref().expect("provenance");
+        assert_eq!(source.registry, "https://one.example/r.toml");
+        assert_eq!(source.version.to_string(), "0.1.0");
+    }
+
+    #[test]
+    fn a_hand_made_row_has_no_record() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        extension(temp.path(), "a.one", Some("main.js"), None);
+
+        let rows = installed(vec![temp.path().to_path_buf()], &[], &[]);
+        assert!(rows[0].source.is_none());
     }
 
     #[test]

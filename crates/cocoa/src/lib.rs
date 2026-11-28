@@ -507,6 +507,15 @@ define_class!(
                 self.ivars().window.setTitle(&NSString::from_str(&title));
             }
 
+            // The Search tab's fetch or operation finished; redraw the window it
+            // belongs to. The shell already rebuilt the engine when the tree
+            // changed.
+            if tick.registry
+                && let Some(window) = &*self.ivars().extensions_window.borrow()
+            {
+                window.sync();
+            }
+
             if tick.bell {
                 NSBeep();
             }
@@ -1115,6 +1124,11 @@ impl Controller {
         }
         if let Some(window) = slot.as_ref() {
             window.open(mtm);
+            // The live check opens the tab that fetches, so its rows are in the
+            // screenshot; a normal open starts on Installed and reads nothing.
+            if std::env::var("WINTER_OPEN_EXTENSIONS").ok().as_deref() == Some("search") {
+                window.show_search();
+            }
         }
     }
 

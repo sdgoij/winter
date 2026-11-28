@@ -146,6 +146,8 @@ pub(crate) struct Tick {
     pub(crate) bell: bool,
     /// The notifications a program asked for.
     pub(crate) notifications: Vec<(String, String)>,
+    /// A registry fetch, install or uninstall moved the extensions window on.
+    pub(crate) registry: bool,
     /// Something was drawn, so the view needs a new frame.
     pub(crate) redraw: bool,
 }
@@ -223,6 +225,8 @@ pub(crate) struct Shell {
     sound: Sound,
     /// Extensions, when `WINTER_EXT` asked for them.
     pub(crate) extensions: Option<Extensions>,
+    /// The registry Search tab, while the extensions window is open.
+    pub(crate) registry: Option<registry::Screen>,
 }
 
 /// One pane as the controller lays its content layer.
@@ -309,6 +313,7 @@ impl Shell {
             composition: Composition::default(),
             sound: Sound::new(),
             extensions: None,
+            registry: None,
         };
         shell.start_extensions();
         Ok(shell)
@@ -683,6 +688,17 @@ impl Shell {
         if self.close_requested {
             tick.close_window = true;
             return tick;
+        }
+
+        // A finished fetch or operation on the Search tab moves the window on;
+        // a finished install or uninstall also rebuilds the engine, which is why
+        // this poll comes before the tick reads any extension state (ADR 088).
+        if let Some(screen) = &mut self.registry {
+            let changed = screen.poll();
+            if changed.tree {
+                self.reload_extensions();
+            }
+            tick.registry = changed.display || changed.tree;
         }
 
         for index in 0..self.tabs.len() {
