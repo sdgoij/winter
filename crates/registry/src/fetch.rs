@@ -197,9 +197,16 @@ fn write_cache(cache: &Path, url: &str, bytes: &[u8]) {
     if std::fs::create_dir_all(cache).is_err() {
         return;
     }
-    let part = cache_path(cache, url).with_extension("part");
-    if std::fs::write(&part, bytes).is_ok() {
-        let _ = std::fs::rename(&part, cache_path(cache, url));
+    let path = cache_path(cache, url);
+    let part = path.with_extension("part");
+    if std::fs::write(&part, bytes).is_err() {
+        return;
+    }
+    // Windows refuses to rename over an existing file, and a cache is not worth
+    // an atomic replace: remove the old copy and try again.
+    if std::fs::rename(&part, &path).is_err() {
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::rename(&part, &path);
     }
 }
 
@@ -280,8 +287,12 @@ mod tests {
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     fn document() -> Vec<u8> {
+        document_named("Test registry")
+    }
+
+    fn document_named(name: &str) -> Vec<u8> {
         format!(
-            "schema = 1\nname = \"Test registry\"\nupdated = \"2026-11-28T12:00:00Z\"\n\n[[extensions]]\nid = \"a.b\"\nname = \"B\"\n[[extensions.versions]]\nversion = \"1.0.0\"\napi = 1\nsource = {{ type = \"archive\", url = \"https://example.com/b.zip\", sha256 = \"{SHA}\" }}\n"
+            "schema = 1\nname = \"{name}\"\nupdated = \"2026-11-28T12:00:00Z\"\n\n[[extensions]]\nid = \"a.b\"\nname = \"B\"\n[[extensions.versions]]\nversion = \"1.0.0\"\napi = 1\nsource = {{ type = \"archive\", url = \"https://example.com/b.zip\", sha256 = \"{SHA}\" }}\n"
         )
         .into_bytes()
     }
@@ -319,6 +330,17 @@ mod tests {
         assert_eq!(fetched.document.name, "Test registry");
         assert!(cache_path(cache.path(), "https://one.example/registry.toml").is_file());
         assert!(cached_at(cache.path(), "https://one.example/registry.toml").is_some());
+    }
+
+    #[test]
+    fn a_second_fetch_replaces_the_cache() {
+        let cache = tempfile::tempdir().expect("cache");
+        let url = "https://one.example/registry.toml";
+        load(url, cache.path(), &Fake(Ok(document_named("One")))).expect("first");
+        load(url, cache.path(), &Fake(Ok(document_named("Two")))).expect("second");
+
+        let fetched = load(url, cache.path(), &Fake(Err("offline".to_string()))).expect("cached");
+        assert_eq!(fetched.document.name, "Two");
     }
 
     #[test]
