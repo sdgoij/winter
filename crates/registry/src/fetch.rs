@@ -23,22 +23,22 @@ pub const DEFAULT_URL: &str = "https://sdgoij.github.io/winter/extensions/regist
 ///
 /// Tests implement this without a network; [`Network`] is the production one.
 pub trait Fetcher {
-    /// Reads `url`, capped at [`FILE_MAX`].
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, Error>;
+    /// Reads `url`, refusing a body over `max` bytes.
+    fn fetch(&self, url: &str, max: u64) -> Result<Vec<u8>, Error>;
 }
 
 /// The platform fetcher: `https` through `ureq`, `file` through the filesystem.
 pub struct Network;
 
 impl Fetcher for Network {
-    fn fetch(&self, url: &str) -> Result<Vec<u8>, Error> {
+    fn fetch(&self, url: &str, max: u64) -> Result<Vec<u8>, Error> {
         if let Some(rest) = url.strip_prefix("file://") {
-            return read_file(url, rest);
+            return read_file(url, rest, max);
         }
         if !url.starts_with("https://") {
             return Err(Error::Unsupported { url: url.to_string() });
         }
-        fetch_https(url)
+        fetch_https(url, max)
     }
 }
 
@@ -59,7 +59,7 @@ pub struct Fetched {
 /// fresh document that does not parse, answers the cached copy with `cached` set
 /// and the reason in `note`; with no cache, the failure is returned.
 pub fn load(url: &str, cache: &Path, fetcher: &dyn Fetcher) -> Result<Fetched, Error> {
-    match fetcher.fetch(url) {
+    match fetcher.fetch(url, FILE_MAX) {
         Ok(bytes) => match parse(url, &bytes) {
             Ok(document) => {
                 write_cache(cache, url, &bytes);
@@ -103,7 +103,7 @@ pub fn cached_at(cache: &Path, url: &str) -> Option<SystemTime> {
         .ok()
 }
 
-fn fetch_https(url: &str) -> Result<Vec<u8>, Error> {
+fn fetch_https(url: &str, max: u64) -> Result<Vec<u8>, Error> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(20)))
         .timeout_connect(Some(Duration::from_secs(5)))
@@ -127,7 +127,7 @@ fn fetch_https(url: &str) -> Result<Vec<u8>, Error> {
 
     // Ask for one byte over the cap: a body that reached the cap is refused by
     // the length check rather than silently truncated.
-    let cap = FILE_MAX.saturating_add(1);
+    let cap = max.saturating_add(1);
     let bytes = response
         .body_mut()
         .with_config()
@@ -137,34 +137,34 @@ fn fetch_https(url: &str) -> Result<Vec<u8>, Error> {
             url: url.to_string(),
             message: error.to_string(),
         })?;
-    if bytes.len() as u64 > FILE_MAX {
+    if bytes.len() as u64 > max {
         return Err(Error::TooLarge {
             url: url.to_string(),
             size: bytes.len() as u64,
-            max: FILE_MAX,
+            max,
         });
     }
     Ok(bytes)
 }
 
-fn read_file(url: &str, rest: &str) -> Result<Vec<u8>, Error> {
+fn read_file(url: &str, rest: &str, max: u64) -> Result<Vec<u8>, Error> {
     let path = file_path(rest);
     let file = File::open(&path).map_err(|source| Error::Io {
         url: url.to_string(),
         source,
     })?;
     let mut bytes = Vec::new();
-    file.take(FILE_MAX.saturating_add(1))
+    file.take(max.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|source| Error::Io {
             url: url.to_string(),
             source,
         })?;
-    if bytes.len() as u64 > FILE_MAX {
+    if bytes.len() as u64 > max {
         return Err(Error::TooLarge {
             url: url.to_string(),
             size: bytes.len() as u64,
-            max: FILE_MAX,
+            max,
         });
     }
     Ok(bytes)
@@ -300,7 +300,7 @@ mod tests {
     struct Fake(Result<Vec<u8>, String>);
 
     impl Fetcher for Fake {
-        fn fetch(&self, url: &str) -> Result<Vec<u8>, Error> {
+        fn fetch(&self, url: &str, _max: u64) -> Result<Vec<u8>, Error> {
             match &self.0 {
                 Ok(bytes) => Ok(bytes.clone()),
                 Err(message) => Err(Error::Http {
@@ -385,7 +385,7 @@ mod tests {
         std::fs::write(&path, document()).expect("write");
         let url = file_url(&path);
 
-        let bytes = Network.fetch(&url).expect("file fetch");
+        let bytes = Network.fetch(&url, FILE_MAX).expect("file fetch");
         assert_eq!(bytes, document());
 
         let cache = tempfile::tempdir().expect("cache");
@@ -395,7 +395,9 @@ mod tests {
 
     #[test]
     fn anything_but_https_and_file_is_refused() {
-        let error = Network.fetch("http://example.com/registry.toml").expect_err("http");
+        let error = Network
+            .fetch("http://example.com/registry.toml", FILE_MAX)
+            .expect_err("http");
         assert!(matches!(error, Error::Unsupported { .. }));
     }
 
@@ -405,7 +407,7 @@ mod tests {
         let path = directory.path().join("big.toml");
         std::fs::write(&path, "x".repeat(FILE_MAX as usize + 1)).expect("write");
 
-        let error = Network.fetch(&file_url(&path)).expect_err("too large");
+        let error = Network.fetch(&file_url(&path), FILE_MAX).expect_err("too large");
         assert!(matches!(error, Error::TooLarge { .. }));
     }
 
