@@ -60,6 +60,12 @@ the webview.
 
 ## Consequences
 
+- **`napi` and `napi-derive` are the 3.x line.** The 2.x derive crate records a
+  parsed struct in a thread-local before its `impl` expands; rust-analyzer
+  expands the struct and the impl on different threads and reports “Did not find
+  struct `Terminal` parsed before expand `#[napi]` for impl” even though cargo
+  builds. The 3.x registry is process-wide, so both agree. The JavaScript API —
+  `Terminal.spawn` and the instance methods — is unchanged.
 - **The addon is built per platform and arch.** `npm run build:addon` builds it
   and copies it beside the extension as `winter.node`; a packaged extension would
   ship one per target and pick at activation. That is the cost ADR 083 refused,

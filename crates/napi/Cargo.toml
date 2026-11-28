@@ -11,8 +11,8 @@ description = "A terminal the editor's own process owns, as a Node addon"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "2", default-features = false, features = ["napi8"] }
-napi-derive = "2"
+napi = { version = "3", default-features = false, features = ["napi8"] }
+napi-derive = "3"
 server.workspace = true
 types.workspace = true
 winter.workspace = true
