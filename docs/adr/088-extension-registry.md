@@ -63,10 +63,18 @@ acceptable once the screen can install one.
     after the settings poll sees a changed `[extensions]` table, and after a
     watched file changes. The extension's `marks` survive so
     `commandFinished` history is not replayed; the focus and title reset so the
-    new engine observes the current pane once.
+    new engine observes the current pane once. The watcher is opt-in
+    (`[extensions] watch = true`, or `WINTER_WATCH=1` for a run); the other
+    triggers reload without it. A rebuild that finds an extension that used to
+    load now broken logs it and skips it — the rest keep running — rather than
+    keeping the last good engine and hiding the new error.
 11. **Dependencies are displayed, not resolved.** A registry row may list
     `dependencies`, which the Search panel shows. The installer verifies them
     against the manifest's `load_after` after download but does not pull them.
+12. **A conflicting install is refused, not replaced.** An installation whose
+    id is already on disk from a different registry, or without a provenance
+    file, is left alone; the screen shows the existing origin. Replacing it is a
+    later, explicit action, not a side effect of picking another row.
 
 ## Consequences
 
